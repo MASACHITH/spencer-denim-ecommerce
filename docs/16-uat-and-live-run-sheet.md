@@ -32,6 +32,23 @@ Issue **#195** (OPS-01 hosting/domain/SSL, OPS-03 staging site), part of the han
 
 ---
 
+## A0. The server as it really is (inspected read-only on 2026-10-20)
+
+Everything else in this sheet was first written for a fresh server. **This one is not.** What a read-only look as `deploy1`
+(no secrets read, nothing changed) found, and what each fact changes below:
+
+| Fact | Consequence |
+|---|---|
+| **A shared VPS**: Ubuntu **26.04.1**, nginx **1.28.3**, Docker 29.1.3, 7.9 GB RAM (about 6 GB free), **4 GB swap**, 96 GB disk (21% used) | Staging fits (preflight budgets 2,912 MB for it). Sudo needs a **password**: every step marked *root* is typed by a person at the terminal, not by an assistant |
+| **An earlier stack of this project already serves `colombowardrobecompany.com` and `www.`**: compose project `spencer-denim-development` under `/opt/apps/development`, built from `aed9480` (branch `feature/W0-15-docker-packaging`, 29 Sep, the "Spencer Denim" build), web on `127.0.0.1:18080`, nginx site `spencer-denim-development`, certbot lineage `colombowardrobecompany.com` (apex + www) | **Do not touch it** while UAT is built. Going Live is a **cut-over of that nginx site and certificate**, not a new install: see §D0b. The apex DNS record already points at this VPS |
+| **A second project** (`purchase-order-*`) with its own containers; `shop.colombowardrobecompany.com` proxies to **its** front end on `0.0.0.0:8080` | Never edit, stop or "tidy" anything of its. The firewall check in B0 will show port 8080 |
+| **One SQL Server container** (`sqlserver-development`, `127.0.0.1:1433`, 3 GB cap, about 1 GB used) holds the databases of **both** projects | The staging stack starts its **own** SQL Server (docs/15 §10 #2). Nothing here may connect to, provision into or restart `sqlserver-development` |
+| `/opt/server/database/{staging,production}` exist as **empty skeletons** (`compose config data scripts`, 0 files) and `/opt/apps/{staging,production}` hold only the other project's `purchase-order-app` | `install.sh` is safe on the skeletons; preflight now WARNs if any of those directories ever holds files |
+| nginx: the stock `default` site is `default_server` on **80 only**; nothing owns 443 by default, so an unknown host on 443 is answered by the first 443 block (today `shop.`, the other project) | Skip the catch-all (B12-b) here. Installing a 443-only copy would turn unknown-host requests into refused handshakes, a change to the other project's behaviour |
+| `/etc/letsencrypt/live` is not readable by `deploy1`; certbot's timer is active | Certificates are inspected and issued with `sudo`; every dry run is scoped with `--cert-name` so it cannot touch another tenant's lineage |
+
+---
+
 ## A. Facts to gather, and decisions to take, before touching the server
 
 Fill the right-hand column as you learn it. Rows marked **Owner** are the owner's call; **TG** is Tharanga's.
@@ -42,11 +59,11 @@ Fill the right-hand column as you learn it. Rows marked **Owner** are the owner'
 |---|---|---|---|
 | 1 | Live domain | `colombowardrobecompany.com` | |
 | 2 | UAT host (OPS-03) | `staging.colombowardrobecompany.com` | |
-| 3 | VPS | Hostinger KVM 2, name `srv1983022`, Ubuntu 24.04 LTS (docs/03 §4) | |
+| 3 | VPS | Hostinger KVM 2, name `srv1983022`, **Ubuntu 26.04.1 LTS, nginx 1.28.3** (inspected 2026-10-20; docs/03 §4 says 24.04) | |
 | 4 | VPS public IPv4 | **TO FILL** (`preflight.sh` prints what the machine thinks it is) | |
 | 5 | VPS public IPv6, if any | **TO FILL** (none is fine; then no AAAA records at all) | |
 | 6 | Where DNS is edited (provider, who has the login) | **TO FILL** | |
-| 7 | Is anything live at `colombowardrobecompany.com` today (an old site, a parked page, email-only)? | **TO FILL**. If yes, §D plans a cut-over window; if no, DNS can be changed any time | |
+| 7 | Is anything live at `colombowardrobecompany.com` today (an old site, a parked page, email-only)? | **Yes**: an earlier "development" stack of this project (A0). §D0b plans the cut-over; the apex and `www` A records already point at this VPS | |
 | 8 | Existing MX / SPF / DKIM / DMARC records on the domain | **TO FILL**. Do not touch the MX records; the shop only *sends* mail | |
 | 9 | Let's Encrypt contact e-mail (expiry notices) | **TO FILL** | |
 | 10 | SSH user and whether it has `sudo` | **TO FILL** | |
@@ -63,7 +80,7 @@ Nothing here has been created. Create the UAT records first; **leave the Live re
 |---|---|---|---|---|---|
 | A | `staging` (`staging.colombowardrobecompany.com`) | **TO FILL**: VPS IPv4 | 300 | UAT | Before §B12 |
 | AAAA | `staging` | **TO FILL**: VPS IPv6, **only if** the VPS has one and nginx listens on it; otherwise **no AAAA record** (a stale AAAA sends IPv6 visitors elsewhere) | 300 | UAT | Before §B12 |
-| A | `@` (`colombowardrobecompany.com`) | **TO FILL**: VPS IPv4 | 300 | Live | §D |
+| A | `@` (`colombowardrobecompany.com`) | **already** `201.18.193.171` | 300 | Live | nothing to change: the cut-over is in nginx (§D0b) |
 | AAAA | `@` | **TO FILL** as above | 300 | Live | §D |
 | A or CNAME | `www` | **TO FILL**: VPS IPv4, or CNAME to `@` | 300 | Live, only if the optional www→apex redirect is wanted (A4 #11) | §D |
 | TXT (SPF), TXT (DKIM), TXT (DMARC) | on the **sending domain** | **TO FILL**: exactly what the mail provider specifies for the From address in A3 | provider's | Live mail deliverability | Before Live goes public |
@@ -145,9 +162,10 @@ Every step has *Run*, *Expect*, and where useful *Paste back*. Do them in order.
 ### B0. Before you start
 
 - [ ] A1 #4, #9, #10, #12 are filled in; the DNS records for UAT (A2) exist and, if you can, have been visible for the TTL.
-- [ ] You can `ssh` in and `sudo`.
-- [ ] The firewall allows 22, 80 and 443 and nothing else (docs/03 §4). Read-only check: `sudo ufw status verbose`. If `ufw`
-  is inactive, the provider's firewall (hPanel) is the one to look at.
+- [ ] You can `ssh` in as `deploy1` (key login works) **and you know the `sudo` password**: it asks for one, so the steps marked *root* are typed by a person at the terminal.
+- [ ] The firewall allows 22, 80 and 443 from outside (docs/03 §4). Read-only check: `sudo ufw status verbose`. If `ufw`
+  is inactive, the provider's firewall (hPanel) is the one to look at. **Port 8080 is the other project's front end and is
+  listening on all interfaces today**: that is not ours to change here, but tell the owner.
 - [ ] The repository owner (Sachith) is available to add a deploy key during B3.
 - [ ] A password manager entry is ready for: the Data Protection password and `.pfx` (B7), the seed admin password (B5).
 
@@ -156,7 +174,7 @@ Set these once per SSH session (they are plain shell variables, not secrets):
 ```bash
 export ENV=staging
 export HOST=staging.colombowardrobecompany.com        # A1 #2
-export SRC=/opt/apps/src/spencer-denim-ecommerce
+export SRC=/opt/apps/src/spencer-denim-ecommerce       # a NEW clone. Never reuse /opt/apps/development/spencer-denim-repo: it belongs to the live stack
 export APP=/opt/apps/$ENV/spencer-denim-app
 export DB=/opt/server/database/$ENV
 ```
@@ -169,11 +187,11 @@ The checkout does not exist on the server yet, so copy just the two files from y
 # on YOUR machine, in the repository:
 scp deploy/scripts/preflight.sh deploy/scripts/lib.sh <user>@<server>:~/
 # on the server:
-sudo bash ~/preflight.sh both "$HOST" 2>&1 | tee ~/preflight-1.txt
+sudo bash ~/preflight.sh staging "$HOST" 2>&1 | tee ~/preflight-1.txt
 ```
 
-(`both` = look at both environments' ports and subnets. Add other host names after `$HOST` only for records that already point
-at this VPS: the Live apex is added in §D, not now.)
+(`staging` = budget memory and check ports and subnets for UAT only; `both` would also count a production SQL Server that does not
+exist yet. Add other host names after `$HOST` only for records that already point at this VPS: the Live apex is added in §D, not now.)
 
 It checks, and only reads: Docker engine and Compose ≥ 2.24, git, curl, openssl, nginx, certbot; ports 38080/38081; the two
 subnets against every Docker network and host route; memory and disk against the budget; whether `/opt/apps`, `/opt/server`
@@ -190,8 +208,10 @@ include files; and DNS for the host(s) you name against this server's public add
 | `FAIL … no A record` / `… but this server is <ip>` | Fix DNS at the provider, wait the TTL, re-run B1. Do not go on: certbot will fail. |
 | `FAIL … port 3808x … in use` / `FAIL … overlaps 10.251…` | Stop. The addresses are wired into `deploy/app/compose.<env>.yml`, `lib.sh` (`http_port`) and the nginx template together (docs/15 §10 #3). Raise it on #195; do not edit them on the server. |
 | `FAIL … memory: only N MB` | Stop; free memory or resize (docs/15 §10 #2). |
-| `WARN … memory … covers 5344 MB` | Two SQL Servers will not fit. The docs/15 fallback (UAT on the production instance) is **not scripted**: it needs `networks.db.name` in `compose.staging.yml` pointed at `sd-production-db` and the staging database and logins created inside the production SQL container by hand (`db-provision.sh` only provisions into the stack of its own environment). Raise an issue and wait; do not improvise on the server. Otherwise continue only if the owner accepts the risk. |
-| `WARN … no swap` | Keep a second terminal on `watch -n5 free -m` during B10. |
+| `WARN … memory … covers 5344 MB` | Only when `both` was asked: two SQL Servers will not fit. (Asking for `staging` needs 2,912 MB, which this server has.) The docs/15 fallback (UAT on the production instance) is **not scripted**: it needs `networks.db.name` in `compose.staging.yml` pointed at `sd-production-db` and the staging database and logins created inside the production SQL container by hand (`db-provision.sh` only provisions into the stack of its own environment). Raise an issue and wait; do not improvise on the server. Otherwise continue only if the owner accepts the risk. |
+| `WARN … no swap` | Not expected here (4 GB swap). If it appears, keep a second terminal on `watch -n5 free -m` during B10. |
+| `WARN … <dir> already holds files` | Stop and look (`ls -laR <dir>`). Something else lives where `install.sh` is about to set owners and modes. An empty skeleton does not warn. |
+| `WARN … already a server_name in …spencer-denim-development … THIS project but not the staging/production one` | Expected for the apex and `www` on this server. It means the cut-over is real: do not enable a production site for those names before §D0b. For `staging.…` it must **not** appear. |
 | `WARN … NO default_server` + `DECISION: install …00-default…` | Do B12-b. |
 | `PASS … default_server already exists … DECISION: do NOT install` | Skip B12-b. Read which file owns it. |
 | `WARN … for some of 80/443 × IPv4/IPv6` | Do not install the template as it is; add `default_server` to the missing `listen` lines of the existing catch-all, or install a copy of the template that keeps only the missing lines. |
@@ -232,7 +252,7 @@ sudo git status --short                    # must print nothing (build-images.sh
 Re-run the preflight from the checkout (it can now also check the checkout and the RCSI copy):
 
 ```bash
-sudo "$SRC"/deploy/scripts/preflight.sh both "$HOST" 2>&1 | tee ~/preflight-2.txt
+sudo "$SRC"/deploy/scripts/preflight.sh staging "$HOST" 2>&1 | tee ~/preflight-2.txt
 ```
 
 *Expect:* `PASS … checkout contains the RCSI fix (8bd27a7, #183)`, still no `FAIL`.
@@ -255,7 +275,9 @@ sudo grep -c READ_COMMITTED_SNAPSHOT "$DB/scripts/provision-database.sql"
 
 ### B5. Fill in the two env files
 
-This writes generated passwords **without printing them**. Edit the three marked lines first.
+This writes generated passwords **without printing them**. Edit the three marked lines first. **It is for `staging` only** (the names,
+the database and the memory figures are hard-coded) and **running it a second time generates new passwords**: run it once. Live has its own
+version in §D1.
 
 ```bash
 sudo bash <<'EOF'
@@ -374,6 +396,12 @@ Fix it with the command in docs/15 §5 ("Existing database without READ_COMMITTE
 
 ### B10. Build the images (a few minutes; memory-hungry)
 
+**This host is shared.** An Angular plus .NET build can use several GB at its peak; with about 6 GB free, 4 GB of swap, and the other
+project's API and the shared SQL Server running, an out-of-memory kill could hit **their** processes first. So either build at a
+quiet moment with `watch -n5 free -m` in a second terminal (stop and tell the owner if swap starts filling), or build elsewhere and
+ship the images (docs/15 §10 #4, **not yet exercised**):
+`docker save spencer-denim/api:$tag spencer-denim/migrator:$tag spencer-denim/storefront:$tag spencer-denim/web:$tag | gzip | ssh deploy1@201.18.193.171 'gunzip | docker load'`.
+
 ```bash
 cd "$SRC"
 sudo deploy/scripts/build-images.sh 2>&1 | tee ~/build-staging.log | tail -n 3
@@ -408,11 +436,11 @@ C="sudo env SD_IMAGE_TAG=$tag docker compose -p sd-$ENV --project-directory . -f
 $C ps
 $C logs --tail 500 api | grep "is missing"          # normal result: no output at all
 sudo bash -c 'grep -L encryptedSecret "$1"/data/dataprotection-keys/key-*.xml' _ "$APP"    # normal: no output (every key encrypted)
-sudo ss -ltn | grep -E ':(3808[01]|1433)\b'          # 127.0.0.1:38081 only; nothing on 1433
+sudo ss -ltn | grep -E ':(3808[01]|1433)\b'          # 127.0.0.1:38081 yes; 127.0.0.1:1433 is the OTHER SQL Server, expected
 ```
 
 *Expect:* all services `running`/`healthy`; no "is missing" line (on a brand-new database a warning there means the role
-seeding is wrong: docs/15 §6); the `ss` line shows `127.0.0.1:38081` and **not** `0.0.0.0`, and nothing listens on 1433.
+seeding is wrong: docs/15 §6); the `ss` output shows `127.0.0.1:38081` and **not** `0.0.0.0`. On this server `127.0.0.1:1433` is also listed: that is `sqlserver-development`, not ours (our SQL Server publishes no port). Anything on `0.0.0.0:3808x` or `0.0.0.0:1433` is wrong.
 *Paste back:* `$C ps` and the output of the last two commands.
 
 Do **not** run `docker compose config` and paste it: it prints every secret.
@@ -445,7 +473,9 @@ The fallback options file is written from memory of certbot's own (Mozilla "inte
 packaged copy if `find` printed one. If other sites here already use certbot's nginx installer, both files exist and the block does
 nothing.
 
-**b. The catch-all: only if B1 said "install"**
+**b. The catch-all: SKIP on this server.** (A0: `default` is already `default_server` on 80, nothing owns 443, and the unknown-host
+check in `verify-public.sh` accepts another site's answer. A 443-only copy would change what unknown-host requests receive, for the other
+project too. The rest of this step is for a server where B1 said "install".)
 
 First check what depends on being "first": `sudo nginx -T | grep -E 'server_name|listen'`. Every domain served from this VPS must
 have its own `server_name`; a site that only works because it happens to be the first block (for example when reached by the
@@ -500,10 +530,16 @@ grep -n '__[A-Z_]*__' /etc/nginx/sites-available/spencer-denim-$ENV.conf        
 sudo rm /etc/nginx/sites-enabled/spencer-denim-$ENV-acme.conf
 sudo ln -sf ../sites-available/spencer-denim-$ENV.conf /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
-sudo certbot renew --dry-run                          # expect: all simulated renewals succeeded
+sudo certbot renew --dry-run --cert-name "$HOST"     # expect: the simulated renewal of THIS certificate succeeded (never run it unscoped here)
 ```
 
-*Expect:* `nginx -t` ok, reload silent, renewal dry run succeeds. (If `nginx -t` fails, nothing has been reloaded: fix or
+*Expect:* `nginx -t` ok, reload silent, renewal dry run succeeds. (`--cert-name` matters: an unscoped dry run also simulates the live
+development site's and the other project's certificates, with whatever hooks they use, and a failure there would look like ours.)
+**Side effect to expect:** the templates say `listen 443 ssl http2`, and HTTP/2 is a property of the listening socket, so the other sites on
+`:443` start speaking HTTP/2 as well (nginx also prints `protocol options redefined` warnings). It is harmless for ordinary sites but it is
+a change to them; the nginx 1.25.1+ form (`listen 443 ssl;` plus `http2 on;`) avoids the warnings and is a template change for a later release.
+**Before enabling the site:** `sudo nginx -T | grep -E '^\s*upstream'`: the templates define `upstream spencer_denim_staging` / `…_production`
+and an upstream name is global, so a stack that already defined one would make `nginx -t` fail with `duplicate upstream`. (If `nginx -t` fails, nothing has been reloaded: fix or
 remove the new link and nothing else on the machine has changed.)
 *Paste back:* the `nginx -t` and `certbot renew --dry-run` result lines.
 
@@ -669,6 +705,25 @@ Same commands as §B with the differences below. **Do not start before the gate.
 - [ ] The Data Protection `.pfx` for Live is made **before** the first deploy, and kept off the server (B7). Live has its own, different certificate and password.
 - [ ] PayPal: stays off at launch unless the owner wants it (#187 §2: never tested against the real sandbox, no independent review). Live credentials are entered only after the certificate exists.
 
+### D0b. The cut-over from the earlier "development" stack
+
+Both stacks cannot serve the same names. nginx accepts the second server block for `colombowardrobecompany.com` with only a warning
+(`conflicting server name … ignored`) and the **first** one, `spencer-denim-development`, keeps the traffic. So the cut-over is one
+planned switch of the nginx site, done only after UAT passed and the owner said go:
+
+1. **Decide what happens to the development data** (the database in the shared SQL Server, uploads under `/opt/apps/development/spencer-denim-app/data`,
+   the Data Protection key ring). The production stack starts on an **empty** database. If the development data is test data, say so in
+   writing and leave it; if anything real was ever entered there, it needs a migration plan before this step. **Not decided: ask the owner.**
+2. Bring the production stack up and healthy on `127.0.0.1:38080` as in D1, **without** touching nginx. `deploy.sh`'s smoke test uses the loopback port.
+3. In one root session: write the production site file from the template (B12-e, using the **existing** certificate), then
+   `sudo rm /etc/nginx/sites-enabled/spencer-denim-development && sudo ln -sf ../sites-available/spencer-denim-production.conf /etc/nginx/sites-enabled/ && sudo nginx -t && sudo systemctl reload nginx`.
+   Leave `/etc/nginx/sites-available/spencer-denim-development` in place: **rollback is the reverse of that one line**, instantly, while the old
+   containers are still running.
+4. `verify-public.sh production https://colombowardrobecompany.com`, and look at the page.
+5. Leave the development containers **running but unreachable** for an agreed period, then stop them (`docker compose … stop`, never `down -v`).
+   The `shop.colombowardrobecompany.com` site and everything of `purchase-order-*` stay exactly as they are.
+6. `www`: the existing certificate covers it. Decide with the owner whether it redirects to the apex (D3) or serves the shop.
+
 ### D1. Repeat B1–B12 with these differences
 
 | Step | `staging` (UAT) | `production` (Live) |
@@ -693,11 +748,11 @@ Same commands as §B with the differences below. **Do not start before the gate.
    it talks to the loopback port).
 2. B12-a (prerequisites), B12-b (catch-all, only if still needed) and B12-c (the port-80 bootstrap site for `colombowardrobecompany.com`).
    The certificate cannot be issued before DNS points here, so nothing can be tested over HTTPS yet.
-3. **Change the apex A record** (A2), then wait until `dig +short A colombowardrobecompany.com @1.1.1.1` shows the VPS address.
-   If something is live at the apex today (A1 #7), this is the cut-over moment: do steps 4–5 straight away.
-4. B12-d (dry run, then the real certificate with `--deploy-hook`), then B12-e with the **production** template.
-5. From outside: `verify-public.sh production https://colombowardrobecompany.com` → `RESULT: no FAIL`; look at the certificate in a browser;
-   `sudo certbot renew --dry-run` succeeds.
+3. **The apex and `www` already point at this VPS** (A0), so there is no DNS change. The cut-over is in nginx: follow §D0b.
+4. The certificate: **reuse the existing lineage** `colombowardrobecompany.com` (it already covers the apex and `www`; check with `sudo certbot certificates`). Do **not** run B12-d for the apex: a request for the apex alone would create a second lineage `colombowardrobecompany.com-0001` while the template points at the old one. Then B12-e with the **production** template, as part of the cut-over in §D0b.
+5. From outside: `verify-public.sh production https://colombowardrobecompany.com` → `RESULT: no FAIL`, **and look at the page**: the
+   storefront must say the new name, not "Spencer Denim" (`verify-public.sh` does not tell the two stacks apart); look at the certificate in a
+   browser; `sudo certbot renew --dry-run --cert-name colombowardrobecompany.com` succeeds.
 
 **HSTS is one year** (`max-age=31536000`) from the first HTTPS response a browser sees. Only go public once the dry-run renewal
 works, or an expired certificate cannot be bypassed by visitors.
@@ -749,17 +804,24 @@ Backups: run `backup-db.sh production` by hand now and copy the file off the ser
 
 **Abort UAT without destroying anything:**
 ```bash
-cd "$APP"/compose && $C stop                     # $C from B11; the data stays
+cd /opt/apps/staging/spencer-denim-app/compose && sudo env SD_IMAGE_TAG=unused docker compose -p sd-staging --project-directory . -f compose.yml -f compose.staging.yml --env-file ../config/app.env stop   # literal paths; the data stays
 sudo rm /etc/nginx/sites-enabled/spencer-denim-staging.conf && sudo nginx -t && sudo systemctl reload nginx
 ```
 and remove the DNS records. Start again with `db-up.sh` then `deploy.sh` (same tag).
 
 **Wipe UAT completely and start over: DESTRUCTIVE, UAT ONLY, NEVER `production`.** It deletes the staging database, uploads and key ring.
+This block sets **its own** variables, from literals, and refuses to run for anything but staging, because the shell variables of a
+session that also did Live (D1) point at production:
 ```bash
-cd "$APP"/compose && $C down                                  # no -v, ever
-cd "$DB"/compose && sudo docker compose --env-file ../config/db.env down
-sudo rm -rf "$DB"/data/* "$DB"/backups/* "$APP"/data/*
-sudo "$SRC"/deploy/scripts/install.sh staging                 # recreates the directories and their owners
+bash -c '
+  set -euo pipefail
+  APP=/opt/apps/staging/spencer-denim-app; DB=/opt/server/database/staging
+  [ -d "$APP/data" ] && [ -d "$DB/data" ] || { echo "staging directories not found: stop"; exit 1; }
+  (cd "$APP/compose" && sudo env SD_IMAGE_TAG=unused docker compose -p sd-staging --project-directory . -f compose.yml -f compose.staging.yml --env-file ../config/app.env down)   # no -v, ever
+  (cd "$DB/compose" && sudo docker compose --env-file ../config/db.env down)
+  sudo rm -rf -- "$DB"/data/* "$DB"/backups/* "$APP"/data/*
+  sudo /opt/apps/src/spencer-denim-ecommerce/deploy/scripts/install.sh staging     # recreates the directories and their owners
+'
 ```
 Then B8 onwards. The `.pfx` in `config/dataprotection/` is untouched by this; after wiping `data/`, the key ring is new, so a fresh
 start with the same certificate is fine.
@@ -822,6 +884,17 @@ Deviations from this sheet (anything done differently, with the reason; docs/15 
 - `make-dp-cert.sh` and the `check-env.sh` certificate rules; the API starting with an OpenSSL-made `.pfx`
   (`DataProtectionKeyRingTests`).
 - `docker compose config` on the compose files with and without the certificate settings.
+
+**Independent tester, round 1 (2026-10-21): FAIL on the sheet, scripts sound.** The tester ran the repo's tests (Git Bash, and an Ubuntu 26.04.1
+container with uutils coreutils), read every script for destructive behaviour on a shared host (none: no prune, `volume rm`, `down -v`,
+`chown -R`; names are project-scoped), mutated the preflight's stand-ins, and checked the host templates with `nginx -t` on 1.28 next
+to copies of the three existing sites. Its Blocker and Majors were all about this server not being the fresh one the sheet assumed, and are
+fixed above: the live "development" site on the apex (A0, §D0b, preflight WARN), the memory budget that counted a production SQL Server that does
+not exist (`preflight.sh staging`), the unscoped `certbot renew --dry-run` (now `--cert-name`), the wipe/abort blocks that reused shell variables
+(now literals and a guard), the catch-all advice (skip here), existing directories (preflight WARN), and the build on a shared host (B10).
+Minors fixed: the `ss` expectation, the `db-up`/`db-provision` environment and name guards, B5 being staging-only, the Ubuntu 26.04 facts.
+**Still open from that round:** `test-host-nginx.sh` leaves mock servers running (its cleanup trap does not see the pids); HTTP/2 is switched on for the other
+sites sharing `:443` (templates would need the nginx 1.25.1+ form); `verify-public.sh` cannot tell the old stack from the new one on the apex.
 
 **Only the VPS can show, and what to watch for on the first run:**
 
