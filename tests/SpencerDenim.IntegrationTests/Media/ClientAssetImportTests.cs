@@ -341,37 +341,27 @@ public sealed class ClientAssetImportTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
-    /// The HOME-06 slot says what its photograph shows, and opens a listing that holds it (W1-14).
-    /// <para>
-    /// <b>The picture, the words and the link have to arrive together.</b> The delivered
-    /// <c>activewear.jpg</c> is a linen and denim flat-lay and the slot said "Activewear … Pieces that
-    /// move with you", pointing at <c>/women/activewear</c>; that contradiction is issue #63 and is what
-    /// kept the section off the front page. The copy is decided now, so the words and the destination
-    /// move with the picture — and a database that already carries the old wording from an earlier
-    /// import is rewritten rather than switched on over it, which plain <c>??=</c> would have done.
-    /// </para>
+    /// #63: the HOME-06 picture lands under the words <b>seeded</b> for it — the importer writes no copy at
+    /// all. The row said "Linen and denim" before the photograph arrived; the import attaches the picture,
+    /// switches the row on, and switches the section on, and the words, the link and the picture agree
+    /// because nothing in the importer gets a chance to disagree with the seeder.
     /// </summary>
     [Fact]
-    public async Task The_activewear_slot_is_relabelled_to_match_the_picture_it_was_given()
+    public async Task The_activewear_picture_lands_under_the_words_seeded_for_it()
     {
         await using var world = await CreateAsync();
-        await world.DropTheUsualAsync(TheDeliveredShapes, Token);
 
-        Assert.True((await world.ImportAsync(Token)).Succeeded);
-
-        // Exactly what an earlier version of this importer left behind on the live database.
         await using (var scope = world.CreateScope())
         {
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var stale = Assert.Single(await ItemsAsync(dbContext, HomeSectionType.ActivewearFeature));
+            var waiting = Assert.Single(await ItemsAsync(dbContext, HomeSectionType.ActivewearFeature));
 
-            stale.Title = "Activewear";
-            stale.Subtitle = "Pieces that move with you.";
-            stale.LinkUrl = "/women/activewear";
-            stale.ButtonLabel = "Shop activewear";
-            await dbContext.SaveChangesAsync(Token);
+            Assert.Equal("Linen and denim", waiting.Title);
+            Assert.False(waiting.IsEnabled);
+            Assert.Null(waiting.ImageAssetId);
         }
 
+        await world.DropTheUsualAsync(TheDeliveredShapes, Token);
         var report = await world.ImportAsync(Token);
         Assert.True(report.Succeeded, string.Join("; ", report.Failures));
 
@@ -383,20 +373,21 @@ public sealed class ClientAssetImportTests(SqlServerDatabaseFixture sqlServer)
             Assert.Equal("Linen and denim", item.Title);
             Assert.Equal("Breathable linen for the heat, washed indigo for everything else.", item.Subtitle);
             Assert.Equal("Shop linen and denim", item.ButtonLabel);
-
-            // Not a department page that happens to include them: a listing of the fabrics themselves.
             Assert.Equal("/women?material=linen&material=linen-blend&material=denim", item.LinkUrl);
+            Assert.NotNull(item.ImageAssetId);
+            Assert.True(item.IsEnabled);
         }
 
         Assert.True(Assert.Single(await EnabledAsync(world, [HomeSectionType.ActivewearFeature])).IsEnabled);
     }
 
     /// <summary>
-    /// And the other half of it: an import may take back its own words, never somebody else's. A
-    /// headline written in ADM-17 survives, and the report says it did so nobody has to notice.
+    /// #63: an import never touches words. A heading written in ADM-17 — even one that happens to say
+    /// "Activewear" — and a button label of "Activewear" both survive a re-import exactly; the retraction of
+    /// the old importer's words is the seeder's job now, done once (HomeContentSeedVersionTests).
     /// </summary>
     [Fact]
-    public async Task A_headline_somebody_wrote_in_the_admin_screens_survives_the_import()
+    public async Task An_import_never_rewrites_the_words_on_a_row()
     {
         await using var world = await CreateAsync();
         await world.DropTheUsualAsync(TheDeliveredShapes, Token);
@@ -408,76 +399,70 @@ public sealed class ClientAssetImportTests(SqlServerDatabaseFixture sqlServer)
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var item = Assert.Single(await ItemsAsync(dbContext, HomeSectionType.ActivewearFeature));
 
-            item.Title = "The hot-weather edit";
+            item.Title = "Activewear";
+            item.ButtonLabel = "Activewear";
+            item.LinkUrl = "/women/activewear";
+            await dbContext.SaveChangesAsync(Token);
+
+            var tile = (await ItemsAsync(dbContext, HomeSectionType.TrendingItems))[0];
+            tile.Title = "The hot-weather edit";
             await dbContext.SaveChangesAsync(Token);
         }
 
         var report = await world.ImportAsync(Token);
         Assert.True(report.Succeeded, string.Join("; ", report.Failures));
 
-        Assert.Contains(
-            report.Notes,
-            note => note.Contains("heading", StringComparison.Ordinal)
-                && note.Contains("ADM-17", StringComparison.Ordinal));
-
         await using (var scope = world.CreateScope())
         {
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var item = Assert.Single(await ItemsAsync(dbContext, HomeSectionType.ActivewearFeature));
 
-            Assert.Equal("The hot-weather edit", item.Title);
-
-            // The rest is still the import's own, so the one edit does not freeze the whole block.
-            Assert.Equal("Shop linen and denim", item.ButtonLabel);
+            Assert.Equal("Activewear", item.Title);
+            Assert.Equal("Activewear", item.ButtonLabel);
+            Assert.Equal("/women/activewear", item.LinkUrl);
+            Assert.Equal("The hot-weather edit", (await ItemsAsync(dbContext, HomeSectionType.TrendingItems))[0].Title);
         }
     }
 
     /// <summary>
-    /// A retraction is about <b>one field</b>, and must not reach across to another that happens to
-    /// hold the same words.
-    /// <para>
-    /// The four strings the importer took back for HOME-06 were kept in one flat set and tested against
-    /// every field, so an admin who typed "Activewear" as the <i>button label</i> — a perfectly ordinary
-    /// thing to do, the section is still the activewear slot — had it silently rewritten by a retraction
-    /// that was only ever about the heading. Silently, because the write looked like a retraction rather
-    /// than like a value being kept, so it did not even earn the note. The field is part of the key now.
-    /// </para>
+    /// #63: the importer does not invent a row. A picture whose row was deleted in ADM-17 fails the run with
+    /// the way to fix it named, and a trending picture beyond the rows that exist is reported as outside the
+    /// contract rather than given a tile nobody wrote.
     /// </summary>
     [Fact]
-    public async Task A_retraction_of_one_field_does_not_reach_across_to_another()
+    public async Task A_picture_with_no_row_waiting_for_it_is_not_given_one()
     {
         await using var world = await CreateAsync();
+
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await dbContext.HomeSectionItems
+                .Where(item => item.HomeSection!.SectionType == HomeSectionType.CampaignBanner)
+                .ExecuteDeleteAsync(Token);
+            await dbContext.HomeSectionItems
+                .Where(item => item.HomeSection!.SectionType == HomeSectionType.TrendingItems && item.SortOrder == 4)
+                .ExecuteDeleteAsync(Token);
+        }
+
         await world.DropTheUsualAsync(TheDeliveredShapes, Token);
-
-        Assert.True((await world.ImportAsync(Token)).Succeeded);
-
-        await using (var scope = world.CreateScope())
-        {
-            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var item = Assert.Single(await ItemsAsync(dbContext, HomeSectionType.ActivewearFeature));
-
-            // The heading's retracted value, typed by a person into a different field.
-            item.ButtonLabel = "Activewear";
-            await dbContext.SaveChangesAsync(Token);
-        }
-
         var report = await world.ImportAsync(Token);
-        Assert.True(report.Succeeded, string.Join("; ", report.Failures));
+
+        Assert.False(report.Succeeded);
+        Assert.Contains(
+            report.Failures,
+            failure => failure.Contains("CampaignBanner", StringComparison.Ordinal)
+                && failure.Contains("content seeder", StringComparison.Ordinal));
 
         await using (var scope = world.CreateScope())
         {
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var item = Assert.Single(await ItemsAsync(dbContext, HomeSectionType.ActivewearFeature));
 
-            Assert.Equal("Activewear", item.ButtonLabel);
+            // The run rolled back, and in any case no banner row was conjured up.
+            Assert.Empty(await ItemsAsync(dbContext, HomeSectionType.CampaignBanner));
+            Assert.Equal(3, (await ItemsAsync(dbContext, HomeSectionType.TrendingItems)).Count);
         }
-
-        Assert.Contains(
-            report.Notes,
-            note => note.Contains("button label", StringComparison.Ordinal)
-                && note.Contains("ADM-17", StringComparison.Ordinal));
     }
-
     /// <summary>
     /// The ten kids' products keep their placeholders. No photograph of an adult is put in front of a
     /// children's garment to fill a gap, however convincing the gap looks.

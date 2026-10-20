@@ -345,7 +345,7 @@ public sealed class AdminNewsletterEndpointTests(SqlServerDatabaseFixture sqlSer
         var me = await GetJsonAsync(client, "/api/admin/auth/whoami");
         var before = await LastAuditIdAsync();
 
-        await ExportAsync(client, $"?search={Marker}&from=2020-01-01&to=2030-12-31");
+        await ExportAsync(client, $"?search={Marker}&from=2020-01-01&to=2099-12-31");
 
         var rows = await AuditRowsAfterAsync(before);
         var row = Assert.Single(rows);
@@ -359,7 +359,7 @@ public sealed class AdminNewsletterEndpointTests(SqlServerDatabaseFixture sqlSer
         Assert.Equal(2, after.GetProperty("rows").GetInt32());
         Assert.Equal("Subscribed", after.GetProperty("status").GetString());
         Assert.Equal("2020-01-01", after.GetProperty("consentFrom").GetString());
-        Assert.Equal("2030-12-31", after.GetProperty("consentTo").GetString());
+        Assert.Equal("2099-12-31", after.GetProperty("consentTo").GetString());
         Assert.True(after.GetProperty("searchApplied").GetBoolean());
 
         Assert.DoesNotContain(Marker, row.AfterJson!, StringComparison.OrdinalIgnoreCase);

@@ -63,6 +63,7 @@ public sealed record SetStoreLogoRequest(Guid? LogoAssetPublicId, string? RowVer
 /// <param name="FacebookUrl">A full http(s) address. Blank or absent hides the icon.</param>
 /// <param name="InstagramUrl"><inheritdoc cref="FacebookUrl" path="/node()"/></param>
 /// <param name="TikTokUrl"><inheritdoc cref="FacebookUrl" path="/node()"/></param>
+/// <param name="YouTubeUrl"><inheritdoc cref="FacebookUrl" path="/node()"/> Added by issue #193.</param>
 /// <param name="RowVersion">The group's token from the read model.</param>
 public sealed record UpdateContactAndSocialRequest(
     string? WhatsApp,
@@ -74,6 +75,7 @@ public sealed record UpdateContactAndSocialRequest(
     string? FacebookUrl,
     string? InstagramUrl,
     string? TikTokUrl,
+    string? YouTubeUrl,
     string? RowVersion);
 
 /// <summary>
@@ -135,4 +137,20 @@ public sealed record UpdateInvoiceAndFulfilmentSettingsRequest(
     string? BrNumber,
     string? VatNumber,
     string? AutoDeliverAfterDays,
+    string? RowVersion);
+
+/// <summary>
+/// How long the nightly purge keeps raw page views (doc 08 §3.8 group <c>Traffic</c>, §8.4; issue #193).
+/// </summary>
+/// <remarks>
+/// <b>For the OpenAPI document only.</b> The body is read as a <c>JsonObject</c>, so an absent field is not
+/// written. Unlike the text groups, a present field may not be empty: an unset period would hand the purge back
+/// to <c>Traffic__*</c> configuration without anything on the screen saying so.
+/// </remarks>
+/// <param name="RawRetentionDays">Whole days, as digits, 30 to 365. Today counts as the first.</param>
+/// <param name="BotRetentionDays">Whole days, as digits, 7 to 90, and never more than <paramref name="RawRetentionDays"/>.</param>
+/// <param name="RowVersion">The <c>Traffic</c> group's concurrency token, as the screen read it.</param>
+public sealed record UpdateTrafficSettingsRequest(
+    string? RawRetentionDays,
+    string? BotRetentionDays,
     string? RowVersion);

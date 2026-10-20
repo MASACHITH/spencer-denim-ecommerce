@@ -122,6 +122,14 @@ services:
       Email__Smtp__Password: ${SD_SMTP_PASSWORD:-}
       Email__Smtp__FromAddress: ${SD_SMTP_FROM_ADDRESS:-}
       Email__Smtp__FromName: ${SD_SMTP_FROM_NAME:-}
+      # Traffic recording (W4-03, #193; docs/15 §4). Unset, each is the code default shown.
+      Traffic__RecordingEnabled: ${SD_TRAFFIC_RECORDING_ENABLED:-true}
+      # The shop's own host names, comma-separated, so a click from www. to the bare domain is not a "source".
+      Traffic__InternalHosts: ${SD_TRAFFIC_INTERNAL_HOSTS:-}
+      # FALLBACK retention only. The Settings screen's Traffic form (ops.Settings, seeded 90/7) wins whenever its
+      # row holds a valid value; these apply only while a row is unset or out of the form's bounds.
+      Traffic__RawRetentionDays: ${SD_TRAFFIC_RAW_RETENTION_DAYS:-90}
+      Traffic__BotRetentionDays: ${SD_TRAFFIC_BOT_RETENTION_DAYS:-7}
     healthcheck:
       # Readiness, not liveness: the gateway starts only once the API can reach SQL Server.
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health/ready || exit 1"]

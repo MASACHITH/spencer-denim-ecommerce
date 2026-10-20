@@ -145,7 +145,8 @@ public sealed class SettingCatalogTests
     /// Five keys when ADM-22 shipped; ten once W2-11 completed the <c>Contact</c> group; fifteen since
     /// W3-03 added the <c>Bank</c> group, which doc 11 P7 makes a precondition of taking money at all; and
     /// twenty since W3-04 added the four <c>Store.*</c> legal keys an invoice prints and the <c>Orders</c>
-    /// group's auto-deliver window. The test's name does not count them, because a name that counts is a
+    /// group's auto-deliver window; then W4-01's twelve PayPal keys and issue #193's YouTube channel and two
+    /// traffic retention periods. The test's name does not count them, because a name that counts is a
     /// name that has to be renamed — and this list has now been renamed past three times in two weeks.
     /// </remarks>
     [Fact]
@@ -163,6 +164,7 @@ public sealed class SettingCatalogTests
             SettingKeys.Social.FacebookUrl,
             SettingKeys.Social.InstagramUrl,
             SettingKeys.Social.TikTokUrl,
+            SettingKeys.Social.YouTubeUrl,
             SettingKeys.Bank.BankName,
             SettingKeys.Bank.Branch,
             SettingKeys.Bank.AccountName,
@@ -185,6 +187,8 @@ public sealed class SettingCatalogTests
             SettingKeys.PayPal.CaptureRecoveryMaxHours,
             SettingKeys.PayPal.PendingCaptureMaxDays,
             SettingKeys.PayPal.ExpiryMinutes,
+            SettingKeys.Traffic.RawRetentionDays,
+            SettingKeys.Traffic.BotRetentionDays,
         ];
 
         Assert.Equal(expected.Order(StringComparer.Ordinal), SettingCatalog.All.Select(d => d.Key).Order(StringComparer.Ordinal));
@@ -348,7 +352,7 @@ public sealed class SettingCatalogTests
     {
         // `Store` appears once although W3-04 added four more keys to it further down the list: Groups is
         // distinct, and that is what the "once each" in the name is about.
-        Assert.Equal(["Store", "Contact", "Social", "Bank", "Orders", "Payments.PayPal"], SettingCatalog.Groups);
+        Assert.Equal(["Store", "Contact", "Social", "Bank", "Orders", "Payments.PayPal", "Traffic"], SettingCatalog.Groups);
     }
 
     [Fact]
@@ -369,8 +373,17 @@ public sealed class SettingCatalogTests
             SettingCatalog.KeysIn(SettingKeys.Orders.Group));
 
         Assert.Equal(
-            [SettingKeys.Social.FacebookUrl, SettingKeys.Social.InstagramUrl, SettingKeys.Social.TikTokUrl],
+            [
+                SettingKeys.Social.FacebookUrl,
+                SettingKeys.Social.InstagramUrl,
+                SettingKeys.Social.TikTokUrl,
+                SettingKeys.Social.YouTubeUrl,
+            ],
             SettingCatalog.KeysIn(SettingKeys.Social.Group));
+
+        Assert.Equal(
+            [SettingKeys.Traffic.RawRetentionDays, SettingKeys.Traffic.BotRetentionDays],
+            SettingCatalog.KeysIn(SettingKeys.Traffic.Group));
 
         Assert.Equal(
             [
