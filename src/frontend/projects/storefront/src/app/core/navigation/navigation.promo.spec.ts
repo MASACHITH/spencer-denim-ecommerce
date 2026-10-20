@@ -140,6 +140,20 @@ describe('toPromo (#215)', () => {
     expect(promo.imageAlt).toBe('');
   });
 
+  // Tester pass (#215): an empty srcset would reach `[attr.srcset]` as "" and `sizes` would still be set;
+  // padding round the line or the alt text is what a pasted value carries.
+  it('treats an empty srcset as none and trims the line and the alt text', () => {
+    const promo = toPromo(
+      department({
+        promoCards: [card({ imageSrcSet: '', subtitle: '  Breathable.  ', imageAlt: '  A linen dress  ' })],
+      }),
+    );
+
+    expect(promo.imageSrcSet).toBeNull();
+    expect(promo.caption).toBe('Breathable.');
+    expect(promo.imageAlt).toBe('A linen dress');
+  });
+
   it('a department with no menu has no card at all, admin card or not', () => {
     const [women] = toNavigation([department({ categories: [], promoCards: [card()] })]);
 

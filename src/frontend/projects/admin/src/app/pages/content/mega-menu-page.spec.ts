@@ -240,6 +240,79 @@ describe('MegaMenuPage (#215, GLB-05)', () => {
     expect(q(fixture, 'mm-dept-women')?.textContent).toContain('the most it can');
   });
 
+  // ---- tester pass (#215): mutants that survived the developer's specs -------------------------------
+
+  it('an untouched edit of a switched-off, scheduled card sends it back off and on the same dates', () => {
+    const scheduled = card({
+      isActive: false,
+      isLiveNow: false,
+      isShownNow: false,
+      startsAt: '2026-12-01T09:00',
+      endsAt: '2026-12-24T18:30',
+      sortOrder: 3,
+    });
+    const fixture = create(content([department({ cards: [scheduled] })]));
+
+    q<HTMLButtonElement>(fixture, 'mm-edit-1')!.click();
+    fixture.detectChanges();
+    expect(q<HTMLInputElement>(fixture, 'mm-active')?.checked).toBe(false);
+    q<HTMLButtonElement>(fixture, 'mm-save')!.click();
+    grantToken();
+
+    const request = controller.expectOne(`${URL}/cards/1`);
+    expect(request.request.body).toEqual(
+      expect.objectContaining({
+        isActive: false,
+        startsAt: '2026-12-01T09:00',
+        endsAt: '2026-12-24T18:30',
+        sortOrder: 3,
+      }),
+    );
+    request.flush({ id: 1, rowVersion: 'rv1b' });
+    controller.expectOne(URL).flush(content());
+  });
+
+  it('a new card for a department goes after the cards it already holds', () => {
+    const two = [card({ id: 1 }), card({ id: 2, isShownNow: false })];
+    const fixture = create(content([department({ cards: two })]));
+
+    q<HTMLButtonElement>(fixture, 'mm-add-women')!.click();
+    fixture.detectChanges();
+
+    expect(q<HTMLInputElement>(fixture, 'mm-order')?.value).toBe('2');
+  });
+
+  it('removing the card being edited puts the form back to adding', () => {
+    const fixture = create();
+
+    q<HTMLButtonElement>(fixture, 'mm-edit-1')!.click();
+    fixture.detectChanges();
+    q<HTMLButtonElement>(fixture, 'mm-remove-1')!.click();
+    fixture.detectChanges();
+    q<HTMLButtonElement>(fixture, 'mm-remove-1')!.click();
+    grantToken();
+    controller.expectOne(`${URL}/cards/1`).flush(null, { status: 204, statusText: 'No Content' });
+    controller.expectOne(URL).flush(content([department({ cards: [] })]));
+    fixture.detectChanges();
+
+    expect(q(fixture, 'mm-save')?.textContent).toContain('Add the card');
+    expect(q(fixture, 'mm-cancel')).toBeNull();
+  });
+
+  it('a second press of Save while the first is on its way sends nothing more', () => {
+    const fixture = create(content([department({ cards: [] })]));
+
+    q<HTMLButtonElement>(fixture, 'mm-add-women')!.click();
+    fixture.detectChanges();
+    q<HTMLInputElement>(fixture, 'mm-active')!.click();
+    q<HTMLButtonElement>(fixture, 'mm-save')!.click();
+    q<HTMLButtonElement>(fixture, 'mm-save')!.click();
+    grantToken();
+
+    controller.expectOne(`${URL}/cards`).flush({ id: 9, rowVersion: 'rv9' });
+    controller.expectOne(URL).flush(content());
+  });
+
   it('shows the refusal panel to a role without Content.View and hides the form', () => {
     const fixture = TestBed.createComponent(MegaMenuPage);
     fixture.detectChanges();

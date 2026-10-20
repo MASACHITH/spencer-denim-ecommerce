@@ -338,6 +338,61 @@ public sealed class MegaMenuCardWriteHandlerTests
         Assert.Equal(0, _cache.Evictions);
     }
 
+    /// <summary>
+    /// Tester pass (#215): a change to any one field is a change — saved, audited by name — never an "untouched
+    /// resave". With a field missing from the audit snapshot, changing only that field was silently dropped.
+    /// </summary>
+    [Theory]
+    [InlineData("departmentId")]
+    [InlineData("title")]
+    [InlineData("subtitle")]
+    [InlineData("buttonLabel")]
+    [InlineData("linkUrl")]
+    [InlineData("imageAssetId")]
+    [InlineData("sortOrder")]
+    [InlineData("isActive")]
+    [InlineData("startsAtUtc")]
+    [InlineData("endsAtUtc")]
+    public async Task Changing_only_one_field_is_saved_and_audited_by_name(string field)
+    {
+        var card = _store.AddExisting(departmentId: 1);
+        var same = new MegaMenuCardFields(
+            card.DepartmentId, card.Title, card.Subtitle, card.ButtonLabel, card.LinkUrl, TestMedia.Photo, card.SortOrder, card.IsActive, null, null);
+
+        var changed = field switch
+        {
+            "departmentId" => same with { DepartmentId = 2 },
+            "title" => same with { Title = "Renamed" },
+            "subtitle" => same with { Subtitle = "Another line" },
+            "buttonLabel" => same with { ButtonLabel = "Shop the edit" },
+            "linkUrl" => same with { LinkUrl = "/women" },
+            "imageAssetId" => same with { ImagePublicId = TestMedia.OtherPhoto },
+            "sortOrder" => same with { SortOrder = 7 },
+            "isActive" => same with { IsActive = false },
+            "startsAtUtc" => same with { StartsAt = new DateTime(2026, 11, 1, 9, 0, 0, DateTimeKind.Unspecified) },
+            "endsAtUtc" => same with { EndsAt = new DateTime(2026, 12, 1, 9, 0, 0, DateTimeKind.Unspecified) },
+            _ => throw new ArgumentOutOfRangeException(nameof(field)),
+        };
+
+        var result = await Handlers().HandleAsync(new UpdateMegaMenuCardCommand(card.Id, changed, Version(card), TestActors.Editor), Token);
+
+        Assert.IsType<ContentWriteResult.Succeeded>(result);
+        Assert.Equal(1, _store.Saves);
+        var row = Assert.Single(_audit.Entries);
+        Assert.Contains(field, row.AfterJson, StringComparison.Ordinal);
+        Assert.Equal(1, _cache.Evictions);
+    }
+
+    [Fact]
+    public async Task A_create_is_audited_with_what_was_added()
+    {
+        await Handlers().HandleAsync(new CreateMegaMenuCardCommand(Fields() with { Title = "Linen days" }, TestActors.Editor), Token);
+
+        var row = Assert.Single(_audit.Entries);
+        Assert.Contains("Linen days", row.AfterJson, StringComparison.Ordinal);
+        Assert.Contains("/new-arrivals", row.AfterJson, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Changing_the_picture_rewrites_the_usage_rows_to_the_new_one()
     {
