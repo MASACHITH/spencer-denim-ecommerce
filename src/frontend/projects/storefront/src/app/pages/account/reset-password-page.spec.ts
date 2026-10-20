@@ -282,8 +282,8 @@ describe('ResetPasswordPage (ACC-01)', () => {
      * **This reverses what this test used to assert**, and the reversal is recorded in the register
      * page's own version at length: leaving the rule out means a shopper learns it only by being
      * refused (WCAG 2.2 3.3.2), and the cure for #126's two-sources hazard is a copy that cannot drift
-     * rather than no copy. `PASSWORD_RULE` is pinned to `CustomerPasswordPolicy.Requirement` by
-     * `CustomerPasswordHintConventionTests` in the C# unit suite, which fails the build if the two
+     * rather than no copy. `PASSWORD_RULE` is pinned to `PasswordPolicy.Requirement` by
+     * `PasswordHintConventionTests` in the C# unit suite, which fails the build if the two
      * differ by a character.
      *
      * It matters slightly more here than on registration. A shopper on this page is holding a

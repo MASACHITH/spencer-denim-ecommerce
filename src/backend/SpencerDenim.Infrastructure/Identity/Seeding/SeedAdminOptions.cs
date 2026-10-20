@@ -9,7 +9,9 @@ namespace SpencerDenim.Infrastructure.Identity.Seeding;
 /// <item><description><c>Seed__Admin__Enabled</c> — must be explicitly <c>true</c>. Default <c>false</c>, so a
 /// production deployment never seeds an admin unless someone deliberately turns this on for the first boot.</description></item>
 /// <item><description><c>Seed__Admin__Email</c>, <c>Seed__Admin__Password</c> — required when enabled. The
-/// password still has to satisfy ASP.NET Core Identity's password policy.</description></item>
+/// password has to satisfy <see cref="SpencerDenim.Domain.Identity.PasswordPolicy"/> (at least 10 characters with an
+/// upper-case letter, a lower-case letter, a number and a symbol), the same as every other account. A shorter one
+/// creates no account: the host still starts, and an error naming the rule is logged (issue #200).</description></item>
 /// <item><description><c>Seed__Admin__FirstName</c>, <c>Seed__Admin__LastName</c> — optional, default "Super"/"Admin".</description></item>
 /// </list>
 /// Doc 03 §4: on the server these live in the bootstrap <c>.env</c> file, never committed.

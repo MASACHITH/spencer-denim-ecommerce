@@ -21,7 +21,7 @@
  * because the server sends an explicit `null` for it and `undefined` would be a different bug.
  *
  * **There is no copy of the password rule in this file**, and that is deliberate rather than an
- * oversight. `CustomerPasswordPolicy` (Domain) says in its own remarks that "the front end reads it from
+ * oversight. `PasswordPolicy` (Domain) says in its own remarks that "the front end reads it from
  * the registration endpoint's problem details rather than holding a second copy", because #126 shipped a
  * `maxlength` of 120 against a 100-character column. The cost is that a shopper learns the rule from a
  * refusal rather than before typing; the task report raises that as a question for the owner.
@@ -128,12 +128,12 @@ export interface CustomerAddressDto {
  *
  * ## Why a copy of a server constant lives here at all
  *
- * The server owns this rule — `CustomerPasswordPolicy.Requirement` — and that class's remark says the
+ * The server owns this rule — `PasswordPolicy.Requirement` — and that class's remark says the
  * front end should read it rather than hold a second copy. There is no endpoint that serves it, and
  * inventing one for a sentence would be a request on every page load for a string that changes once a
  * year.
  *
- * So this is a copy, and the copy is **pinned**: `CustomerPasswordHintConventionTests` in the C# unit
+ * So this is a copy, and the copy is **pinned**: `PasswordHintConventionTests` in the C# unit
  * suite reads this file and fails the build if the string below is not byte-identical to the constant.
  * That is the technique `BrandNameConventionTests` already uses across the three source trees for the
  * shop's name, and it is the only cure for #126 that works — a form promising one rule while the server
