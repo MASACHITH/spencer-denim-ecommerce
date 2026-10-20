@@ -68,3 +68,34 @@ Found by the tests during development rather than by mutation: the first debounc
 ## Process notes
 - One filtered integration run started while another agent's testhost was up (the brief says wait); it passed and did not touch shared rows beyond its own campaigns. Every later run waited for 60 s clear.
 - The full integration suite was not run (other agents run backend tests); the tester should.
+
+## Round 2: after the tester's conditional pass (tester commit d702b10)
+
+- **MEDIUM fixed: a pre-#191 banner could be deleted while its campaign was live.** Such a campaign has no usage row. `MediaService.DeleteAsync` now also checks every non-deleted campaign's `BannerAssetId` directly, as it already did for the video poster and the payment slip, and refuses with 409, naming the campaign as `SaleCampaign` / `Banner`. The tester's skipped test is un-skipped and now also checks the 409 body and that the asset was not deleted.
+- **LOW fixed: a media delete racing a campaign save.**
+  - Both paths now run in one transaction each and take `UPDLOCK, READCOMMITTEDLOCK, ROWLOCK` on the asset's `media.MediaAssets` row first.
+  - The save re-checks the banner under that lock: not deleted, ready, an image, public. If the delete won, the save is refused (`SaleCampaignSaveOutcome.BannerUnavailable`, a 400 on `bannerPublicId`) and writes nothing. If the save won, the delete then sees the usage row and answers 409.
+  - Lock order is "the asset row first" in both paths, and it is recorded in doc 08 §5.3.
+  - Edits now accept changes only after the commit, so a retried attempt still writes them.
+  - `SaleCampaignBannerRaceTests` holds the lock from its own connection, starts the first operation, waits until SQL Server reports it waiting, then starts the second, waits for two waiters, and releases. It covers both orders.
+- **LOW fixed: a long unbroken product name widened the page.** `campaign-said` now has `overflow-wrap: anywhere`, and the tester's `test.fail` line is removed.
+- **Stale Enter fixed.** The picker clears the previous term's list the moment the term changes, so Enter and the arrow keys do nothing until the new results arrive. Covered by a Vitest.
+- **Dropped banner made visible.** The admin payload has a new field, `bannerUnavailable` (true when the column names a picture the shop can no longer show). The form shows "The banner previously chosen is no longer available… saving this campaign will remove it", and the list says "No longer available in the media library". Covered by Vitest and by the tester's integration theory, which now asserts the flag.
+
+**Mutation testing, round 2: 8/8 killed.**
+- Delete ignores the campaign foreign key: killed by the legacy test.
+- Delete takes no lock: killed by the race test.
+- Save takes no lock: killed by the race test.
+- Save lock ignores `IsDeleted`: killed by the delete-first race test.
+- Save refusal treated as saved: killed by the race test.
+- Stale list kept while searching: killed by Vitest.
+- Unavailable banner not flagged: killed by Vitest.
+- Status line does not wrap: killed by the tester's long-name e2e.
+
+**Round 2 numbers:**
+- Unit: 3,203/3,203.
+- Filtered integration (SaleCampaign, Campaign, Media, Home, Catalog, Pricing, Content): 615/615.
+- Release build: 0 warnings, 0 errors.
+- Vitest: shared 24, storefront 1,941, admin 769. `ng lint` clean.
+- Builds: storefront initial 446.31 kB (unchanged), admin 314.82 kB.
+- Playwright: sale-campaign and sale-banner suites 39/39.
