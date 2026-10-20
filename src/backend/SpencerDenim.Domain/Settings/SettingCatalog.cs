@@ -164,6 +164,16 @@ public static class SettingCatalog
             "The full address of the shop's TikTok profile. Leave it empty and the footer shows no "
             + "TikTok icon."),
 
+        // Issue #193: the fourth of doc 08 §3.8's Social keys, which waited for a glyph in the shared icon set.
+        new(
+            SettingKeys.Social.YouTubeUrl,
+            SettingKeys.Social.Group,
+            SettingValueType.String,
+            Permissions.Settings.Edit,
+            "YouTube channel",
+            "The full address of the shop's YouTube channel. Leave it empty and the footer shows no "
+            + "YouTube icon."),
+
         // Group Bank (doc 08 §3.8, doc 11 P7): the account a customer transfers to. Settings.Payments on
         // every row, which is the first time this catalogue carries a permission other than Settings.Edit —
         // and the reason GetAdminSettingsQueryHandler's per-row filter was built before there was anything
@@ -279,6 +289,33 @@ public static class SettingCatalog
         // Group Payments.PayPal (doc 08 §3.8, W4-01), and Orders.PayPalExpiryMinutes. Their own file, so the
         // payment providers that follow add theirs beside these.
         .. PayPalSettingDefinitions.All,
+
+        // Group Traffic (doc 08 §3.8, §8.4; issue #193): how long the nightly purge keeps raw page views. Seeded
+        // with doc 08's own 90 and 7, which are also TrafficOptions' configuration defaults, so seeding an
+        // existing database changes nothing the purge does. The row wins over Traffic__* once it holds a value
+        // inside the bounds; see TrafficRetentionPeriods.
+        new(
+            SettingKeys.Traffic.RawRetentionDays,
+            SettingKeys.Traffic.Group,
+            SettingValueType.Int,
+            Permissions.Settings.Edit,
+            "Keep page views for",
+            "How many days of individual page views are kept, today included, before the nightly purge deletes "
+            + "them. The daily totals on the Traffic page are kept for ever whatever this says. Between 30 and "
+            + "365 days.",
+            SeedValue: SettingKeys.Traffic.RawRetentionDaysDefault.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)),
+
+        new(
+            SettingKeys.Traffic.BotRetentionDays,
+            SettingKeys.Traffic.Group,
+            SettingValueType.Int,
+            Permissions.Settings.Edit,
+            "Keep bot page views for",
+            "How many days of page views from search engines and link previews are kept. They are never counted "
+            + "as visitors. Between 7 and 90 days, and no longer than page views are kept.",
+            SeedValue: SettingKeys.Traffic.BotRetentionDaysDefault.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)),
     ];
 
     /// <summary>
@@ -342,6 +379,10 @@ public static class SettingCatalog
         // name and permission for it, Settings.Edit), so it is covered by the Store-and-Orders token above
         // and not by this one - a unit may not span two permissions.
         [SettingKeys.PayPal.Group],
+
+        // The two retention periods: one form, one permission (Settings.Edit), and a cross-field rule (bots never
+        // longer than people) that only holds if both are compared under one token.
+        [SettingKeys.Traffic.Group],
     ];
 
     /// <summary>

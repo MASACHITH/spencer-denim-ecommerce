@@ -17,7 +17,7 @@ const progressData = {
     endDate: "2026-10-15"
   },
 
-  lastUpdated: "2026-10-15",
+  lastUpdated: "2026-10-20",
 
   milestones: [
     { week: "Week 0", title: "Setup & design", start: "2026-09-15", end: "2026-09-18" },
@@ -101,7 +101,7 @@ const progressData = {
         { name: "Admin login with user roles & permissions", status: "in-progress", progress: 90 },
         { name: "Product management (images & video)", status: "done", progress: 100 },
         { name: "Category management", status: "done", progress: 100 },
-        { name: "Inventory", status: "in-progress", progress: 25 },
+        { name: "Inventory", status: "done", progress: 100 },
         { name: "Order management & payment approval", status: "done", progress: 100 },
         { name: "Promo codes & sale campaigns", status: "in-progress", progress: 85 },
         { name: "Customers", status: "done", progress: 100 },
@@ -110,7 +110,7 @@ const progressData = {
         { name: "Homepage & content management", status: "in-progress", progress: 65 },
         { name: "Dashboard", status: "done", progress: 100 },
         { name: "Reports & traffic", status: "done", progress: 100 },
-        { name: "Settings", status: "in-progress", progress: 70 }
+        { name: "Settings", status: "in-progress", progress: 80 }
       ]
     },
     {
@@ -128,6 +128,21 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-10-20",
+      title: "Inventory",
+      text: "The admin panel now has an inventory screen to see and update stock for every colour and size, with low-stock levels and a history of every change.",
+    },
+    {
+      date: "2026-10-20",
+      title: "Colourful charts",
+      text: "The dashboard, website traffic and reports pages now show colourful charts, including a new chart of first-time and returning customers.",
+    },
+    {
+      date: "2026-10-20",
+      title: "Settings",
+      text: "Settings now include how long website visit records are kept, and a YouTube link in the shop footer.",
+    },
     {
       date: "2026-10-15",
       title: "Website traffic",

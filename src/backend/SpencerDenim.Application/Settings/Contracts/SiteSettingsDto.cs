@@ -118,7 +118,7 @@ public sealed record SiteLogoDto(string Url, int? Width, int? Height, string? Al
 
 /// <summary>One social profile link the footer may draw.</summary>
 /// <param name="Network">
-/// A fixed code — <c>facebook</c>, <c>instagram</c> or <c>tiktok</c> — which the storefront maps to an
+/// A fixed code — <c>facebook</c>, <c>instagram</c>, <c>tiktok</c> or <c>youtube</c> — which the storefront maps to an
 /// icon and a label. A code rather than an icon name or a label, so the shape of the icon set is the
 /// front end's business and a new network is one row and one glyph rather than a payload change.
 /// </param>
@@ -135,4 +135,7 @@ public static class SiteSocialNetworks
     public const string Instagram = "instagram";
 
     public const string TikTok = "tiktok";
+
+    /// <summary>Issue #193. The storefront draws it with the shared icon set's <c>youtube</c> glyph.</summary>
+    public const string YouTube = "youtube";
 }

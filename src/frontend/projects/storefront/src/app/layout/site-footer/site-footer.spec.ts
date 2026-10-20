@@ -375,6 +375,45 @@ describe('SiteFooter (GLB-07)', () => {
   });
 
   /**
+   * Issue #193: a YouTube channel renders as the fourth icon, drawn with the shared set's own outline glyph (a
+   * rounded screen and a play triangle — its 19-wide rect is how this test tells it from Instagram's square), and is simply
+   * absent when no address is set.
+   */
+  it('draws a YouTube icon when the channel is set and none when it is not', () => {
+    const withYouTube = withSettings({
+      logo: null,
+      whatsAppNumber: null,
+      social: [
+        { network: 'instagram', url: 'https://www.instagram.com/colombowardrobe' },
+        { network: 'youtube', url: 'https://www.youtube.com/@colombowardrobe' },
+      ],
+    });
+
+    const links = Array.from(withYouTube.querySelectorAll<HTMLAnchorElement>('.site-footer__social a'));
+    const youTube = links.find((link) => link.getAttribute('href') === 'https://www.youtube.com/@colombowardrobe');
+
+    expect(links).toHaveLength(2);
+    expect(youTube).toBeDefined();
+    expect(youTube!.querySelector('.sr-only')?.textContent?.trim()).toMatch(/on YouTube$/);
+    expect(youTube!.querySelector('sd-icon svg rect[width="19"][height="13"]')).not.toBeNull();
+    expect(youTube!.querySelector('sd-icon svg path')?.getAttribute('d')).toMatch(/^M10\.2 9\.4/);
+    expect(youTube!.getAttribute('rel')).toContain('noopener');
+
+    const withoutYouTube = withSettings({
+      logo: null,
+      whatsAppNumber: null,
+      social: [{ network: 'instagram', url: 'https://www.instagram.com/colombowardrobe' }],
+    });
+
+    const hrefs = Array.from(
+      withoutYouTube.querySelectorAll<HTMLAnchorElement>('.site-footer__social a'),
+    ).map((link) => link.getAttribute('href'));
+
+    expect(hrefs).toEqual(['https://www.instagram.com/colombowardrobe']);
+    expect(withoutYouTube.textContent).not.toContain('YouTube');
+  });
+
+  /**
    * The dangerous half of the same rule, and the reason the check is repeated on this side of the wire:
    * the API refuses these on the way in, but a row can predate the rule, and an `href` is what a browser
    * actually follows. `javascript:` must never reach one.

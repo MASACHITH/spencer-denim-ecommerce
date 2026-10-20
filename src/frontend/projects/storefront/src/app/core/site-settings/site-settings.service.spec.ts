@@ -1,6 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, TestRequest, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { BRAND } from '@spencer-denim/shared';
 
 import {
   EMPTY_SITE_SETTINGS,
@@ -124,14 +125,34 @@ describe('toSiteSettings (ADM-22)', () => {
       const settings = toSiteSettings({
         ...NOTHING,
         social: [
-          { network: 'youtube', url: 'https://www.youtube.com/@shop' },
           { network: 'pinterest', url: 'https://pinterest.com/shop' },
+          { network: 'myspace', url: 'https://myspace.com/shop' },
         ],
       });
 
       // Not "renders a blank icon": an sd-icon with an unrecognised name draws nothing, which would leave
       // a 44 px hole with a live link in it.
       expect(settings.social).toEqual([]);
+    });
+
+    /**
+     * Issue #193: YouTube was the one network this test used to drop, because the icon set had no glyph for it.
+     * It has one now, so a YouTube address becomes a link with the `youtube` icon and a name in words.
+     */
+    it('draws a YouTube channel with the youtube icon and says what it is in words', () => {
+      const settings = toSiteSettings({
+        ...NOTHING,
+        social: [{ network: 'youtube', url: 'https://www.youtube.com/@shop' }],
+      });
+
+      expect(settings.social).toEqual([
+        {
+          network: 'youtube',
+          url: 'https://www.youtube.com/@shop',
+          icon: 'youtube',
+          label: `${BRAND.name} on YouTube`,
+        },
+      ]);
     });
 
     it('matches a network name case-insensitively', () => {

@@ -6,14 +6,17 @@ namespace SpencerDenim.Domain.Settings;
 /// <para>
 /// <b>What is deliberately absent, and why that is not an oversight.</b> Doc 08 §3.8's "Groups" table
 /// has fifteen rows — counted from the table; "sixteen" is §3.1's module list, which is a different
-/// thing — and names 59 keys, of which this build seeds 20. <see cref="DeferredSettingKeys"/> is the
-/// per-key record of the other 39 and is machine-checked against the document
-/// (<c>SettingKeySpecificationTests</c>); the paragraphs below are the summary.
+/// thing — and names 59 keys, of which this build seeds 35 (issue #193 added <c>Social.YouTubeUrl</c> and the
+/// two <c>Traffic.*</c> retention periods). <see cref="DeferredSettingKeys"/> is the per-key record of the other
+/// 24 and is machine-checked against the document (<c>SettingKeySpecificationTests</c>); the paragraphs below
+/// are the summary.
 /// <c>Bank.*</c> is now here (W3-03, PAY-01): it is the one group doc 11 P7's preconditions make a
 /// prerequisite of taking money at all. <c>Payments.PayPal.*</c> is here since W4-01 (see
-/// <c>SettingKeys.PayPal</c>); <c>Email.Smtp.*</c>, <c>Security.*</c> and
-/// <c>Privacy.RetainInvoiceBillTo</c> need
-/// <c>Settings.Security</c>, the sensitive-change alert and <c>ops.AdminAlerts</c>, none of which exists;
+/// <c>SettingKeys.PayPal</c>); <c>Social.YouTubeUrl</c> and <c>Traffic.*</c> since issue #193.
+/// <c>Email.Smtp.*</c>, <c>Security.*</c> and <c>Privacy.RetainInvoiceBillTo</c> are <c>Settings.Security</c>
+/// and deferred for their own reasons: SMTP needs doc 08 §3.8 N2's <i>dual</i> send (the only part of N2 missing —
+/// the single-send <c>SensitiveSettingsChangedAlert</c> exists), the lockout figures are read once at start-up
+/// rather than per attempt, and no anonymisation path exists to honour the privacy key;
 /// <c>Delivery</c>, the couriers and the delivery methods need <c>sales.DeliveryMethods</c> and friends,
 /// which are tables #53 creates. A key seeded here would be a key a screen offers and nothing honours —
 /// the shape of defect this project has twice decided against (the bag's promo code, "popular searches").
@@ -186,10 +189,9 @@ public static partial class SettingKeys
     /// <summary>
     /// Group <c>Social</c> (doc 08 §3.8): the shop's own profile addresses (GLB-07).
     /// <para>
-    /// <b>Three of doc 08's four.</b> <c>YouTubeUrl</c> is not seeded: the icon set
-    /// (<c>@spencer-denim/shared</c>'s <c>IconName</c>) has no YouTube glyph, so a filled-in value would
-    /// have nowhere to render, and the footer's three placeholder icons — the ones this task replaces —
-    /// are Facebook, Instagram and TikTok. It is a row and an icon away whenever the client asks.
+    /// <b>All four of doc 08's.</b> <see cref="YouTubeUrl"/> waited for a glyph in the shared icon set
+    /// (<c>@spencer-denim/shared</c>'s <c>IconName</c>) and arrived with it in issue #193; until then a value typed
+    /// into it would have had nowhere to render.
     /// </para>
     /// </summary>
     public static class Social
@@ -201,6 +203,68 @@ public static partial class SettingKeys
         public const string InstagramUrl = "Social.InstagramUrl";
 
         public const string TikTokUrl = "Social.TikTokUrl";
+
+        /// <summary>The shop's YouTube channel (issue #193). Empty hides the footer icon, as the other three do.</summary>
+        public const string YouTubeUrl = "Social.YouTubeUrl";
+    }
+
+    /// <summary>
+    /// Group <c>Traffic</c> (doc 08 §3.8, §8.4): how long raw page views are kept before the nightly purge
+    /// deletes them (ADM-20, issue #193). <c>Settings.Edit</c>, as doc 08 §3.8's table states.
+    /// <para>
+    /// <b>The database row wins; configuration is the fallback.</b> The purge reads these rows every night.
+    /// <c>Traffic__RawRetentionDays</c> and <c>Traffic__BotRetentionDays</c> are used only while a row is unset or
+    /// holds something outside the bounds below (scripted in by hand, say) — so a deployment that has never been
+    /// seeded behaves exactly as it did before the form existed, and the seeded values are doc 08 §3.8's own 90
+    /// and 7, which are also the configuration defaults. See <c>TrafficRetentionPeriods</c>.
+    /// </para>
+    /// <para>
+    /// <b>The bounds are narrower than configuration's</b> (4 to 3,650), on purpose: these are what a staff user
+    /// may type into a form, and a purge is irreversible. The daily tables are kept indefinitely whatever these
+    /// say, so the Traffic page's history never depends on them; what they control is how long visit-level rows
+    /// (one per page view, with a random session id) exist.
+    /// </para>
+    /// </summary>
+    public static class Traffic
+    {
+        public const string Group = "Traffic";
+
+        /// <summary>Days of page views kept, today included. Doc 08 §8.4: 90.</summary>
+        public const string RawRetentionDays = "Traffic.RawRetentionDays";
+
+        /// <summary>Days of bot page views kept, today included. Doc 08 §8.4: 7.</summary>
+        public const string BotRetentionDays = "Traffic.BotRetentionDays";
+
+        /// <summary>Doc 08 §3.8's seed for <see cref="RawRetentionDays"/>.</summary>
+        public const int RawRetentionDaysDefault = 90;
+
+        /// <summary>Doc 08 §3.8's seed for <see cref="BotRetentionDays"/>.</summary>
+        public const int BotRetentionDaysDefault = 7;
+
+        /// <summary>
+        /// Thirty days: a month of visit-level rows to look back at when a figure on the Traffic page needs
+        /// explaining. (Losing history to a short period is not the reason — the purge never deletes a day the rollup
+        /// has not built, and the rollup's catch-up finds such days however old they are.)
+        /// </summary>
+        public const int RawRetentionDaysMin = 30;
+
+        /// <summary>
+        /// One year. The daily tables already keep every day's totals indefinitely, so raw rows older than this
+        /// serve no report; they only keep visit-level data for longer.
+        /// </summary>
+        public const int RawRetentionDaysMax = 365;
+
+        /// <summary>
+        /// Seven days, doc 08's own figure: bot views are counted into the daily tables by the same rollup, so the
+        /// same outage argument applies, and a week leaves four days past the three-day rebuild window.
+        /// </summary>
+        public const int BotRetentionDaysMin = 7;
+
+        /// <summary>
+        /// Ninety days, and never more than <see cref="RawRetentionDays"/>: bot rows are kept out of every visitor
+        /// figure, so keeping them longer than people's views has no use.
+        /// </summary>
+        public const int BotRetentionDaysMax = 90;
     }
 
     /// <summary>
@@ -276,6 +340,15 @@ public static partial class SettingKeys
         /// nothing else.
         /// </summary>
         public const string Version = "Seed.Version";
+
+        /// <summary>
+        /// The highest <c>HomeContentData</c> seed version applied to this database (#63, #192). The same
+        /// versioned-increment rule as <see cref="Version"/>: content introduced in a version above the one
+        /// recorded here cannot have been edited or removed by this database's owner, because it did not
+        /// exist for them to touch — so it is offered once, and never again. An
+        /// <see cref="SettingValueType.Int"/> row, written by the seeder and read by nothing else.
+        /// </summary>
+        public const string HomeContentVersion = "Seed.HomeContentVersion";
     }
 
     /// <summary><c>ops.Settings.Key</c> is <c>varchar(100)</c>.</summary>

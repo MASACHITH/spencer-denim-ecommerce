@@ -209,6 +209,35 @@ export interface CustomerReportPage {
   readonly totalRevenue: number;
 }
 
+/**
+ * The customers report's chart (#186b; `CustomerBuyersDto`): buyers per day, ISO week or month, first-time and
+ * returning. Same period and search as the report, so `buyers` is its `totalCount`.
+ *
+ * A **buyer** is a distinct email address with at least one paid order in the days counted (an order refunded
+ * later still counts, as everywhere in the reports). **First-time**: their first paid order here, ever, is in
+ * those days. **Returning**: they had paid for an order here before those days began.
+ */
+export interface CustomerBuyers {
+  readonly period: ReportPeriod;
+  /** Chosen by the server from the period's length: Day up to 31 days, Week up to 182, Month beyond. */
+  readonly interval: SalesGrouping;
+  /** Distinct buyers over the period — not the sum of the points (one buyer, two weeks). */
+  readonly buyers: number;
+  /** The sum of the points' first-time figures: a first order happens once. */
+  readonly firstTimeBuyers: number;
+  readonly returningBuyers: number;
+  readonly points: readonly CustomerBuyersPoint[];
+}
+
+/** One day, week or month, cut to the period. `firstTimeBuyers + returningBuyers = buyers`. */
+export interface CustomerBuyersPoint {
+  readonly start: string;
+  readonly end: string;
+  readonly buyers: number;
+  readonly firstTimeBuyers: number;
+  readonly returningBuyers: number;
+}
+
 /** A downloaded export, ready to save. */
 export interface ReportFile {
   readonly blob: Blob;

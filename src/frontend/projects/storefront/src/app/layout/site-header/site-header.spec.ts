@@ -177,6 +177,67 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
     return element.querySelector('sd-drawer') as HTMLElement;
   }
 
+  /**
+   * #36: the header publishes its own rendered height as --header-height, and keeps doing so as the
+   * announcement strip (admin text since ADM-17) grows or shrinks it. jsdom has no layout, so the height is
+   * stubbed on the element and the ResizeObserver is a fake the test drives.
+   */
+  it('publishes its rendered height as --header-height and follows it when it changes', async () => {
+    const observers: { callback: () => void; disconnected: boolean }[] = [];
+    const original = window.ResizeObserver;
+    let height = 151.4;
+    const rectSpy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(() => ({ height }) as DOMRect);
+
+    class FakeResizeObserver {
+      private readonly entry: { callback: () => void; disconnected: boolean };
+
+      constructor(callback: () => void) {
+        this.entry = { callback, disconnected: false };
+        observers.push(this.entry);
+      }
+
+      observe(): void {
+        // Driven by the test.
+      }
+
+      unobserve(): void {
+        // Not used.
+      }
+
+      disconnect(): void {
+        this.entry.disconnected = true;
+      }
+    }
+
+    (window as unknown as { ResizeObserver: unknown }).ResizeObserver = FakeResizeObserver;
+    const root = document.documentElement;
+
+    try {
+      await rebuild((http) =>
+        http.match((request) => request.url === '/api/site/settings').forEach((request) => request.flush(NO_SETTINGS)),
+      );
+
+      // Rounded up, so a fractional height never leaves a focused control a pixel under the header.
+      expect(root.style.getPropertyValue('--header-height')).toBe('152px');
+      expect(observers.length).toBeGreaterThan(0);
+
+      height = 206;
+      observers.forEach((observer) => observer.callback());
+      expect(root.style.getPropertyValue('--header-height')).toBe('206px');
+
+      // A zero height (not laid out yet) is never published over a real one.
+      height = 0;
+      observers.forEach((observer) => observer.callback());
+      expect(root.style.getPropertyValue('--header-height')).toBe('206px');
+    } finally {
+      rectSpy.mockRestore();
+      (window as unknown as { ResizeObserver: unknown }).ResizeObserver = original;
+      root.style.removeProperty('--header-height');
+    }
+  });
+
   it('renders one banner landmark with the wordmark', () => {
     expect(element.querySelectorAll('header')).toHaveLength(1);
     expect(element.querySelector('.wordmark')?.textContent?.trim()).toBe('Colombo Wardrobe');

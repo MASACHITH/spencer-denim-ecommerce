@@ -65,7 +65,7 @@ export interface BarRow {
     .bar-table__head { text-align: left; font-weight: var(--weight-regular); min-width: 8rem; }
     .bar-table__label { display: grid; gap: 4px; }
     .bar-table__text { overflow-wrap: anywhere; }
-    .bar-table__bar { display: block; height: 6px; min-width: 0; background: var(--color-primary); }
+    .bar-table__bar { display: block; height: 6px; min-width: 0; border-radius: 999px; background: var(--chart-accent); }
     .bar-table__num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
   `,
 })

@@ -77,7 +77,29 @@ public interface IReportingReader
         int page,
         int? pageSize,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The customers chart's counts (#186b), per bucket of <see cref="ReportBuckets.Split"/>: distinct buyers
+    /// who paid in each, and how many of them paid for the first time ever in it. See <see cref="CustomerBuyersDto"/>.
+    /// </summary>
+    /// <param name="emailPrefix">The start of an email address, upper-cased, or null — the report's search.</param>
+    Task<BuyerCounts> ReadBuyerCountsAsync(
+        ReportPeriod period,
+        ReportInterval interval,
+        string? emailPrefix,
+        CancellationToken cancellationToken);
 }
+
+/// <summary>How many buyers fall in bucket <paramref name="Index"/> of <see cref="ReportBuckets.Split"/>.</summary>
+public sealed record BucketCount(int Index, int Count);
+
+/// <summary>
+/// The customers chart's raw counts. Buckets with nobody are absent.
+/// </summary>
+/// <param name="Buyers">Distinct buyers who paid in each bucket.</param>
+/// <param name="FirstTime">Buyers whose first paid order ever is in each bucket.</param>
+/// <param name="DistinctBuyers">Distinct buyers over the whole period.</param>
+public sealed record BuyerCounts(IReadOnlyList<BucketCount> Buyers, IReadOnlyList<BucketCount> FirstTime, int DistinctBuyers);
 
 /// <summary>A half-open UTC range: <c>&gt;= FromUtc</c> and <c>&lt; ToUtcExclusive</c>.</summary>
 public sealed record UtcRange(DateTime FromUtc, DateTime ToUtcExclusive)

@@ -230,6 +230,9 @@ public sealed class GetHomePageQueryHandlerTests
             AskedFor = utcNow;
             return Task.FromResult<IReadOnlyList<AnnouncementDto>>([]);
         }
+
+        public Task<DateTime?> GetNextScheduleBoundaryAsync(DateTime utcNow, CancellationToken cancellationToken) =>
+            Task.FromResult<DateTime?>(null);
     }
 
     /// <summary>

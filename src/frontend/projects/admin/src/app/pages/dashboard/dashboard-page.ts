@@ -14,20 +14,27 @@ import {
   formatPeriod,
   presetPeriod,
 } from '../../core/reporting/reporting-format';
-import { AdminDashboard, REPORTING_PERMISSIONS } from '../../core/reporting/reporting.model';
-import { BarRow, BarTable } from './bar-table';
-import { KpiGrid } from './kpi-grid';
+import { AdminDashboard, ComparedFigure, REPORTING_PERMISSIONS } from '../../core/reporting/reporting.model';
+import { ChartTable, ChartView } from '../../core/charts/chart';
+import { BarSpec, DoughnutSpec, compactRupees, shareText, sharesOf } from '../../core/charts/chart-config';
+import { STATUS_TOKENS } from '../../core/charts/chart-palette';
+import { direction } from '../../core/reporting/reporting-format';
+import { AlertStrip } from './alert-strip';
+import { KpiGrid, tone } from './kpi-grid';
+import { TodayBanner } from './today-banner';
 import { LowStockPanel } from './low-stock-panel';
 import { RecentOrders } from './recent-orders';
 import { SalesTrendChart } from './sales-trend';
 import { TrafficSourcesPanel } from './traffic-sources';
 import { TRAFFIC_PERMISSION } from '../../core/traffic/traffic.model';
+import { INVENTORY_PERMISSIONS } from '../../core/inventory/inventory.model';
 
 interface Access {
   readonly dashboard: boolean;
   readonly orders: boolean;
   readonly reports: boolean;
   readonly traffic: boolean;
+  readonly inventory: boolean;
 }
 
 /**
@@ -40,15 +47,21 @@ interface Access {
  * banners are the shell's (`AlertBanner`, W4-02a), above this page as above every admin page — the
  * dashboard does not render a second one.
  *
- * **Every widget is a table with figures** (the bars are decoration on the table) or, for the trend, a chart
- * with a table one tap away, so nothing is only a picture.
+ * **Laid out as the client demo's dashboard** (#186): the Today banner and the alert strip, the KPI cards, then
+ * Revenue &amp; Orders beside Sales by department, three small doughnuts (order status, traffic sources, payment
+ * methods), top categories as horizontal bars, recent orders beside top products, and low stock beside the
+ * customer overview. The demo's sections our API has no figures for are left out, not invented; each component
+ * says which.
+ *
+ * **Nothing is only a picture**: every chart is `role="img"` with a one-sentence summary, a text legend, and its
+ * figures as a table under "Show the figures as a table" (`ChartView`).
  *
  * **The role decides what is offered** (the API enforces the same): without `Dashboard.View` nothing is
  * fetched; recent orders appear only with `Orders.View`; the Reports link only with `Reports.View`.
  */
 @Component({
   selector: 'sda-dashboard-page',
-  imports: [RouterLink, KpiGrid, BarTable, SalesTrendChart, RecentOrders, LowStockPanel, TrafficSourcesPanel],
+  imports: [RouterLink, KpiGrid, ChartView, SalesTrendChart, RecentOrders, LowStockPanel, TrafficSourcesPanel, TodayBanner, AlertStrip],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="dash">
@@ -64,7 +77,10 @@ interface Access {
           Your role does not include the dashboard figures. The sections you can open are listed below.
         </p>
       } @else {
-        <form class="dash__period adm-panel" aria-label="Period" (submit)="applyCustom($event)">
+        <sda-today-banner [canSeeTraffic]="access()!.traffic" />
+        <sda-alert-strip [canSeeOrders]="access()!.orders" [canSeeReports]="access()!.reports" />
+
+        <form class="dash__period adm-card" aria-label="Period" (submit)="applyCustom($event)">
           <label class="adm-field">
             <span class="adm-label">Period</span>
             <select class="adm-input" name="preset" data-testid="dashboard-preset" (change)="choosePreset($event)">
@@ -103,8 +119,11 @@ interface Access {
           </div>
         }
 
-        <section class="adm-panel" aria-labelledby="dash-kpis">
-          <h2 class="adm-panel__title" id="dash-kpis">Key figures</h2>
+        <section class="dash__section" aria-labelledby="dash-kpis">
+          <div class="dash__section-hd">
+            <h2 class="dash__section-title" id="dash-kpis">Key figures</h2>
+            <span class="adm-card__sub">against the previous period</span>
+          </div>
           @if (dashboard(); as answered) {
             <sda-kpi-grid [kpis]="answered.kpis" [currency]="answered.currency" />
           } @else if (!problem()) {
@@ -112,101 +131,195 @@ interface Access {
           }
         </section>
 
-        <div class="dash__grid">
-          <section class="adm-panel dash__wide" aria-labelledby="dash-trend">
-            <h2 class="adm-panel__title" id="dash-trend">Revenue and orders, twelve months</h2>
+        <div class="dash__row dash__row--two">
+          <section class="adm-card" aria-labelledby="dash-trend">
             <sda-sales-trend [to]="period().to" />
           </section>
 
-          @if (access()!.traffic) {
-            <section class="adm-panel dash__wide" aria-labelledby="dash-traffic">
-              <h2 class="adm-panel__title" id="dash-traffic">Traffic sources</h2>
-              <sda-traffic-sources [period]="period()" />
+          <section class="adm-card" aria-labelledby="dash-departments">
+            <div>
+              <h2 class="adm-card__title" id="dash-departments">Sales by department</h2>
+              <p class="adm-card__sub">Share of item sales, orders paid in these days</p>
+            </div>
+            @if (dashboard()) {
+              <sda-chart testId="dashboard-departments-chart" [spec]="departmentChart()" [summary]="departmentSummary()" [height]="200" [table]="departmentTable()" />
+              <p class="adm-panel__hint">
+                Item sales after promo codes, by the department each item was bought under. Delivery is left out, so
+                these add up to less than gross revenue; orders refunded later are still counted.
+              </p>
+            } @else if (!problem()) {
+              <p class="adm-muted">Loading…</p>
+            }
+          </section>
+        </div>
+
+        <div class="dash__row dash__row--three">
+            <section class="adm-card" aria-labelledby="dash-statuses">
+              <div>
+                <h2 class="adm-card__title" id="dash-statuses">Order status</h2>
+                <p class="adm-card__sub">Orders placed in these days, by where they are now</p>
+              </div>
+              @if (dashboard()) {
+                <sda-chart testId="dashboard-statuses-chart" [spec]="statusChart()" [summary]="statusSummary()" [height]="160" [table]="statusTable()" emptyText="No orders were placed in these days." />
+              } @else if (!problem()) {
+                <p class="adm-muted">Loading…</p>
+              }
+            </section>
+
+            @if (access()!.traffic) {
+              <section class="adm-card" aria-labelledby="dash-traffic">
+                <div>
+                  <h2 class="adm-card__title" id="dash-traffic">Traffic sources</h2>
+                  <p class="adm-card__sub">Where visits came from</p>
+                </div>
+                <sda-traffic-sources [period]="period()" />
+              </section>
+            }
+
+            <section class="adm-card" aria-labelledby="dash-methods">
+              <div>
+                <h2 class="adm-card__title" id="dash-methods">Payment methods</h2>
+                <p class="adm-card__sub">Orders paid in these days, by how they were paid</p>
+              </div>
+              @if (dashboard()) {
+                <sda-chart testId="dashboard-methods-chart" [spec]="methodChart()" [summary]="methodSummary()" [height]="160" [table]="methodTable()" emptyText="No orders were paid in these days." />
+              } @else if (!problem()) {
+                <p class="adm-muted">Loading…</p>
+              }
+            </section>
+          </div>
+
+        @if (dashboard()) {
+
+          <section class="adm-card" aria-labelledby="dash-categories">
+            <div>
+              <h2 class="adm-card__title" id="dash-categories">Top categories by sales</h2>
+              <p class="adm-card__sub">Item sales after promo codes, orders paid in these days</p>
+            </div>
+            <sda-chart testId="dashboard-categories-chart" [spec]="categoryChart()" [summary]="categorySummary()" [height]="categoryHeight()" [table]="categoryTable()" />
+          </section>
+        }
+
+        <div class="dash__row dash__row--tables">
+          @if (access()!.orders) {
+            <section class="adm-card" aria-labelledby="dash-recent">
+              <sda-recent-orders [paymentNames]="paymentNames()" />
             </section>
           }
 
           @if (dashboard(); as answered) {
-            <section class="adm-panel" aria-labelledby="dash-departments">
-              <h2 class="adm-panel__title" id="dash-departments">Sales by department</h2>
-              <p class="adm-panel__hint">
-                Item sales after promo codes, on orders paid in these days, by the department each item was bought
-                under. Delivery is left out, so these add up to less than gross revenue; orders refunded later are
-                still counted.
-              </p>
-              <sda-bar-table caption="Sales by department" testId="dashboard-departments" [headers]="['Department', 'Units', 'Sales', 'Share']" [rows]="departments()" />
-            </section>
-
-            <section class="adm-panel" aria-labelledby="dash-categories">
-              <h2 class="adm-panel__title" id="dash-categories">Top categories</h2>
-              @if (categories().length === 0) {
-                <p class="adm-muted">Nothing was sold in these days.</p>
+            <section class="adm-card" aria-labelledby="dash-products">
+              <div>
+                <h2 class="adm-card__title" id="dash-products">Top products</h2>
+                <p class="adm-card__sub">Item sales after promo codes, against the previous period</p>
+              </div>
+              @if (answered.topProducts.length === 0) {
+                <p class="adm-muted">No sales in this period.</p>
               } @else {
-                <sda-bar-table caption="Top categories by sales" testId="dashboard-categories" [headers]="['Category', 'Units', 'Sales', 'Share']" [rows]="categories()" />
+                <div class="adm-table-scroll" tabindex="0" role="region" aria-label="Top products">
+                  <table class="adm-table" data-testid="dashboard-products">
+                    <caption class="sr-only">Top products by sales, with the change on the previous period</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Product</th>
+                        <th scope="col" class="adm-num">Sold</th>
+                        <th scope="col" class="adm-num">Sales</th>
+                        <th scope="col" class="adm-num">Trend</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      @for (row of answered.topProducts; track row.productId) {
+                        <tr>
+                          <th scope="row" class="dash__product"><span>{{ row.name }}</span><span class="dash__sub">{{ row.productCode }}</span></th>
+                          <td class="adm-num">{{ number(row.units) }}</td>
+                          <td class="adm-num">{{ rupees(row.revenue.current ?? 0) }}</td>
+                          <td class="adm-num">
+                            <span class="adm-trend" [attr.data-tone]="productTone(row.revenue)"><span aria-hidden="true">{{ arrow(row.revenue) }}</span> {{ percent(row.revenue.percentChange, row.revenue.change) }}</span>
+                            <span class="dash__sub">was {{ rupees(row.revenue.previous ?? 0) }}</span>
+                          </td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
               }
             </section>
+          }
+        </div>
 
-            <section class="adm-panel dash__wide" aria-labelledby="dash-products">
-              <h2 class="adm-panel__title" id="dash-products">Top products</h2>
-              <p class="adm-panel__hint">Item sales after promo codes, against the previous period.</p>
-              @if (products().length === 0) {
-                <p class="adm-muted">Nothing was sold in these days.</p>
-              } @else {
-                <sda-bar-table caption="Top products by sales, with the previous period" testId="dashboard-products" [headers]="['Product', 'Units', 'Sales', 'Previous period', 'Change']" [rows]="products()" />
-              }
-            </section>
+        <div class="dash__row dash__row--tables">
+          <section class="adm-card" aria-labelledby="dash-low">
+            <sda-low-stock [canSeeReports]="access()!.reports" [canSeeInventory]="access()!.inventory" />
+          </section>
 
-            <section class="adm-panel" aria-labelledby="dash-statuses">
-              <h2 class="adm-panel__title" id="dash-statuses">Order status</h2>
-              <p class="adm-panel__hint">Orders placed in these days, by where they are now.</p>
-              <sda-bar-table caption="Orders placed in the period, by status now" testId="dashboard-statuses" [headers]="['Status', 'Orders']" [rows]="statuses()" />
-            </section>
-
-            <section class="adm-panel" aria-labelledby="dash-methods">
-              <h2 class="adm-panel__title" id="dash-methods">Payment methods</h2>
-              <p class="adm-panel__hint">Orders paid in these days.</p>
-              <sda-bar-table caption="Paid orders by payment method" testId="dashboard-methods" [headers]="['Method', 'Paid orders', 'Revenue']" [rows]="methods()" />
-            </section>
-
-            <section class="adm-panel dash__wide" aria-labelledby="dash-districts">
-              <h2 class="adm-panel__title" id="dash-districts">Buyers by delivery district</h2>
+          @if (dashboard(); as answered) {
+            <section class="adm-card" aria-labelledby="dash-customers">
+              <div>
+                <h2 class="adm-card__title" id="dash-customers">Customer overview</h2>
+                <p class="adm-card__sub">Buyers who paid in these days</p>
+              </div>
+              <dl class="dash__stats">
+                <div><dt>Buyers</dt><dd data-testid="dashboard-buyer-count">{{ number(answered.buyersByDistrict.distinctBuyers) }}</dd></div>
+                <div><dt>Paid orders</dt><dd>{{ number(answered.kpis.paidOrders.current ?? 0) }}</dd></div>
+              </dl>
               <p class="adm-panel__hint" data-testid="dashboard-buyers">
                 {{ number(answered.buyersByDistrict.distinctBuyers) }}
                 {{ answered.buyersByDistrict.distinctBuyers === 1 ? 'buyer' : 'buyers' }} (different email addresses) paid
                 in these days. Each district counts the buyers who had a paid order <strong>delivered</strong> there — not
                 the default district on a customer account — so a buyer who used two districts is in both.
               </p>
-              @if (districts().length > 0) {
-                <sda-bar-table caption="Buyers by delivery district" testId="dashboard-districts" [headers]="['District', 'Buyers', 'Paid orders', 'Revenue']" [rows]="districts()" />
+              @if (answered.buyersByDistrict.districts.length > 0) {
+                <h3 class="dash__minor">Buyers by delivery district</h3>
+                <ul class="dash__districts" data-testid="dashboard-district-bars">
+                  @for (row of answered.buyersByDistrict.districts; track row.districtId) {
+                    <li>
+                      <span class="dash__district">{{ row.name }}</span>
+                      <span class="dash__track" aria-hidden="true"><span [style.width.%]="districtWidth(row.buyers)"></span></span>
+                      <span class="dash__count">{{ number(row.buyers) }}</span>
+                    </li>
+                  }
+                </ul>
+                <details class="dash__figures">
+                  <summary class="adm-link">Show the figures as a table</summary>
+                  <div class="adm-table-scroll" tabindex="0" role="region" aria-label="Buyers by delivery district">
+                    <table class="adm-table" data-testid="dashboard-districts">
+                      <caption class="sr-only">Buyers by delivery district</caption>
+                      <thead>
+                        <tr><th scope="col">District</th><th scope="col" class="adm-num">Buyers</th><th scope="col" class="adm-num">Paid orders</th><th scope="col" class="adm-num">Revenue</th></tr>
+                      </thead>
+                      <tbody>
+                        @for (row of answered.buyersByDistrict.districts; track row.districtId) {
+                          <tr><th scope="row">{{ row.name }}</th><td class="adm-num">{{ number(row.buyers) }}</td><td class="adm-num">{{ number(row.paidOrders) }}</td><td class="adm-num">{{ rupees(row.revenue) }}</td></tr>
+                        }
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
               }
             </section>
           }
-
-          @if (access()!.orders) {
-            <section class="adm-panel" aria-labelledby="dash-recent">
-              <h2 class="adm-panel__title" id="dash-recent">Recent orders</h2>
-              <sda-recent-orders />
-            </section>
-          }
-
-          <section class="adm-panel" aria-labelledby="dash-low">
-            <h2 class="adm-panel__title" id="dash-low">Low stock</h2>
-            <sda-low-stock [canSeeReports]="access()!.reports" />
-          </section>
         </div>
       }
 
-      <nav class="adm-panel" aria-labelledby="dash-sections">
-        <h2 class="adm-panel__title" id="dash-sections">Admin sections</h2>
+      <nav class="adm-card" aria-labelledby="dash-sections">
+        <h2 class="adm-card__title" id="dash-sections">Admin sections</h2>
         <div class="dash__links">
           <a class="adm-link" routerLink="/orders">Orders</a>
           <a class="adm-link" routerLink="/orders/bank-transfers">Bank transfers</a>
           <a class="adm-link" routerLink="/orders/couriers">Couriers</a>
           <a class="adm-link" routerLink="/customers">Customers</a>
           <a class="adm-link" routerLink="/products">Products</a>
+          @if (access()?.inventory) {
+            <a class="adm-link" routerLink="/inventory" data-testid="dashboard-inventory-link">Inventory</a>
+          }
           <a class="adm-link" routerLink="/catalog">Departments and categories</a>
           <a class="adm-link" routerLink="/marketing/promo-codes">Promo codes</a>
           <a class="adm-link" routerLink="/marketing/sale-campaigns">Sale campaigns</a>
           <a class="adm-link" routerLink="/marketing/newsletter">Newsletter subscribers</a>
+          <a class="adm-link" routerLink="/content/home" data-testid="dashboard-home-content-link">Homepage</a>
+          <a class="adm-link" routerLink="/content/announcements" data-testid="dashboard-announcements-link">Announcement bar</a>
+          <a class="adm-link" routerLink="/content/size-guides" data-testid="dashboard-size-guides-link">Size guides</a>
+          <a class="adm-link" routerLink="/content/pages" data-testid="dashboard-content-pages-link">Content pages</a>
           @if (access()?.reports) {
             <a class="adm-link" routerLink="/reports" data-testid="dashboard-reports-link">Reports</a>
           }
@@ -228,15 +341,35 @@ interface Access {
   `,
   styles: `
     :host { display: block; padding: var(--gutter); }
-    .dash { display: grid; gap: var(--space-3); max-width: 1400px; margin-inline: auto; min-width: 0; }
+    .dash { display: grid; gap: var(--space-3); max-width: 1600px; margin-inline: auto; min-width: 0; }
     .dash__title { font-size: var(--text-h2); }
     .dash__period { grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); align-items: end; }
     .dash__wide { grid-column: 1 / -1; margin: 0; }
-    .dash__grid { display: grid; gap: var(--space-3); grid-template-columns: minmax(0, 1fr); }
-    .dash__grid > * { min-width: 0; align-content: start; }
+    .dash__section { display: grid; gap: var(--space-1-5); min-width: 0; }
+    .dash__section-hd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-1-5); }
+    .dash__section-title { font-size: var(--text-h4); font-weight: var(--weight-semibold); }
+    .dash__row { display: grid; gap: var(--space-2); grid-template-columns: minmax(0, 1fr); }
+    .dash__product { min-width: 9rem; overflow-wrap: anywhere; }
+    .dash__product span { display: block; }
+    .dash__sub { display: block; font-size: var(--text-label); color: var(--color-text-muted); font-weight: var(--weight-regular); }
+    .dash__stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-1); margin: 0; }
+    .dash__stats div { padding: var(--space-1-5) var(--space-1); text-align: center; background: var(--color-bg-alt); border-radius: 8px; }
+    .dash__stats dt { font-size: var(--text-label); color: var(--color-text-muted); }
+    .dash__stats dd { margin: 0; font-size: var(--text-h3); font-weight: var(--weight-semibold); }
+    .dash__minor { font-size: var(--text-label); font-weight: var(--weight-semibold); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--color-text-muted); }
+    .dash__districts { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+    .dash__districts li { display: flex; align-items: center; gap: var(--space-1-5); }
+    .dash__district { flex: 0 0 7rem; overflow-wrap: anywhere; }
+    .dash__track { flex: 1; height: 7px; border-radius: 999px; overflow: hidden; background: var(--chart-grid); }
+    .dash__track span { display: block; height: 100%; background: var(--chart-accent); }
+    .dash__count { min-width: 2rem; text-align: right; font-weight: var(--weight-semibold); }
     .dash__links { display: flex; flex-wrap: wrap; gap: 0 var(--space-2); }
-    @media (min-width: 1024px) {
-      .dash__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .dash__figures { min-width: 0; }
+    @media (min-width: 900px) { .dash__row--three { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (min-width: 1100px) {
+      .dash__row--two { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+      .dash__row--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .dash__row--tables { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
     }
   `,
 })
@@ -268,44 +401,106 @@ export class DashboardPage {
       : '';
   });
 
-  protected readonly departments = computed(() =>
-    (this.dashboard()?.departments ?? []).map((row) => this.shareRow(row.id, row.name, row.units, row.revenue, row.sharePercent)),
+  /** Payment method names by code, for the Recent orders table's Payment column. */
+  protected readonly paymentNames = computed<Readonly<Record<string, string>>>(() =>
+    Object.fromEntries((this.dashboard()?.paymentMethods ?? []).map((row) => [row.code, row.name])),
   );
 
-  protected readonly categories = computed(() =>
-    (this.dashboard()?.topCategories ?? []).map((row) => this.shareRow(row.id, row.name, row.units, row.revenue, row.sharePercent)),
+  protected readonly departmentChart = computed<DoughnutSpec>(() => ({
+    kind: 'doughnut',
+    cutout: 68,
+    // The API's own shares (of item sales), not worked out again here.
+    slices: (this.dashboard()?.departments ?? []).map((row) => ({ key: String(row.id), label: row.name, value: row.revenue, display: this.rupees(row.revenue), share: row.sharePercent })),
+  }));
+
+  protected readonly departmentTable = computed<ChartTable>(() => ({
+    caption: 'Sales by department',
+    testId: 'dashboard-departments',
+    headers: ['Department', 'Units', 'Sales', 'Share'],
+    rows: (this.dashboard()?.departments ?? []).map((row) => ({ key: row.id, label: row.name, cells: [count(row.units), this.rupees(row.revenue), shareText(row.sharePercent)] })),
+  }));
+
+  protected readonly departmentSummary = computed(() => largest('Item sales by department', this.departmentChart().slices, 'No sales in these days.'));
+
+  protected readonly statusChart = computed<DoughnutSpec>(() => {
+    const rows = this.dashboard()?.orderStatuses ?? [];
+    const shares = sharesOf(rows.map((row) => row.count));
+
+    return {
+      kind: 'doughnut',
+      cutout: 65,
+      slices: rows.map((row, index) => ({ key: row.status, label: row.label, value: row.count, display: count(row.count), share: shares[index], token: STATUS_TOKENS[row.status] })),
+    };
+  });
+
+  protected readonly statusTable = computed<ChartTable>(() => ({
+    caption: 'Orders placed in the period, by status now',
+    testId: 'dashboard-statuses',
+    headers: ['Status', 'Orders', 'Share'],
+    rows: this.statusChart().slices.map((slice) => ({ key: slice.key, label: slice.label, cells: [slice.display, shareText(slice.share)] })),
+  }));
+
+  protected readonly statusSummary = computed(() => largest('Orders placed in these days, by status now', this.statusChart().slices, 'No orders were placed in these days.'));
+
+  protected readonly methodChart = computed<DoughnutSpec>(() => {
+    const rows = this.dashboard()?.paymentMethods ?? [];
+    const shares = sharesOf(rows.map((row) => row.paidOrders));
+
+    return {
+      kind: 'doughnut',
+      cutout: 65,
+      slices: rows.map((row, index) => ({ key: row.code, label: row.name, value: row.paidOrders, display: `${count(row.paidOrders)} paid`, share: shares[index] })),
+    };
+  });
+
+  protected readonly methodTable = computed<ChartTable>(() => {
+    const shares = this.methodChart().slices.map((slice) => slice.share);
+
+    return {
+      caption: 'Paid orders by payment method',
+      testId: 'dashboard-methods',
+      headers: ['Method', 'Paid orders', 'Revenue', 'Share of paid orders'],
+      rows: (this.dashboard()?.paymentMethods ?? []).map((row, index) => ({ key: row.code, label: row.name, cells: [count(row.paidOrders), this.rupees(row.revenue), shareText(shares[index])] })),
+    };
+  });
+
+  protected readonly methodSummary = computed(() => largest('Orders paid in these days, by payment method', this.methodChart().slices, 'No orders were paid in these days.'));
+
+  protected readonly categoryChart = computed<BarSpec>(() => {
+    const rows = this.dashboard()?.topCategories ?? [];
+
+    return {
+      kind: 'bar',
+      indexAxis: 'y',
+      // The API sends these largest first (`ReportingReader.ReadTopCategoriesAsync`), so the first bar is the leader.
+      highlightFirst: true,
+      seriesLabel: 'Item sales',
+      labels: rows.map((row) => row.name),
+      values: rows.map((row) => row.revenue),
+      format: (value) => this.rupees(value),
+      tick: compactRupees,
+    };
+  });
+
+  protected readonly categoryTable = computed<ChartTable>(() => ({
+    caption: 'Top categories by sales',
+    testId: 'dashboard-categories',
+    headers: ['Category', 'Units', 'Sales', 'Share'],
+    rows: (this.dashboard()?.topCategories ?? []).map((row) => ({ key: row.id, label: row.name, cells: [count(row.units), this.rupees(row.revenue), shareText(row.sharePercent)] })),
+  }));
+
+  protected readonly categorySummary = computed(() =>
+    largest(
+      'Top categories by item sales',
+      (this.dashboard()?.topCategories ?? []).map((row) => ({ label: row.name, value: row.revenue, display: this.rupees(row.revenue), share: row.sharePercent })),
+      'No sales in these days.',
+    ),
   );
 
-  protected readonly products = computed<readonly BarRow[]>(() =>
-    (this.dashboard()?.topProducts ?? []).map((row) => ({
-      key: row.productId,
-      label: row.productCode ? `${row.name} (${row.productCode})` : row.name,
-      cells: [count(row.units), this.rupees(row.revenue.current ?? 0), this.rupees(row.revenue.previous ?? 0), this.percent(row.revenue.percentChange, row.revenue.change)],
-      value: row.revenue.current ?? 0,
-    })),
-  );
+  /** The demo's 200 px, grown so ten categories still get a readable bar each. */
+  protected readonly categoryHeight = computed(() => Math.max(200, (this.dashboard()?.topCategories.length ?? 0) * 36));
 
-  protected readonly statuses = computed<readonly BarRow[]>(() =>
-    (this.dashboard()?.orderStatuses ?? []).map((row) => ({ key: row.status, label: row.label, cells: [count(row.count)], value: row.count })),
-  );
-
-  protected readonly methods = computed<readonly BarRow[]>(() =>
-    (this.dashboard()?.paymentMethods ?? []).map((row) => ({
-      key: row.code,
-      label: row.name,
-      cells: [count(row.paidOrders), this.rupees(row.revenue)],
-      value: row.revenue,
-    })),
-  );
-
-  protected readonly districts = computed<readonly BarRow[]>(() =>
-    (this.dashboard()?.buyersByDistrict.districts ?? []).map((row) => ({
-      key: row.districtId,
-      label: row.name,
-      cells: [count(row.buyers), count(row.paidOrders), this.rupees(row.revenue)],
-      value: row.buyers,
-    })),
-  );
+  private readonly mostBuyers = computed(() => Math.max(0, ...(this.dashboard()?.buyersByDistrict.districts ?? []).map((row) => row.buyers)));
 
   private requests = 0;
 
@@ -318,6 +513,7 @@ export class DashboardPage {
           orders: holds(REPORTING_PERMISSIONS.orders),
           reports: holds(REPORTING_PERMISSIONS.reports),
           traffic: holds(TRAFFIC_PERMISSION),
+          inventory: holds(INVENTORY_PERMISSIONS.view),
         };
 
         this.access.set(access);
@@ -328,7 +524,7 @@ export class DashboardPage {
       },
       // The session could not be read: show the widgets and let the API decide, as the other screens do.
       error: () => {
-        this.access.set({ dashboard: true, orders: true, reports: true, traffic: true });
+        this.access.set({ dashboard: true, orders: true, reports: true, traffic: true, inventory: true });
         this.load();
       },
     });
@@ -438,16 +634,21 @@ export class DashboardPage {
     });
   }
 
-  private shareRow(id: number, name: string, units: number, revenue: number, share: number): BarRow {
-    return {
-      key: id,
-      label: name,
-      cells: [count(units), this.rupees(revenue), `${share.toLocaleString('en-LK', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`],
-      value: revenue,
-    };
+  protected districtWidth(buyers: number): number {
+    const most = this.mostBuyers();
+    return most <= 0 || buyers <= 0 ? 0 : Math.max(1, (buyers / most) * 100);
   }
 
-  private percent(percentChange: number | null, change: number | null): string {
+  protected productTone(figure: ComparedFigure): string {
+    return tone(figure);
+  }
+
+  protected arrow(figure: ComparedFigure): string {
+    const way = direction(figure);
+    return way === 'up' ? '▲' : way === 'down' ? '▼' : '–';
+  }
+
+  protected percent(percentChange: number | null, change: number | null): string {
     if (change === null || change === 0) {
       return 'No change';
     }
@@ -469,4 +670,11 @@ export class DashboardPage {
     this.said.set('');
     afterNextRender(() => this.said.set(message), { injector: this.injector });
   }
+}
+
+/** One sentence for a chart's accessible name: what it shows, and its largest part with its share. */
+function largest(what: string, parts: readonly { label: string; value: number; display: string; share: number }[], none: string): string {
+  const top = parts.reduce<(typeof parts)[number] | null>((best, part) => (best === null || part.value > best.value ? part : best), null);
+
+  return top === null || top.value <= 0 ? `${what}: ${none.charAt(0).toLowerCase()}${none.slice(1)}` : `${what}. Largest: ${top.label}, ${top.display} (${shareText(top.share)}).`;
 }
