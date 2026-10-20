@@ -149,6 +149,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     public DbSet<RelatedProduct> RelatedProducts => Set<RelatedProduct>();
 
+    public DbSet<ProductReview> ProductReviews => Set<ProductReview>();
+
     public DbSet<MediaAsset> MediaAssets => Set<MediaAsset>();
 
     public DbSet<MediaUsage> MediaUsages => Set<MediaUsage>();
