@@ -21,6 +21,14 @@ public interface IHomeContentReader
     /// </summary>
     Task<IReadOnlyList<HomeSectionContent>> GetLiveSectionsAsync(DateTime utcNow, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The soonest instant strictly after <paramref name="utcNow"/> at which the homepage's content changes
+    /// by itself: a <c>StartsAtUtc</c> or <c>EndsAtUtc</c> of a switched-on section, or of a switched-on item
+    /// in a switched-on section. Null when nothing is scheduled to change. The homepage cache expires its
+    /// entry there (issue #37).
+    /// </summary>
+    Task<DateTime?> GetNextScheduleBoundaryAsync(DateTime utcNow, CancellationToken cancellationToken);
+
     /// <summary>The announcement lines that are live at <paramref name="utcNow"/> (GLB-03), in order.</summary>
     Task<IReadOnlyList<AnnouncementDto>> GetLiveAnnouncementsAsync(DateTime utcNow, CancellationToken cancellationToken);
 }

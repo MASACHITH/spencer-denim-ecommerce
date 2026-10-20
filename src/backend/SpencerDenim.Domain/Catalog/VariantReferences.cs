@@ -15,9 +15,9 @@ namespace SpencerDenim.Domain.Catalog;
 /// <para>
 /// <b>What makes it hold.</b> <c>VariantReferenceConventionTests</c> reflects over the EF model, finds
 /// every foreign key whose principal is <see cref="ProductVariant"/>, and fails if one is not named here.
-/// It needs no database. <c>inventory.InventoryMovements</c> (doc 08 §3.4, issue <b>#108</b>) does not
-/// exist yet; when ADM-12 adds it, that test goes red on the same day rather than the delete silently
-/// destroying an append-only ledger or answering 500 in front of a client.
+/// It needs no database. It did its job when ADM-12 added <c>inventory.InventoryMovements</c> (doc 08
+/// §3.4, issue <b>#108</b>): the test went red the same day, rather than the delete silently destroying an
+/// append-only ledger or answering 500 in front of a client.
 /// </para>
 /// </summary>
 public static class VariantReferences
@@ -57,6 +57,11 @@ public static class VariantReferences
     /// instead would let any shopper who left a size in their bag stop an admin correcting the catalogue.
     /// </item>
     /// <item>
+    /// <see cref="Inventory.InventoryMovement"/> — <b>blocks the delete</b> (ADM-12, #108). The ledger is kept
+    /// "for the life of the system" (doc 08 §3.4) and never deleted (§1.6), so a variant whose stock has ever
+    /// been changed by hand is switched off rather than removed, exactly as an ordered one is.
+    /// </item>
+    /// <item>
     /// <see cref="Sales.OrderLine"/> — <b>blocks the delete.</b> Doc 08 §3.2: "Deactivate once ordered;
     /// never delete", and §1.6 never deletes an order line. The admin switches the variant off.
     /// </item>
@@ -68,5 +73,6 @@ public static class VariantReferences
             [nameof(Inventory.StockLevel)] = Disposition.DeletedWithTheVariant,
             [nameof(Sales.CartItem)] = Disposition.DeletedWithTheVariant,
             [nameof(Sales.OrderLine)] = Disposition.BlocksTheDelete,
+            [nameof(Inventory.InventoryMovement)] = Disposition.BlocksTheDelete,
         }.AsReadOnly();
 }

@@ -94,6 +94,13 @@ public static class MediaUsageRoles
     public const string Banner = "Banner";
     public const string Poster = "Poster";
 
+    /// <summary>
+    /// A homepage item's phone artwork (<c>HomeSectionItems.MobileImageAssetId</c>, ADM-17). Its own role
+    /// rather than <see cref="Image"/>, so one photograph used as both the desktop and the phone image is
+    /// two usage rows the "used in…" panel can tell apart, not one that hides the other.
+    /// </summary>
+    public const string MobileImage = "MobileImage";
+
     /// <summary>The shop's logo (GLB-02, ADM-22): <c>Store.LogoAssetId</c>'s image.</summary>
     public const string Logo = "Logo";
 

@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   ElementRef,
   Injector,
   afterNextRender,
@@ -241,8 +242,9 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
        header is 170 px at 320 px wide against 118 at 1280, and at 320 it changes *as the bar
        rotates* — 170 for the delivery line, 151 for the shorter one. The token covers every
        placeholder message at every width; a longer one an admin writes later would out-grow it
-       (a 110-character line measures 206 px at 320). TODO(ADM-17): when the messages become admin
-       text, set --header-height from this element's observed height instead of from a token. */
+       (a 110-character line measures 206 px at 320). So since #36 the component publishes its own
+       observed height as --header-height (trackHeaderHeight, a ResizeObserver); the token is only the
+       server render's value until the browser has measured. */
     :host {
       display: block;
       position: sticky;
@@ -492,6 +494,9 @@ export class SiteHeader {
   readonly searchOpen = this.search.asReadonly();
   readonly bagOpen = this.bag.asReadonly();
 
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly destroyRef = inject(DestroyRef);
+
   constructor() {
     // **The one read of who is signed in, and it happens after the first render.** `AccountStore.load`
     // is single-flight, so this and the signed-in route guard — which runs *during* the first navigation
@@ -500,6 +505,13 @@ export class SiteHeader {
     // and so it never runs during a server render: there is no cookie to read there, and a request made
     // then would answer 401 for every visitor.
     afterNextRender(() => this.account.load().subscribe());
+
+    // #36: --header-height is the header's real, rendered height, not a guess per breakpoint. The
+    // announcement strip is admin text now (ADM-17), so a long or wrapping message — or no message at
+    // all — changes the height, and every rotation can too. A ResizeObserver on the sticky host keeps
+    // scroll-padding-top (and anything else that clears the header) exactly in step. The token in
+    // tokens.css stays as the server render's value and the no-script fallback.
+    afterNextRender(() => this.trackHeaderHeight());
 
     // Navigating away always leaves the shell tidy, whichever link was used.
     //
@@ -646,5 +658,34 @@ export class SiteHeader {
 
   private focusSearchToggle(): void {
     this.searchToggle()?.nativeElement.focus();
+  }
+
+  /**
+   * Publishes the sticky header's rendered height as --header-height on the root element (#36), and keeps
+   * publishing it as it changes. Rounded up, so a fractional height never leaves a pixel of a focused
+   * control under the header.
+   */
+  private trackHeaderHeight(): void {
+    const view = this.document.defaultView;
+    if (!view || typeof view.ResizeObserver !== 'function') {
+      return;
+    }
+
+    const root = this.document.documentElement;
+    const publish = (): void => {
+      const height = Math.ceil(this.host.nativeElement.getBoundingClientRect().height);
+      if (height > 0) {
+        root.style.setProperty('--header-height', `${height}px`);
+      }
+    };
+
+    const observer = new view.ResizeObserver(publish);
+    observer.observe(this.host.nativeElement);
+    publish();
+
+    this.destroyRef.onDestroy(() => {
+      observer.disconnect();
+      root.style.removeProperty('--header-height');
+    });
   }
 }

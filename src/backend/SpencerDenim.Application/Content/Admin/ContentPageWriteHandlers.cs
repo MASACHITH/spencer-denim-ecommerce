@@ -147,6 +147,7 @@ public sealed class ContentPageWriteHandlers(
     IHtmlSanitiser sanitiser,
     IAuditLogWriter auditLog,
     IContentPageLinksCache linksCache,
+    IHomePageCache homePageCache,
     IClock clock)
     : ICommandHandler<CreateContentPageCommand, ContentWriteResult>,
       ICommandHandler<UpdateContentPageCommand, ContentWriteResult>,
@@ -220,6 +221,10 @@ public sealed class ContentPageWriteHandlers(
         // cache is evicted anyway: it is a sixty-second window on a table this very statement wrote, and
         // reasoning about which writes can safely skip an eviction is how a stale cache gets shipped.
         linksCache.Evict();
+
+        // #192: every ADM-17 content write evicts the homepage cache as well. A page is not drawn on the
+        // homepage today, so this costs one render and buys a rule with no exceptions to remember.
+        homePageCache.Evict();
 
         return new ContentWriteResult.Succeeded(page.Id, body.Removed);
     }
@@ -344,6 +349,10 @@ public sealed class ContentPageWriteHandlers(
 
         linksCache.Evict();
 
+        // #192: every ADM-17 content write evicts the homepage cache as well. A page is not drawn on the
+        // homepage today, so this costs one render and buys a rule with no exceptions to remember.
+        homePageCache.Evict();
+
         return new ContentWriteResult.Succeeded(page.Id, body.Removed);
     }
 
@@ -426,6 +435,10 @@ public sealed class ContentPageWriteHandlers(
         // sitemap.xml, or takes it out of both.
         linksCache.Evict();
 
+        // #192: every ADM-17 content write evicts the homepage cache as well. A page is not drawn on the
+        // homepage today, so this costs one render and buys a rule with no exceptions to remember.
+        homePageCache.Evict();
+
         return new ContentWriteResult.Succeeded(page.Id);
     }
 
@@ -482,6 +495,10 @@ public sealed class ContentPageWriteHandlers(
         }
 
         linksCache.Evict();
+
+        // #192: every ADM-17 content write evicts the homepage cache as well. A page is not drawn on the
+        // homepage today, so this costs one render and buys a rule with no exceptions to remember.
+        homePageCache.Evict();
 
         return new ContentWriteResult.Succeeded(page.Id);
     }

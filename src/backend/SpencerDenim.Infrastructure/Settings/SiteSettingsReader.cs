@@ -50,6 +50,7 @@ internal sealed class SiteSettingsReader(AppDbContext dbContext, ISettingsStore 
         SettingKeys.Social.FacebookUrl,
         SettingKeys.Social.InstagramUrl,
         SettingKeys.Social.TikTokUrl,
+        SettingKeys.Social.YouTubeUrl,
     ];
 
     public async Task<SiteSettingsDto> ReadAsync(CancellationToken cancellationToken)
@@ -70,10 +71,11 @@ internal sealed class SiteSettingsReader(AppDbContext dbContext, ISettingsStore 
             .Select(setting => new { setting.Key, setting.Value })
             .ToDictionaryAsync(row => row.Key, row => row.Value, StringComparer.OrdinalIgnoreCase, cancellationToken);
 
-        var social = new List<SiteSocialLinkDto>(3);
+        var social = new List<SiteSocialLinkDto>(4);
         AddSocial(social, SiteSocialNetworks.Facebook, values.GetValueOrDefault(SettingKeys.Social.FacebookUrl));
         AddSocial(social, SiteSocialNetworks.Instagram, values.GetValueOrDefault(SettingKeys.Social.InstagramUrl));
         AddSocial(social, SiteSocialNetworks.TikTok, values.GetValueOrDefault(SettingKeys.Social.TikTokUrl));
+        AddSocial(social, SiteSocialNetworks.YouTube, values.GetValueOrDefault(SettingKeys.Social.YouTubeUrl));
 
         var whatsApp = SettingFieldRules.Clean(values.GetValueOrDefault(SettingKeys.Contact.WhatsApp));
 

@@ -132,6 +132,7 @@ public sealed class AdminSettingsShapeTests(SqlServerDatabaseFixture sqlServer)
                 "RowVersion",
                 "TikTokUrl",
                 "WhatsApp",
+                "YouTubeUrl",
             ],
             fields);
 
@@ -146,6 +147,28 @@ public sealed class AdminSettingsShapeTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal(
             keys,
             fields.Where(field => field != "RowVersion").Order(StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Issue #193's Traffic form: the OpenAPI record, the handler's field list and the catalogue's Traffic group
+    /// name the same two periods. The endpoint reads the handler's list, so a field added to one and not the
+    /// others is a box the screen sends and the API ignores.
+    /// </summary>
+    [Fact]
+    public void The_traffic_request_carries_one_field_per_key_it_writes()
+    {
+        var fields = typeof(UpdateTrafficSettingsRequest)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Select(property => property.Name)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(["BotRetentionDays", "RawRetentionDays", "RowVersion"], fields);
+
+        Assert.Equal(
+            SettingCatalog.KeysIn(SettingKeys.Traffic.Group).Select(key => key.Split('.')[^1]).Order(StringComparer.OrdinalIgnoreCase),
+            SpencerDenim.Application.Settings.Admin.UpdateTrafficSettingsCommandHandler.Fields.Order(StringComparer.OrdinalIgnoreCase),
+            StringComparer.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -183,6 +206,7 @@ public sealed class AdminSettingsShapeTests(SqlServerDatabaseFixture sqlServer)
                 [SettingKeys.Social.FacebookUrl] = "https://www.facebook.com/shape-test",
                 [SettingKeys.Social.InstagramUrl] = "https://www.instagram.com/shape-test",
                 [SettingKeys.Social.TikTokUrl] = "https://www.tiktok.com/@shape-test",
+                [SettingKeys.Social.YouTubeUrl] = "https://www.youtube.com/@shape-test",
             };
 
             using var response = await client.PutAsJsonAsync(
@@ -198,6 +222,7 @@ public sealed class AdminSettingsShapeTests(SqlServerDatabaseFixture sqlServer)
                     facebookUrl = sent[SettingKeys.Social.FacebookUrl],
                     instagramUrl = sent[SettingKeys.Social.InstagramUrl],
                     tikTokUrl = sent[SettingKeys.Social.TikTokUrl],
+                    youTubeUrl = sent[SettingKeys.Social.YouTubeUrl],
                     rowVersion = await ContactVersionAsync(client),
                 },
                 JsonOptions,

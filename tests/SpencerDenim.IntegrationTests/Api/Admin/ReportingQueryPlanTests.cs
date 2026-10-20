@@ -35,7 +35,13 @@ public sealed class ReportingQueryPlanTests(SqlServerDatabaseFixture sqlServer)
 
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
-    public static TheoryData<string> PaidQueries => ["totals", "daily", "districts", "departments"];
+    private static readonly ReportPeriod Period = new(new DateOnly(2015, 1, 2), new DateOnly(2015, 4, 1));
+
+    public static TheoryData<string> PaidQueries =>
+    [
+        "totals", "daily", "districts", "departments",
+        "buyer-counts-day", "buyer-counts-week", "buyer-counts-month", "buyer-counts-search",
+    ];
 
     [Theory]
     [MemberData(nameof(PaidQueries))]
@@ -50,6 +56,10 @@ public sealed class ReportingQueryPlanTests(SqlServerDatabaseFixture sqlServer)
             "daily" => reader.PaidDailyQuery(Range).ToQueryString(),
             "districts" => reader.BuyersByDistrictQuery(Range).ToQueryString(),
             "departments" => reader.DepartmentSalesQuery(Range).ToQueryString(),
+            "buyer-counts-day" => reader.BuyerCountsQuery(Period, ReportInterval.Day, null).ToQueryString(),
+            "buyer-counts-week" => reader.BuyerCountsQuery(Period, ReportInterval.Week, null).ToQueryString(),
+            "buyer-counts-month" => reader.BuyerCountsQuery(Period, ReportInterval.Month, null).ToQueryString(),
+            "buyer-counts-search" => reader.BuyerCountsQuery(Period, ReportInterval.Day, "NIMALI").ToQueryString(),
             _ => throw new ArgumentOutOfRangeException(nameof(query)),
         };
 
@@ -64,6 +74,55 @@ public sealed class ReportingQueryPlanTests(SqlServerDatabaseFixture sqlServer)
         // Throws SqlException 8622 if the predicate cannot be matched to the filtered index.
         var plan = await PlanForAsync(hinted);
         Assert.Contains(PaidIndex, plan);
+    }
+
+    public static TheoryData<string> BuyerQueries =>
+    [
+        "buyer-counts-day", "buyer-counts-week", "buyer-counts-month", "buyer-counts-search",
+    ];
+
+    /// <summary>
+    /// The customers chart's queries (#186b) are <b>covered</b> by <c>IX_Orders_Paid</c>: with the index
+    /// forced, the plan has no key lookup back to the clustered table. Reading the whole paid history for
+    /// "first-time" is only cheap because it touches the narrow index alone (tester, #186b).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(BuyerQueries))]
+    public async Task The_buyers_queries_are_covered_by_the_paid_index_with_no_lookup(string query)
+    {
+        using var scope = await ScopeAsync();
+        var reader = Reader(scope);
+
+        var sql = query switch
+        {
+            "buyer-counts-day" => reader.BuyerCountsQuery(Period, ReportInterval.Day, null).ToQueryString(),
+            "buyer-counts-week" => reader.BuyerCountsQuery(Period, ReportInterval.Week, null).ToQueryString(),
+            "buyer-counts-month" => reader.BuyerCountsQuery(Period, ReportInterval.Month, null).ToQueryString(),
+            "buyer-counts-search" => reader.BuyerCountsQuery(Period, ReportInterval.Day, "NIMALI").ToQueryString(),
+            _ => throw new ArgumentOutOfRangeException(nameof(query)),
+        };
+
+        // One statement now (#186b fix): the period's buyers per bucket, the first-time history and the
+        // distinct total (the GROUPING SETS grand-total row) all read the orders table, both references hinted.
+        Assert.Equal(2, OrdersReference.Count(sql));
+        Assert.Contains("GROUPING SETS", sql, StringComparison.Ordinal);
+
+        var plan = await PlanForAsync(OrdersReference.Replace(sql, "$1 WITH (INDEX([" + PaidIndex + "]))"));
+
+        Assert.Contains(PaidIndex, plan);
+        Assert.DoesNotContain("Lookup=\"1\"", plan, StringComparison.Ordinal);
+    }
+
+    /// <summary>The control for the lookup check: a column the index does not carry does need one.</summary>
+    [Fact]
+    public async Task A_paid_query_on_a_column_the_index_lacks_shows_a_lookup()
+    {
+        using var scope = await ScopeAsync();
+
+        const string sql = "SELECT MAX([o].[FirstName]) FROM [sales].[Orders] AS [o] WHERE [o].[PaidAtUtc] IS NOT NULL AND [o].[PaidAtUtc] >= '2015-01-01'";
+        var plan = await PlanForAsync(OrdersReference.Replace(sql, "$1 WITH (INDEX([" + PaidIndex + "]))"));
+
+        Assert.Contains("Lookup=\"1\"", plan, StringComparison.Ordinal);
     }
 
     [Fact]

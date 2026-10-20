@@ -1824,6 +1824,74 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.ToTable("CustomerAddresses", "identity");
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Inventory.InventoryMovement", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<Guid?>("BatchId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<byte>("MovementType")
+                        .HasColumnType("tinyint");
+
+                    b.Property<int>("OnHandAfter")
+                        .HasColumnType("int");
+
+                    b.Property<int>("OnHandDelta")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("OrderId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
+
+                    b.Property<int>("ReservedAfter")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ReservedDelta")
+                        .HasColumnType("int");
+
+                    b.Property<int>("VariantId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BatchId")
+                        .HasDatabaseName("IX_InventoryMovements_Batch")
+                        .HasFilter("[BatchId] IS NOT NULL");
+
+                    b.HasIndex("OrderId")
+                        .HasDatabaseName("IX_InventoryMovements_Order")
+                        .HasFilter("[OrderId] IS NOT NULL");
+
+                    b.HasIndex("VariantId", "CreatedAtUtc", "Id")
+                        .IsDescending(false, true, true)
+                        .HasDatabaseName("IX_InventoryMovements_Variant_Created");
+
+                    b.ToTable("InventoryMovements", "inventory", t =>
+                        {
+                            t.HasCheckConstraint("CK_InventoryMovements_After", "[OnHandAfter] >= 0 AND [ReservedAfter] >= 0 AND [ReservedAfter] <= [OnHandAfter]");
+
+                            t.HasCheckConstraint("CK_InventoryMovements_MovementType", "[MovementType] BETWEEN 1 AND 9");
+
+                            t.HasCheckConstraint("CK_InventoryMovements_Reason", "[MovementType] NOT IN (3, 4, 9) OR ISNULL(LEN([Reason]), 0) > 0");
+                        });
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Inventory.StockLevel", b =>
                 {
                     b.Property<int>("VariantId")
@@ -4549,6 +4617,24 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("District");
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Inventory.InventoryMovement", b =>
+                {
+                    b.HasOne("SpencerDenim.Domain.Sales.Order", "Order")
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("SpencerDenim.Domain.Catalog.ProductVariant", "Variant")
+                        .WithMany()
+                        .HasForeignKey("VariantId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("Order");
+
+                    b.Navigation("Variant");
                 });
 
             modelBuilder.Entity("SpencerDenim.Domain.Inventory.StockLevel", b =>
