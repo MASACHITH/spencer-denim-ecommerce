@@ -231,6 +231,9 @@ public sealed class SettingKeySpecificationTests
             // Issue #193: doc 08 §3.8's Traffic cell, "RawRetentionDays (90), BotRetentionDays (7)".
             SettingKeys.Traffic.RawRetentionDays,
             SettingKeys.Traffic.BotRetentionDays,
+
+            // Issue #189: doc 08 §3.8's Reviews cell, "RequireApproval (true)".
+            SettingKeys.Reviews.RequireApproval,
         ];
 
         Assert.Equal(

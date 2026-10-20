@@ -241,6 +241,7 @@ export const SETTING_KEYS = {
   payPalExpiryMinutes: 'Orders.PayPalExpiryMinutes',
   trafficRawRetentionDays: 'Traffic.RawRetentionDays',
   trafficBotRetentionDays: 'Traffic.BotRetentionDays',
+  reviewsRequireApproval: 'Reviews.RequireApproval',
 } as const;
 
 /** Doc 08 §3.8's group names. */
@@ -263,4 +264,7 @@ export const SETTING_GROUPS = {
 
   /** The raw-traffic retention periods (issue #193): their own panel and save unit, `Settings.Edit`. */
   traffic: 'Traffic',
+
+  /** The review approval switch (issue #189): its own panel and save unit, `Settings.Edit`. */
+  reviews: 'Reviews',
 } as const;
