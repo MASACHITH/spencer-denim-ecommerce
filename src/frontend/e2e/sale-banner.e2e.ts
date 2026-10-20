@@ -28,7 +28,7 @@ const BREAKPOINTS = [320, 375, 390, 768, 1024, 1280, 1440, 1920] as const;
 
 const LIVE_ALT = 'Linen Week: 20% off shirts and blouses';
 
-async function banner(page: Page, state: 'none' | 'live' | 'no-alt' | 'fail'): Promise<void> {
+async function banner(page: Page, state: 'none' | 'live' | 'no-alt' | 'fail' | 'slow' | 'hostile'): Promise<void> {
   const response = await page.request.get(`${contentPagesApiURL}/__test__/sale-banner?state=${state}`);
   expect(response.ok(), 'the sale-banner switch did not answer').toBe(true);
 }
@@ -178,5 +178,85 @@ test.describe('the Sale page banner (#191)', () => {
       // Drawn at the slot's 16:5, so a phone gets a strip rather than a picture taller than the screen.
       expect(Math.abs(box!.width / box!.height - 16 / 5), `aspect at ${width}px`).toBeLessThan(0.05);
     }
+  });
+});
+
+/**
+ * Tester additions (#191): the 2 s timeout under a hung API, escaping of a hostile description in the
+ * server render and the transfer state, and the browser-side fetch on a client-side navigation.
+ */
+test.describe('the Sale page banner under attack (#191 tester)', () => {
+  // A hung answer may still be in flight through the route when a test ends; drop it quietly so it is
+  // not reported against the next test.
+  test.afterEach(async ({ page }) => {
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+  });
+
+  test('a hung banner API costs the server render at most its timeout, and the page has no banner', async ({ page }) => {
+    await banner(page, 'slow');
+
+    const started = Date.now();
+    const response = await page.request.get('/sale', { timeout: 20_000 });
+    const elapsed = Date.now() - started;
+
+    expect(response.ok()).toBe(true);
+    const html = await response.text();
+
+    // The stub holds the answer for 8 s; the storefront must give up at 2 s and render without it.
+    expect(elapsed, `the Sale page took ${elapsed} ms`).toBeLessThan(6_000);
+    expect(html).not.toContain('data-testid="sale-banner"');
+    expect(html).toContain('<h1');
+  });
+
+  test('a hung banner API does not hold the browser either, and the products render', async ({ page }) => {
+    await banner(page, 'slow');
+    await useStubApi(page);
+
+    // The server render times out, hands nothing over, and the browser asks again after hydration: the
+    // listing must be there at once whatever that second ask does.
+    await page.goto('/sale', { timeout: 20_000 });
+    await expect(page.locator('.product-grid > li').first()).toBeVisible({ timeout: 4_000 });
+    await expect(page.locator('[data-testid="sale-banner"]')).toHaveCount(0);
+  });
+
+  test('a description written to break out of the attribute is escaped, in the HTML and after hydration', async ({ page }) => {
+    await banner(page, 'hostile');
+
+    const html = await (await page.request.get('/sale')).text();
+    expect(html).toContain('data-testid="sale-banner"');
+    expect(html).not.toContain('<img src=x onerror');
+    expect(html).not.toContain('<script>window.__pwned');
+
+    await useStubApi(page);
+    await page.goto('/sale');
+
+    const image = page.locator('[data-testid="sale-banner"] img');
+    await expect(image).toBeVisible();
+    await expect(image).toHaveAttribute('alt', /onerror/);
+    expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
+    await expect(page.locator('img[src="x"]')).toHaveCount(0);
+  });
+
+  test('arriving at the Sale page by a client-side link asks for the banner in the browser and draws it', async ({ page }) => {
+    await banner(page, 'live');
+    await useStubApi(page);
+
+    await page.goto('/women');
+    await expect(page.locator('h1')).toHaveText('Women');
+
+    const asked = page.waitForRequest((request) => request.url().includes('/api/content/sale-banner'));
+    await page.locator('a[href="/sale"]').first().click();
+    await asked;
+
+    await expect(page.locator('h1')).toHaveText('Sale');
+    await expect(page.locator('[data-testid="sale-banner"] img')).toHaveAttribute('alt', LIVE_ALT);
+
+    // Leaving and coming back asks again: the server's handover is taken once, so a later visit is fresh.
+    await page.locator('a[href="/women"]').first().click();
+    await expect(page.locator('h1')).toHaveText('Women');
+    await banner(page, 'none');
+    await page.locator('a[href="/sale"]').first().click();
+    await expect(page.locator('h1')).toHaveText('Sale');
+    await expect(page.locator('[data-testid="sale-banner"]')).toHaveCount(0);
   });
 });

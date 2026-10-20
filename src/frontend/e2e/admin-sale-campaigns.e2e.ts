@@ -637,3 +637,110 @@ test.describe('individual products and the banner (#191)', () => {
     }
   });
 });
+
+/**
+ * Tester additions (#191): a product name far longer than any seeded one, with no space to break at, at
+ * every width; and a campaign built past the 200-target cap entirely through the picker, which the screen
+ * must let the server refuse in words rather than hang on or lose.
+ */
+test.describe('the product picker at its limits (#191 tester)', () => {
+  const search = '[data-testid="product-search"]';
+  const LONG_NAME = `Ultra${'Longunbrokenproductname'.repeat(8)}Shirt`;
+
+  test('a very long product name never makes the page scroll sideways, in the list or as a chip', async ({ page }) => {
+    // KNOWN DEFECT (#191 tester): the list option and the chip wrap, but the form's live region
+    // (`campaign-said`, "<name> added. 1 chosen.") has no `overflow-wrap`, so a name with no space to break
+    // at widens the whole page (665 px at 320 for a 74-character name). Remove this line with the fix.
+    test.fail(true, 'campaign-said does not wrap a long unbroken product name');
+    await open(page);
+
+    // The admin app renders in the browser, so the product list can be rewritten on its way in.
+    await page.route('**/api/admin/products?**', async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as { items: { name: string; productCode: string }[] };
+
+      body.items = body.items.map((item, index) =>
+        index === 0 ? { ...item, name: LONG_NAME, productCode: `SD-${'X'.repeat(40)}` } : item,
+      );
+
+      await route.fulfill({ response, json: body });
+    });
+
+    await page.locator('[data-testid="target-type"]').selectOption('Product');
+    await page.locator(search).fill('linen');
+    await expect(page.locator('[role="option"]').first()).toContainText(LONG_NAME.slice(0, 30));
+
+    await page.locator('[role="option"]').first().click();
+    await expect(page.locator('[data-testid="campaign-targets"]')).toContainText(LONG_NAME.slice(0, 30));
+
+    // Leave the list open over the chip, the widest state the form has.
+    await page.locator(search).fill('linen ');
+    await expect(page.locator('[role="option"]').first()).toBeVisible();
+
+    for (const width of BREAKPOINTS) {
+      await page.setViewportSize({ width, height: 900 });
+
+      expect(await horizontalOverflow(page), `horizontal overflow at ${width}px`).toBe(0);
+
+      const chipButton = page.locator('[data-testid="campaign-targets"] button').first();
+      expect(await unreachable(page, '[data-testid="campaign-targets"] button'), `chip at ${width}px`).toEqual([]);
+
+      const box = await chipButton.boundingBox();
+      expect(box!.x + box!.width, `chip button right edge at ${width}px`).toBeLessThanOrEqual(width);
+    }
+  });
+
+  test('201 products chosen through the picker are refused by the server in words, and 200 save', async ({ page }) => {
+    test.setTimeout(180_000);
+    await open(page);
+
+    const added = await page.request.get(`${adminURL}/__test__/many-products?count=200`);
+    expect(added.ok()).toBe(true);
+
+    await page.locator('[data-testid="target-type"]').selectOption('Product');
+    const box = page.locator(search);
+    const status = page.locator('[data-testid="product-search-status"]');
+
+    await box.focus();
+    await page.keyboard.type('linen shirt');
+    // 200 added rows and the seeded "Linen Shirt Dress".
+    await expect(status).toHaveText('201 products match. Showing 1 to 10.');
+
+    // Every result, by keyboard: Enter on each, Down to the next, Page Down at the end of a page.
+    for (let pageNumber = 1; pageNumber <= 21; pageNumber++) {
+      const count = await page.locator('[role="option"]').count();
+
+      for (let index = 0; index < count; index++) {
+        await page.keyboard.press('Enter');
+        await page.keyboard.press('ArrowDown');
+      }
+
+      if (pageNumber < 21) {
+        await page.keyboard.press('PageDown');
+        await expect(status).toContainText(`Showing ${pageNumber * 10 + 1} to`);
+      }
+    }
+
+    const chips = page.locator('[data-testid="campaign-targets"] li');
+    await expect(chips).toHaveCount(201);
+
+    await page.locator('[data-testid="campaign-name"]').fill('E2E201');
+    await page.locator('[data-testid="campaign-value"]').fill('20');
+    await page.locator('[data-testid="campaign-starts"]').fill(STARTS);
+    await page.locator('[data-testid="campaign-ends"]').fill(ENDS);
+    await page.locator('[data-testid="campaign-save"]').click();
+
+    await expect(page.locator('[data-testid="error-targets"]')).toContainText('at most 200');
+    await expect(chips).toHaveCount(201);
+
+    // One off, from the keyboard: focus lands on the chip that took its place, and 200 save.
+    await page.locator('[data-testid="campaign-targets"] button').last().focus();
+    await page.keyboard.press('Enter');
+    await expect(chips).toHaveCount(200);
+    await expect(page.locator('[data-testid="campaign-targets"] button').last()).toBeFocused();
+
+    await page.locator('[data-testid="campaign-save"]').click();
+    await expect(page.locator('[data-testid="campaign-said"]')).toContainText('is saved');
+    await expect(page.locator('[data-testid="campaigns"]')).toContainText('E2E201');
+  });
+});

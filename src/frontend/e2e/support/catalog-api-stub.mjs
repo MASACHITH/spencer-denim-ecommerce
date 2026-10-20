@@ -2383,7 +2383,19 @@ const SALE_BANNERS = {
     height: 500,
     altText: '',
   },
+  // Tester (#191): a description that tries to break out of the attribute and the transfer-state
+  // script. The API stores whatever a staff member typed, so the storefront must escape it.
+  hostile: {
+    imageUrl: '/media/public/originals/0000f00d-0000-4000-8000-0000000000b3.webp',
+    imageSrcSet: null,
+    width: 1600,
+    height: 500,
+    altText: '"><img src=x onerror="window.__pwned=1"></script><script>window.__pwned=2</script>',
+  },
 };
+
+/** Tester (#191): how long `state=slow` holds the answer, well past the storefront's 2 s timeout. */
+const SALE_BANNER_SLOW_MS = 8_000;
 
 let saleBannerState = 'none';
 
@@ -3856,6 +3868,12 @@ const server = createServer((request, response) => {
     if (saleBannerState === 'fail') {
       response.statusCode = 500;
       response.end(JSON.stringify({ title: 'An error occurred', status: 500 }));
+      return;
+    }
+
+    if (saleBannerState === 'slow') {
+      // A hung API: the live banner, but only after the storefront should have given up on it.
+      setTimeout(() => response.end(JSON.stringify({ banner: SALE_BANNERS.live })), SALE_BANNER_SLOW_MS);
       return;
     }
 

@@ -734,6 +734,46 @@ describe('SaleCampaignsPage (ADM-14)', () => {
     await settle();
   });
 
+  // Tester (#191): `startNew` must clear the banner as well as the chips, or the last-edited campaign's
+  // picture would be put on the next sale a staff member creates.
+  it('does not carry a saved banner into the next campaign', async () => {
+    await open([
+      campaign({
+        banner: { publicId: '0000f00d-0000-4000-8000-0000000000aa', url: '/media/old.webp', altText: 'Old sale' },
+      }),
+    ]);
+
+    click('edit-4');
+    await settle();
+    expect(element.querySelector('[data-testid="banner-preview"]')).not.toBeNull();
+
+    click('campaign-cancel');
+    await settle();
+    expect(element.querySelector('[data-testid="banner-empty"]')).not.toBeNull();
+
+    type('campaign-name', 'T4NOBANNER');
+    type('campaign-value', '20');
+    type('campaign-starts', '2026-10-19T00:00');
+    type('campaign-ends', '2026-10-26T00:00');
+    choose('target-category', '31');
+    click('add-target');
+    await settle();
+
+    click('campaign-save');
+    answerAntiforgery();
+    await settle();
+
+    const request = http.expectOne(
+      (candidate) => candidate.url === AdminCampaignApi.campaignsUrl && candidate.method === 'POST',
+    );
+
+    expect((request.request.body as { bannerPublicId: string | null }).bannerPublicId).toBeNull();
+
+    request.flush(saved());
+    http.expectOne(AdminCampaignApi.campaignsUrl).flush([campaign()]);
+    await settle();
+  });
+
   /** The server's field message lands against its own control, which is the only thing saying where. */
   it('shows the server message against the field it named', async () => {
     await open([]);
@@ -1177,6 +1217,31 @@ describe('SaleCampaignsPage (ADM-14)', () => {
     await settle();
 
     expect(element.ownerDocument.activeElement?.getAttribute('data-testid')).toBe('target-type');
+  });
+
+  // Tester (#191): with three chips, removing the first must land on the chip that slid into its place
+  // (the old second), not the one after it; the two-chip case above cannot tell those apart.
+  it('moves focus to the chip that took the place of the removed one, in the middle of a list', async () => {
+    await open([
+      campaign({
+        targets: [
+          target(),
+          target({ targetType: 'Product', categoryId: null, productId: 88, name: 'Relaxed Linen Blend Shirt' }),
+          target({ targetType: 'Product', categoryId: null, productId: 89, name: 'Linen Shirt Dress' }),
+        ],
+      }),
+    ]);
+
+    click('edit-4');
+    await settle();
+
+    click('drop-target-Category-31');
+    await settle();
+    expect(element.ownerDocument.activeElement?.getAttribute('data-testid')).toBe('drop-target-Product-88');
+
+    click('drop-target-Product-89');
+    await settle();
+    expect(element.ownerDocument.activeElement?.getAttribute('data-testid')).toBe('drop-target-Product-88');
   });
 
   /** The banner the media library answered an upload with is sent by its `publicId`. */
