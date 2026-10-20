@@ -1,6 +1,7 @@
 using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Accounts.Contracts;
 using SpencerDenim.Application.Sales.Checkout;
+using SpencerDenim.Domain.Common;
 using SpencerDenim.Domain.Identity;
 using SpencerDenim.Domain.Marketing;
 
@@ -45,6 +46,8 @@ internal static class CustomerAccountValidator
 
         Required(errors, "firstName", registration.FirstName, NameMaxLength, "Enter your first name.");
         Optional(errors, "lastName", registration.LastName, NameMaxLength);
+        PlainName(errors, "firstName", registration.FirstName);
+        PlainName(errors, "lastName", registration.LastName);
         Email(errors, "email", registration.Email);
         OptionalPhone(errors, "phone", registration.Phone);
         Password(errors, "password", registration.Password);
@@ -91,6 +94,8 @@ internal static class CustomerAccountValidator
 
         Required(errors, "firstName", edit.FirstName, NameMaxLength, "Enter your first name.");
         Optional(errors, "lastName", edit.LastName, NameMaxLength);
+        PlainName(errors, "firstName", edit.FirstName);
+        PlainName(errors, "lastName", edit.LastName);
         OptionalPhone(errors, "phone", edit.Phone);
 
         if (edit.DefaultDistrictId is { } districtId && districtId <= 0)
@@ -248,6 +253,19 @@ internal static class CustomerAccountValidator
         if (Trimmed(value) is { } trimmed && trimmed.Length > maxLength)
         {
             errors.Add(new ValidationError(field, TooLong(maxLength)));
+        }
+    }
+
+    /// <summary>
+    /// A name holds no control, bidi or line-break characters (#189 D1). The first name becomes the public name on
+    /// every review, so a U+202E in it would reverse the text after it on the product page; these are the characters
+    /// review text refuses (<c>PlainText</c>). One message per field, and none on top of a length error.
+    /// </summary>
+    private static void PlainName(List<ValidationError> errors, string field, string? value)
+    {
+        if (PlainText.HasUnsafeForOneLine(value) && !errors.Any(error => error.Field == field))
+        {
+            errors.Add(new ValidationError(field, "This contains a hidden control character. Please retype it."));
         }
     }
 

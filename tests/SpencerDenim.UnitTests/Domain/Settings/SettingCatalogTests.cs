@@ -189,6 +189,7 @@ public sealed class SettingCatalogTests
             SettingKeys.PayPal.ExpiryMinutes,
             SettingKeys.Traffic.RawRetentionDays,
             SettingKeys.Traffic.BotRetentionDays,
+            SettingKeys.Reviews.RequireApproval,
         ];
 
         Assert.Equal(expected.Order(StringComparer.Ordinal), SettingCatalog.All.Select(d => d.Key).Order(StringComparer.Ordinal));
@@ -352,7 +353,7 @@ public sealed class SettingCatalogTests
     {
         // `Store` appears once although W3-04 added four more keys to it further down the list: Groups is
         // distinct, and that is what the "once each" in the name is about.
-        Assert.Equal(["Store", "Contact", "Social", "Bank", "Orders", "Payments.PayPal", "Traffic"], SettingCatalog.Groups);
+        Assert.Equal(["Store", "Contact", "Social", "Bank", "Orders", "Payments.PayPal", "Traffic", "Reviews"], SettingCatalog.Groups);
     }
 
     [Fact]
