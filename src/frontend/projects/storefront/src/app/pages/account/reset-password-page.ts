@@ -136,7 +136,7 @@ export class ResetPasswordPage {
   /**
    * The one sentence the server's validator and this form both state.
    *
-   * Pinned to `CustomerPasswordPolicy.Requirement` by a C# convention test; see
+   * Pinned to `PasswordPolicy.Requirement` by a C# convention test; see
    * {@link PASSWORD_RULE}.
    */
   protected readonly PASSWORD_RULE = PASSWORD_RULE;

@@ -5,6 +5,7 @@ import { forkJoin, of } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
 
 import { AdminAuthApi } from '../../core/auth/admin-auth-api';
+import { STAFF_PASSWORD_RULE } from '../../core/auth/password-rule';
 import { StaffUserActionFailure, UsersApi, toStaffUserActionFailure } from '../../core/users/users-api';
 import { RoleSummary, StaffUserDetail } from '../../core/users/users.model';
 
@@ -81,9 +82,11 @@ interface RoleOption {
                 name="initialPassword"
                 autocomplete="new-password"
                 required
+                aria-describedby="initial-password-rule"
                 [ngModel]="initialPassword()"
                 (ngModelChange)="initialPassword.set($event)"
               />
+              <span class="user-form__hint" id="initial-password-rule">{{ passwordRule }}</span>
               <span class="user-form__hint">The new user must change this on first sign-in.</span>
             </label>
           }
@@ -236,6 +239,9 @@ export class UserFormPage {
   protected readonly firstName = signal('');
   protected readonly lastName = signal('');
   protected readonly initialPassword = signal('');
+
+  /** The rule, shown with the initial-password box: the server's own sentence (issue #200). */
+  protected readonly passwordRule = STAFF_PASSWORD_RULE;
   protected readonly isActive = signal(true);
   protected readonly selectedRoleIds = signal<ReadonlySet<number>>(new Set());
 

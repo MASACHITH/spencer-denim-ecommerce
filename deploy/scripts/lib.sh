@@ -10,6 +10,11 @@ set -Eeuo pipefail
 SD_APPS_BASE="${SD_APPS_BASE:-/opt/apps}"
 SD_DB_BASE="${SD_DB_BASE:-/opt/server/database}"
 
+# The fewest characters any password may have: PasswordPolicy.MinimumLength in SpencerDenim.Domain (issue #200).
+# A shell script cannot read that constant, so this is a copy, and PasswordHintConventionTests fails the build
+# if the two differ. It is used for SD_SEED_ADMIN_PASSWORD below, the one password an operator types in here.
+SD_PASSWORD_MIN_LENGTH=10
+
 # Image users that must own their writable bind mounts.
 SD_API_UID=1654      # "app" in the mcr.microsoft.com/dotnet images
 SD_MSSQL_UID=10001   # "mssql" in the mcr.microsoft.com/mssql/server image
@@ -216,6 +221,20 @@ EOF_HOSTS
       problems=1
     fi
     check_dp_cert "$file" || problems=1
+
+    # First Super Admin (docs/15 §4). The API holds this password to the same rule as every other account: one
+    # shorter than SD_PASSWORD_MIN_LENGTH creates no account, logs an error and starts anyway, so a first install
+    # would come up with no way into the admin panel. Refused here instead, before anything is deployed. Only
+    # when the seed is switched on; the value itself is never printed.
+    local seed_enabled
+    seed_enabled="$(env_value "$file" SD_SEED_ADMIN_ENABLED | tr '[:upper:]' '[:lower:]')"
+    if [ "$seed_enabled" = true ]; then
+      pw="$(env_value "$file" SD_SEED_ADMIN_PASSWORD)"
+      if [ "${#pw}" -lt "$SD_PASSWORD_MIN_LENGTH" ]; then
+        warn "$file: SD_SEED_ADMIN_ENABLED is true but SD_SEED_ADMIN_PASSWORD is shorter than $SD_PASSWORD_MIN_LENGTH characters, so the first Super Admin would not be created. Use at least $SD_PASSWORD_MIN_LENGTH characters with an upper-case letter, a lower-case letter, a number and a symbol; or, if that account already exists, set SD_SEED_ADMIN_ENABLED=false and blank the password"
+        problems=1
+      fi
+    fi
   fi
 
   if [ "$kind" = db ]; then

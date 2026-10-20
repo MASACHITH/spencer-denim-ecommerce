@@ -283,7 +283,7 @@ import { privatePage } from '../../core/platform/private-page';
               />
               @if (messageFor('newPassword'); as message) {
                 <!-- The rule is the server's, which is the thing that enforces it: see
-                     'CustomerPasswordPolicy', whose own remarks say the front end must not keep a
+                     'PasswordPolicy', whose own remarks say the front end must not keep a
                      second copy of the number. -->
                 <p class="acc-error" id="pr-new-error">{{ message }}</p>
               }

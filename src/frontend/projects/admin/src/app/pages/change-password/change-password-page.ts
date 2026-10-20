@@ -15,6 +15,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 
 import { AdminAuthApi, type ChangePasswordError } from '../../core/auth/admin-auth-api';
 import { loginPath, returnUrlParam, sanitizeReturnUrl } from '../../core/auth/auth-guards';
+import { STAFF_PASSWORD_RULE } from '../../core/auth/password-rule';
 
 type PasswordField = 'currentPassword' | 'newPassword' | 'confirmPassword';
 
@@ -86,9 +87,7 @@ const fieldInError: Partial<Record<ChangePasswordError['kind'] | 'mismatch', Pas
             [readonly]="submitting()"
           />
         </label>
-        <p class="change__hint" id="change-rules">
-          Use at least 6 characters, with an upper-case letter, a lower-case letter, a number and a symbol.
-        </p>
+        <p class="change__hint" id="change-rules">{{ passwordRule }}</p>
 
         <label class="change__field">
           <span class="change__label">Confirm new password</span>
@@ -220,6 +219,9 @@ export class ChangePasswordPage implements OnInit {
   private readonly newPasswordInput = viewChild.required<ElementRef<HTMLInputElement>>('newPasswordInput');
   private readonly confirmPasswordInput = viewChild.required<ElementRef<HTMLInputElement>>('confirmPasswordInput');
   private readonly errorSummary = viewChild<ElementRef<HTMLElement>>('errorSummary');
+
+  /** The rule, shown above the new-password box: the server's own sentence (issue #200). */
+  protected readonly passwordRule = STAFF_PASSWORD_RULE;
 
   protected currentPassword = '';
   protected newPassword = '';
