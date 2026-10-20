@@ -15,6 +15,8 @@ import { randomUUID } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
 import { createServer } from 'node:http';
 
+import { handleReviewRoute } from './review-stub.mjs';
+
 const PORT = Number(process.env.E2E_API_PORT ?? 4421);
 
 /**
@@ -3624,6 +3626,12 @@ const server = createServer((request, response) => {
   response.setHeader('Access-Control-Allow-Origin', '*');
   response.setHeader('Content-Type', 'application/json; charset=utf-8');
   response.setHeader('Cache-Control', 'no-store');
+
+  // PDP-08 (#189): the review routes, and the signed-in session they depend on. Before every other route so
+  // `/api/catalog/products/{slug}/reviews` is not read as a product slug.
+  if (handleReviewRoute(request, response, url, { totalProducts: TOTAL_PRODUCTS, slugPattern: SLUG_PATTERN })) {
+    return;
+  }
 
   // Test-only, and deliberately named so: it is a switch on a fixture, not an API the storefront
   // knows about. Nothing in `src/` ever asks for this path.
