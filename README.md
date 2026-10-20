@@ -97,6 +97,9 @@ Other settings (environment variable names):
 | `Database__MaxRetryCount` | `3` | EF Core retry-on-failure count |
 | `Database__CommandTimeoutSeconds` | `30` | Command timeout |
 | `Logging__ConsoleFormat` | `text` in Development, else `json` | Serilog console output |
+| `OrderPlacementThrottle__PermitsPerWindow` | `20` | Orders one visitor address may place per window (`POST /api/checkout/orders`, #107). Over it: 429 with `Retry-After`. A resend of an order already placed is never counted. In the deployed stack set `SD_ORDER_THROTTLE_PERMITS` / `_SHARED_PERMITS` / `_WINDOW_SECONDS` in `config/app.env` (see `deploy/app/.env.example`) — compose maps them to these three |
+| `OrderPlacementThrottle__SharedAddressPermitsPerWindow` | `200` | The budget when the caller is not a visitor (loopback, private address, none): everybody behind one proxy. Must be at least the figure above |
+| `OrderPlacementThrottle__WindowSeconds` | `600` | The window, and the `Retry-After` a refused caller is sent. 1 to 86400 |
 
 ### 2. Catalogue data: migrations and seed
 

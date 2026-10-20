@@ -11,6 +11,36 @@ import {
 } from '../../core/marketing/admin-campaign.model';
 import { AdminCatalogApi } from '../../core/catalog/admin-catalog-api';
 import { AdminCategoryNode, AdminDepartment } from '../../core/catalog/admin-catalog.model';
+import { AdminProductApi } from '../../core/products/admin-product-api';
+import { AdminProductListItem } from '../../core/products/admin-product.model';
+import { PRODUCT_PICKER_DEBOUNCE_MS } from './campaign-product-picker';
+
+function product(id: number, name: string, code: string): AdminProductListItem {
+  return {
+    id,
+    productCode: code,
+    name,
+    slug: name.toLowerCase().replaceAll(' ', '-'),
+    departmentId: 3,
+    departmentName: 'Women',
+    primaryCategoryId: 31,
+    primaryCategoryName: 'Shirts & Blouses',
+    basePrice: 5490,
+    compareAtPrice: 6990,
+    badgeOverride: null,
+    isPublished: true,
+    firstPublishedAtUtc: null,
+    updatedAtUtc: null,
+    variantCount: 3,
+    colourCount: 1,
+    hasVideo: false,
+    cardImageUrl: null,
+    rowVersion: 'AAAAAAAAB9M=',
+  };
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 
 function department(id: number, name: string): AdminDepartment {
   return {
@@ -84,7 +114,8 @@ function campaign(overrides: Partial<AdminSaleCampaign> = {}): AdminSaleCampaign
     startsAt: '2026-10-19T00:00:00',
     endsAt: '2026-10-26T00:00:00',
     isActive: true,
-    bannerAssetId: null,
+    banner: null,
+    bannerUnavailable: false,
     targets: [target()],
     status: 'Scheduled',
     rowVersion: 'AAAAAAAACl8=',
@@ -193,7 +224,7 @@ describe('SaleCampaignsPage (ADM-14)', () => {
   /**
    * **Doc 11 line 450's worked example, step for step.** This is the acceptance test for the screen: a
    * staff member names the campaign, chooses 20%, sets a window, picks Women › Shirts & Blouses, adds it
-   * and saves. Every field of the body is asserted, including `bannerAssetId` and `targets`, because the
+   * and saves. Every field of the body is asserted, including `bannerPublicId` and `targets`, because the
    * endpoint refuses a body that leaves a key out and the field that would be dropped is the one that
    * decides which products go on sale.
    */
@@ -232,7 +263,7 @@ describe('SaleCampaignsPage (ADM-14)', () => {
       startsAt: '2026-10-19T00:00',
       endsAt: '2026-10-26T00:00',
       isActive: true,
-      bannerAssetId: null,
+      bannerPublicId: null,
       targets: [
         {
           targetType: 'Category',
@@ -485,9 +516,9 @@ describe('SaleCampaignsPage (ADM-14)', () => {
     await settle();
 
     expect(element.querySelector('[data-testid="error-targets"]')?.textContent).toContain(
-      'at least one department or category',
+      'at least one department, category or product',
     );
-    expect(said()).toContain('at least one department or category');
+    expect(said()).toContain('at least one department, category or product');
 
     // And nothing was sent: `http.verify()` in afterEach would fail on an unexpected request, so this
     // asserts the absence directly rather than relying on that.
@@ -550,13 +581,11 @@ describe('SaleCampaignsPage (ADM-14)', () => {
   });
 
   /**
-   * Editing loads the row, and **keeps a product target this screen cannot show**.
-   *
-   * The save is a full replacement, so a campaign created through the API with an individual product on
-   * it would have that product silently taken off the sale by a screen that only knows about departments
-   * and categories. The product target travels back untouched and the staff member is told it is there.
+   * **Editing shows every target as a chip, a product included, and sends exactly the chips back** (#191).
+   * Before #191 a product target was kept out of sight and sent back untouched; now it is a chip the staff
+   * member can see and remove, so what the save sends is what the screen shows.
    */
-  it('keeps a product target through an edit it cannot show', async () => {
+  it('shows a product target as a chip on edit and sends it back', async () => {
     await open([
       campaign({
         targets: [
@@ -574,10 +603,11 @@ describe('SaleCampaignsPage (ADM-14)', () => {
     click('edit-4');
     await settle();
 
-    expect(said()).toContain('1 individual product');
+    const chips = element.querySelectorAll('[data-testid="campaign-targets"] li');
 
-    // The category chip is editable; the product is not shown as one.
-    expect(element.querySelectorAll('[data-testid="campaign-targets"] li').length).toBe(1);
+    expect(chips.length).toBe(2);
+    expect(chips[1].textContent).toContain('Relaxed Linen Blend Shirt');
+    expect(element.querySelector('[data-testid="drop-target-Product-88"]')).not.toBeNull();
 
     click('campaign-save');
     answerAntiforgery();
@@ -612,15 +642,47 @@ describe('SaleCampaignsPage (ADM-14)', () => {
     await settle();
   });
 
+  /** A product chip taken off before the save is not in the body: the save is a full replacement. */
+  it('drops a removed product chip from the save', async () => {
+    await open([
+      campaign({
+        targets: [
+          target(),
+          target({ targetType: 'Product', categoryId: null, productId: 88, name: 'Relaxed Linen Blend Shirt' }),
+        ],
+      }),
+    ]);
+
+    click('edit-4');
+    await settle();
+
+    click('drop-target-Product-88');
+    await settle();
+
+    expect(said()).toContain('Relaxed Linen Blend Shirt removed. 1 chosen.');
+
+    click('campaign-save');
+    answerAntiforgery();
+    await settle();
+
+    const request = http.expectOne(
+      (candidate) => candidate.url.endsWith('/4') && candidate.method === 'PUT',
+    );
+
+    expect((request.request.body as { targets: { targetType: string }[] }).targets.map((row) => row.targetType)).toEqual([
+      'Category',
+    ]);
+
+    request.flush(saved());
+    http.expectOne(AdminCampaignApi.campaignsUrl).flush([campaign()]);
+    await settle();
+  });
+
   /**
-   * **A product target kept for an edit must not leak into the next campaign.**
-   *
-   * `edit` holds the product targets this screen cannot show, and the form posts every field — so a
-   * `startNew` that did not clear them would put the last-edited campaign's products on the next campaign
-   * a staff member created. That is a product on a sale nobody chose, by a screen that never showed it.
-   * This was a real defect in this file, found by re-reading it rather than by a failing test.
+   * **A product on the last-edited campaign must not leak into the next one.** `startNew` runs on Cancel
+   * and after every save; a form that kept the chips would put those products on a sale nobody chose.
    */
-  it('does not carry a kept product target into the next campaign', async () => {
+  it('does not carry a product chip into the next campaign', async () => {
     await open([
       campaign({
         targets: [
@@ -667,6 +729,46 @@ describe('SaleCampaignsPage (ADM-14)', () => {
         includeSubcategories: true,
       },
     ]);
+
+    request.flush(saved());
+    http.expectOne(AdminCampaignApi.campaignsUrl).flush([campaign()]);
+    await settle();
+  });
+
+  // Tester (#191): `startNew` must clear the banner as well as the chips, or the last-edited campaign's
+  // picture would be put on the next sale a staff member creates.
+  it('does not carry a saved banner into the next campaign', async () => {
+    await open([
+      campaign({
+        banner: { publicId: '0000f00d-0000-4000-8000-0000000000aa', url: '/media/old.webp', altText: 'Old sale' },
+      }),
+    ]);
+
+    click('edit-4');
+    await settle();
+    expect(element.querySelector('[data-testid="banner-preview"]')).not.toBeNull();
+
+    click('campaign-cancel');
+    await settle();
+    expect(element.querySelector('[data-testid="banner-empty"]')).not.toBeNull();
+
+    type('campaign-name', 'T4NOBANNER');
+    type('campaign-value', '20');
+    type('campaign-starts', '2026-10-19T00:00');
+    type('campaign-ends', '2026-10-26T00:00');
+    choose('target-category', '31');
+    click('add-target');
+    await settle();
+
+    click('campaign-save');
+    answerAntiforgery();
+    await settle();
+
+    const request = http.expectOne(
+      (candidate) => candidate.url === AdminCampaignApi.campaignsUrl && candidate.method === 'POST',
+    );
+
+    expect((request.request.body as { bannerPublicId: string | null }).bannerPublicId).toBeNull();
 
     request.flush(saved());
     http.expectOne(AdminCampaignApi.campaignsUrl).flush([campaign()]);
@@ -925,14 +1027,15 @@ describe('SaleCampaignsPage (ADM-14)', () => {
     expect(element.querySelectorAll('input[placeholder]').length).toBe(0);
   });
 
-  /** The screen says what it does not do, so a staff member is not left hunting for the option. */
-  it('says that product targets and banners are not on this screen', async () => {
+  /** The screen says how products on two campaigns are priced, and where a banner shows (#191). */
+  it('says that campaigns never add up and where the banner shows', async () => {
     await open([]);
 
     const note = element.querySelector('[data-testid="campaign-scope-note"]')?.textContent ?? '';
 
-    expect(note).toContain('individual products');
-    expect(note).toContain('banner');
+    expect(note).toContain('never add up');
+    expect(note).toContain('Sale page');
+    expect(note).not.toContain('not on this screen');
   });
 
   /** The one heading structure check axe does not make: an h1 before any h2. */
@@ -945,5 +1048,427 @@ describe('SaleCampaignsPage (ADM-14)', () => {
 
     expect(headings[0]).toBe('h1');
     expect(headings.filter((tag) => tag === 'h1').length).toBe(1);
+  });
+  // ---- #191: individual products and the banner ------------------------------------------------
+
+  /** Types into the product picker and answers its one search with these products. */
+  async function search(term: string, items: readonly AdminProductListItem[]): Promise<void> {
+    choose('target-type', 'Product');
+    await settle();
+
+    type('product-search', term);
+    await pause(PRODUCT_PICKER_DEBOUNCE_MS + 50);
+
+    http
+      .expectOne((request) => request.url === AdminProductApi.productsUrl)
+      .flush({
+        items,
+        page: 1,
+        pageSize: 10,
+        totalCount: items.length,
+        totalPages: 1,
+        hasPreviousPage: false,
+        hasNextPage: false,
+      });
+
+    await settle();
+  }
+
+  function attachFile(testId: string, file: File): void {
+    const input = element.querySelector<HTMLInputElement>(`[data-testid="${testId}"]`)!;
+    Object.defineProperty(input, 'files', { value: [file] });
+    input.dispatchEvent(new Event('change'));
+  }
+
+  /**
+   * **A product chosen from the picker is a chip and goes out as a product target**, with only its own id
+   * and the subtree flag forced on, the way the API itself forces it.
+   */
+  it('adds a product from the picker and sends it as a product target', async () => {
+    await open([]);
+
+    type('campaign-name', 'T4PRODUCT');
+    type('campaign-value', '20');
+    type('campaign-starts', '2026-10-19T00:00');
+    type('campaign-ends', '2026-10-26T00:00');
+
+    await search('linen', [product(88, 'Relaxed Linen Blend Shirt', 'SD-W-0001')]);
+
+    click('product-option-88');
+    await settle();
+
+    expect(element.querySelector('[data-testid="campaign-targets"]')?.textContent).toContain(
+      'Relaxed Linen Blend Shirt (SD-W-0001)',
+    );
+    expect(said()).toContain('Relaxed Linen Blend Shirt added. 1 chosen.');
+
+    // A product is added by choosing it, so the department and category button is not offered.
+    expect(element.querySelector('[data-testid="add-target"]')).toBeNull();
+
+    click('campaign-save');
+    answerAntiforgery();
+    await settle();
+
+    const request = http.expectOne(
+      (candidate) => candidate.url === AdminCampaignApi.campaignsUrl && candidate.method === 'POST',
+    );
+
+    expect((request.request.body as { targets: unknown[] }).targets).toEqual([
+      {
+        targetType: 'Product',
+        departmentId: null,
+        categoryId: null,
+        productId: 88,
+        includeSubcategories: true,
+      },
+    ]);
+
+    request.flush(saved());
+    http.expectOne(AdminCampaignApi.campaignsUrl).flush([campaign()]);
+    await settle();
+  });
+
+  it('refuses the same product twice and says so beside the chips', async () => {
+    await open([]);
+
+    await search('linen', [product(88, 'Relaxed Linen Blend Shirt', 'SD-W-0001')]);
+
+    click('product-option-88');
+    await settle();
+    click('product-option-88');
+    await settle();
+
+    expect(element.querySelectorAll('[data-testid="campaign-targets"] li').length).toBe(1);
+    expect(element.querySelector('[data-testid="error-targets"]')?.textContent).toContain(
+      'Relaxed Linen Blend Shirt is already on this campaign.',
+    );
+    expect(element.querySelector('[data-testid="product-option-88"]')?.textContent).toContain(
+      'already on this campaign',
+    );
+  });
+
+  /** A product and a category may share a campaign; both go out, each with its own id only. */
+  it('sends a category and a product together', async () => {
+    await open([]);
+
+    type('campaign-name', 'T4MIXED');
+    type('campaign-value', '20');
+    type('campaign-starts', '2026-10-19T00:00');
+    type('campaign-ends', '2026-10-26T00:00');
+    choose('target-category', '31');
+    click('add-target');
+    await settle();
+
+    await search('linen', [product(88, 'Relaxed Linen Blend Shirt', 'SD-W-0001')]);
+    click('product-option-88');
+    await settle();
+
+    click('campaign-save');
+    answerAntiforgery();
+    await settle();
+
+    const request = http.expectOne(
+      (candidate) => candidate.url === AdminCampaignApi.campaignsUrl && candidate.method === 'POST',
+    );
+
+    const body = request.request.body as {
+      targets: { targetType: string; categoryId: number | null; productId: number | null }[];
+    };
+
+    expect(body.targets).toEqual([
+      expect.objectContaining({ targetType: 'Category', categoryId: 31, productId: null }),
+      expect.objectContaining({ targetType: 'Product', categoryId: null, productId: 88 }),
+    ]);
+
+    request.flush(saved());
+    http.expectOne(AdminCampaignApi.campaignsUrl).flush([campaign()]);
+    await settle();
+  });
+
+  /**
+   * **Focus does not fall to the page when a chip is removed.** The pressed button is gone, so focus goes
+   * to the chip that took its place, and to the "Add" control once there are none (#109's shape).
+   */
+  it('moves focus to the next chip when one is removed', async () => {
+    await open([
+      campaign({
+        targets: [
+          target(),
+          target({
+            targetType: 'Product',
+            categoryId: null,
+            productId: 88,
+            name: 'Relaxed Linen Blend Shirt',
+          }),
+        ],
+      }),
+    ]);
+
+    click('edit-4');
+    await settle();
+
+    click('drop-target-Category-31');
+    await settle();
+
+    expect(element.ownerDocument.activeElement?.getAttribute('data-testid')).toBe(
+      'drop-target-Product-88',
+    );
+
+    click('drop-target-Product-88');
+    await settle();
+
+    expect(element.ownerDocument.activeElement?.getAttribute('data-testid')).toBe('target-type');
+  });
+
+  // Tester (#191): with three chips, removing the first must land on the chip that slid into its place
+  // (the old second), not the one after it; the two-chip case above cannot tell those apart.
+  it('moves focus to the chip that took the place of the removed one, in the middle of a list', async () => {
+    await open([
+      campaign({
+        targets: [
+          target(),
+          target({ targetType: 'Product', categoryId: null, productId: 88, name: 'Relaxed Linen Blend Shirt' }),
+          target({ targetType: 'Product', categoryId: null, productId: 89, name: 'Linen Shirt Dress' }),
+        ],
+      }),
+    ]);
+
+    click('edit-4');
+    await settle();
+
+    click('drop-target-Category-31');
+    await settle();
+    expect(element.ownerDocument.activeElement?.getAttribute('data-testid')).toBe('drop-target-Product-88');
+
+    click('drop-target-Product-89');
+    await settle();
+    expect(element.ownerDocument.activeElement?.getAttribute('data-testid')).toBe('drop-target-Product-88');
+  });
+
+  /** The banner the media library answered an upload with is sent by its `publicId`. */
+  it('uploads a banner and sends its public id', async () => {
+    await open([]);
+
+    type('campaign-name', 'T4BANNER');
+    type('campaign-value', '20');
+    type('campaign-starts', '2026-10-19T00:00');
+    type('campaign-ends', '2026-10-26T00:00');
+    choose('target-category', '31');
+    click('add-target');
+    await settle();
+
+    attachFile(
+      'banner-file',
+      new File([new Uint8Array([0xff, 0xd8, 0xff])], 'banner.jpg', { type: 'image/jpeg' }),
+    );
+    type('banner-alt', 'Linen Week: 20% off shirts');
+    click('banner-upload');
+    answerAntiforgery();
+    await settle();
+
+    const upload = http.expectOne(AdminProductApi.mediaImagesUrl);
+    expect((upload.request.body as FormData).get('altText')).toBe('Linen Week: 20% off shirts');
+
+    upload.flush({
+      publicId: '0000f00d-0000-4000-8000-000000000001',
+      mediaType: 'Image',
+      url: '/media/banner.webp',
+      posterUrl: null,
+      altText: 'Linen Week: 20% off shirts',
+    });
+    await settle();
+
+    expect(element.querySelector('[data-testid="banner-preview"]')?.textContent).toContain(
+      'Linen Week: 20% off shirts',
+    );
+
+    click('campaign-save');
+    answerAntiforgery();
+    await settle();
+
+    const request = http.expectOne(
+      (candidate) => candidate.url === AdminCampaignApi.campaignsUrl && candidate.method === 'POST',
+    );
+
+    expect((request.request.body as { bannerPublicId: string | null }).bannerPublicId).toBe(
+      '0000f00d-0000-4000-8000-000000000001',
+    );
+
+    request.flush(saved());
+    http.expectOne(AdminCampaignApi.campaignsUrl).flush([campaign()]);
+    await settle();
+  });
+
+  /** A description is asked for before anything is uploaded: it is what the Sale page reads aloud. */
+  it('asks for a description before uploading a banner', async () => {
+    await open([]);
+
+    attachFile(
+      'banner-file',
+      new File([new Uint8Array([0xff, 0xd8, 0xff])], 'banner.jpg', { type: 'image/jpeg' }),
+    );
+    click('banner-upload');
+    await settle();
+
+    expect(element.querySelector('[data-testid="banner-error"]')?.textContent).toContain(
+      'Describe the picture first',
+    );
+    expect(element.querySelector('[data-testid="banner-alt"]')?.getAttribute('aria-invalid')).toBe(
+      'true',
+    );
+    http.expectNone(AdminProductApi.mediaImagesUrl);
+  });
+
+  it('keeps a saved banner on edit, and sends null once it is removed', async () => {
+    const banner = {
+      publicId: '0000f00d-0000-4000-8000-000000000002',
+      url: '/media/kept.webp',
+      altText: 'Kept banner',
+    };
+
+    await open([campaign({ banner })]);
+
+    expect(element.querySelector('[data-testid="banner-4"]')?.textContent).toContain('Kept banner');
+
+    click('edit-4');
+    await settle();
+
+    expect(element.querySelector('[data-testid="banner-preview"] img')?.getAttribute('alt')).toBe(
+      'Kept banner',
+    );
+
+    click('banner-remove');
+    await settle();
+
+    expect(element.querySelector('[data-testid="banner-empty"]')).not.toBeNull();
+    expect(element.ownerDocument.activeElement?.getAttribute('data-testid')).toBe('banner-file');
+
+    click('campaign-save');
+    answerAntiforgery();
+    await settle();
+
+    const request = http.expectOne(
+      (candidate) => candidate.url.endsWith('/4') && candidate.method === 'PUT',
+    );
+
+    expect((request.request.body as { bannerPublicId: string | null }).bannerPublicId).toBeNull();
+
+    request.flush(saved());
+    http.expectOne(AdminCampaignApi.campaignsUrl).flush([campaign()]);
+    await settle();
+  });
+
+  it('says when a saved banner has no description', async () => {
+    await open([
+      campaign({
+        banner: { publicId: '0000f00d-0000-4000-8000-000000000003', url: null, altText: null },
+      }),
+    ]);
+
+    expect(element.querySelector('[data-testid="banner-4"]')?.textContent).toContain(
+      'A picture with no description',
+    );
+
+    click('edit-4');
+    await settle();
+
+    expect(element.querySelector('[data-testid="banner-no-alt"]')).not.toBeNull();
+  });
+
+  it('shows the server banner message beside the picker', async () => {
+    await open([
+      campaign({
+        banner: { publicId: '0000f00d-0000-4000-8000-000000000004', url: '/m.webp', altText: 'Gone' },
+      }),
+    ]);
+
+    click('edit-4');
+    await settle();
+
+    click('campaign-save');
+    answerAntiforgery();
+    await settle();
+
+    http
+      .expectOne((candidate) => candidate.url.endsWith('/4') && candidate.method === 'PUT')
+      .flush(
+        {
+          errors: {
+            bannerPublicId: ['That banner is not a ready public image in the media library.'],
+          },
+        },
+        { status: 400, statusText: 'Bad Request' },
+      );
+    await settle();
+
+    expect(element.querySelector('[data-testid="error-banner"]')?.textContent).toContain(
+      'not a ready public image',
+    );
+  });
+
+  // ---- #191 second round ----------------------------------------------------------------------
+
+  /**
+   * **A banner that is no longer available is said before a save clears it.** The payload carries no
+   * banner for it, so the form would otherwise show "no banner" and quietly drop the old reference.
+   */
+  it('says when the saved banner is no longer available, before the save clears it', async () => {
+    await open([campaign({ banner: null, bannerUnavailable: true })]);
+
+    expect(element.querySelector('[data-testid="banner-4"]')?.textContent).toContain(
+      'No longer available',
+    );
+
+    click('edit-4');
+    await settle();
+
+    expect(element.querySelector('[data-testid="banner-unavailable"]')?.textContent).toContain(
+      'The banner previously chosen is no longer available',
+    );
+    expect(element.querySelector('[data-testid="banner-empty"]')).toBeNull();
+
+    click('campaign-save');
+    answerAntiforgery();
+    await settle();
+
+    const request = http.expectOne(
+      (candidate) => candidate.url.endsWith('/4') && candidate.method === 'PUT',
+    );
+    expect((request.request.body as { bannerPublicId: string | null }).bannerPublicId).toBeNull();
+
+    request.flush(saved());
+    http.expectOne(AdminCampaignApi.campaignsUrl).flush([campaign()]);
+    await settle();
+
+    // The next campaign starts without the notice.
+    expect(element.querySelector('[data-testid="banner-unavailable"]')).toBeNull();
+  });
+
+  it('drops the notice once a new banner is chosen', async () => {
+    await open([campaign({ banner: null, bannerUnavailable: true })]);
+
+    click('edit-4');
+    await settle();
+
+    attachFile(
+      'banner-file',
+      new File([new Uint8Array([0xff, 0xd8, 0xff])], 'banner.jpg', { type: 'image/jpeg' }),
+    );
+    type('banner-alt', 'A new banner');
+    click('banner-upload');
+    answerAntiforgery();
+    await settle();
+
+    http.expectOne(AdminProductApi.mediaImagesUrl).flush({
+      publicId: '0000f00d-0000-4000-8000-000000000009',
+      mediaType: 'Image',
+      url: '/media/new.webp',
+      posterUrl: null,
+      altText: 'A new banner',
+    });
+    await settle();
+
+    expect(element.querySelector('[data-testid="banner-unavailable"]')).toBeNull();
+    expect(element.querySelector('[data-testid="banner-preview"]')).not.toBeNull();
   });
 });

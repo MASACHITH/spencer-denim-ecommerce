@@ -54,4 +54,57 @@ internal static class ClientAddressPartition
 
         return $"{new IPAddress(bytes)}/64";
     }
+
+    /// <summary>
+    /// Whether <paramref name="address"/> is the address of a piece of infrastructure rather than a
+    /// visitor: loopback, link-local, or a private (RFC 1918 / unique-local) range.
+    /// <para>
+    /// A request arriving from one of these has come through something whose forwarded headers the API is
+    /// not trusting — a reverse proxy, a container network — so every visitor behind it shares the one
+    /// address (docs/15 §3). Harmless on a developer's machine; in a deployment it is the signal that
+    /// <c>ForwardedHeaders__KnownProxies</c> is unset or does not match the gateway. Text that is not an
+    /// IP address at all is not infrastructure: it answers <see langword="false"/>.
+    /// </para>
+    /// <para>
+    /// The same test <c>PaymentSlipUploadThrottle</c>, <c>NewsletterSignupThrottle</c> and
+    /// <c>ContactEnquiryThrottle</c> each carry a private copy of. New code calls this one.
+    /// </para>
+    /// </summary>
+    public static bool IsInfrastructure(string? address)
+    {
+        if (string.IsNullOrWhiteSpace(address) || !IPAddress.TryParse(address, out var parsed))
+        {
+            return false;
+        }
+
+        if (IPAddress.IsLoopback(parsed))
+        {
+            return true;
+        }
+
+        if (parsed.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            // fc00::/7, the IPv6 unique local range, plus a mapped IPv4 address behind it.
+            return parsed.IsIPv6LinkLocal
+                || parsed.IsIPv6UniqueLocal
+                || (parsed.IsIPv4MappedToIPv6 && IsPrivateV4(parsed.MapToIPv4()));
+        }
+
+        return IsPrivateV4(parsed);
+    }
+
+    /// <summary>RFC 1918 and the link-local range.</summary>
+    private static bool IsPrivateV4(IPAddress address)
+    {
+        var octets = address.GetAddressBytes();
+
+        return octets[0] switch
+        {
+            10 => true,
+            172 => octets[1] >= 16 && octets[1] <= 31,
+            192 => octets[1] == 168,
+            169 => octets[1] == 254,
+            _ => false,
+        };
+    }
 }

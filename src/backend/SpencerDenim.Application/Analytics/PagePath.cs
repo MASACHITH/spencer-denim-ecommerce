@@ -354,7 +354,10 @@ public static partial class PagePath
         && int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var number)
         && number >= min && number <= max;
 
-    [GeneratedRegex("^[a-z0-9]+(?:-[a-z0-9]+)*$", RegexOptions.CultureInvariant)]
+    // `\z`, not `$`: in .NET `$` also matches before a final line feed, so "women\n" (a `%0A` the server has
+    // decoded) was a slug, was stored, and, now that a log prints the same segments, would have put a line
+    // break into a log line (#201).
+    [GeneratedRegex(@"^[a-z0-9]+(?:-[a-z0-9]+)*\z", RegexOptions.CultureInvariant)]
     private static partial Regex SlugPattern();
 
     [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9 ./-]{0,19}$", RegexOptions.CultureInvariant)]

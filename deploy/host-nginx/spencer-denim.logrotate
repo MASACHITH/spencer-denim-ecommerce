@@ -1,0 +1,33 @@
+# Spencer Denim: log rotation for the host nginx sites (issue #179, docs/15 section 8a).
+#
+# Install once on srv1983022, before the first `nginx -t` that reads the vhost files:
+#
+#   sudo install -d -m 750 -o www-data -g adm /var/log/nginx/spencer-denim
+#   sudo install -m 644 deploy/host-nginx/spencer-denim.logrotate /etc/logrotate.d/spencer-denim
+#   sudo logrotate -d /etc/logrotate.d/spencer-denim        # dry run: must end without an error
+#
+# The vhosts write their error logs here and nothing else (their access logs are off), at level crit, so the files
+# are normally empty. They live in a directory of their own because Ubuntu's /etc/logrotate.d/nginx already rotates
+# /var/log/nginx/*.log for 14 days, and logrotate refuses two stanzas for one file; the sub-directory is outside
+# that glob, so this stanza can keep them for 3 days instead. Nothing in them is needed for longer.
+#
+# The stanza is the one the nginx package ships, narrowed to this directory. If Ubuntu changes how it asks nginx to
+# reopen its logs (see /etc/logrotate.d/nginx), copy that postrotate line.
+/var/log/nginx/spencer-denim/*.log {
+    daily
+    rotate 3
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0640 www-data adm
+    sharedscripts
+    prerotate
+        if [ -d /etc/logrotate.d/httpd-prerotate ]; then \
+            run-parts /etc/logrotate.d/httpd-prerotate; \
+        fi
+    endscript
+    postrotate
+        invoke-rc.d nginx rotate >/dev/null 2>&1
+    endscript
+}

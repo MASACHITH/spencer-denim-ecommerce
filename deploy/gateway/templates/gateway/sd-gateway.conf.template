@@ -1,6 +1,7 @@
 # Spencer Denim web gateway: routing (W0-15, docs/15-deployment-runbook.md §4).
 #
 #   /api/...        -> API (.NET)             /health -> API liveness       /health/ready -> not exposed
+#                      (POST /api/traffic/page-views is rate limited per visitor, see below)
 #   /admin/...      -> admin static build (baked into this image)
 #   /media/public/  -> API (uploaded media)  /media/* else -> storefront (its own webfonts)
 #   everything else -> storefront SSR (Node)
@@ -32,6 +33,32 @@ map "$sd_from_trusted_proxy:$http_x_forwarded_proto" $sd_forwarded_proto {
     default   $scheme;
     "1:https" https;
     "1:http"  http;
+}
+
+# --- The page-view beacon's rate limit (issue #179) -------------------------------------------------------------
+# POST /api/traffic/page-views is public and has to stay so, and nothing behind it limits it: W4-03's tester sent
+# about 9,600 requests a second from one client, wrote 138,000 rows (each one a visit in the owner's figures) in
+# 20 seconds, and slowed the catalogue API by 41% while doing it.
+#
+# One bucket per visitor address ($remote_addr is the visitor here, after real_ip above). Only browsers come
+# through this gateway: the storefront's server-side render posts to http://api:8080 directly (deploy/app/compose.yml)
+# and is never throttled. The rate is generous on purpose, because Sri Lankan mobile carriers put many shoppers
+# behind one address (carrier-grade NAT), and is tunable per environment: SD_PAGE_VIEW_RATE ("20r/s", "600r/m")
+# and SD_PAGE_VIEW_BURST (requests allowed above the rate in a short spike). 5 MB of zone is about 80,000
+# addresses; when it is full the oldest idle ones are dropped first.
+#
+# What it does not do: an IPv6 visitor can send from any address of their /64, so this stops a runaway client or a
+# script on one machine, not a determined attacker with an address block. The API's 10,000-row queue still caps
+# what such a flood can write.
+limit_req_zone $binary_remote_addr zone=sd_page_views:5m rate=${SD_PAGE_VIEW_RATE};
+
+# A throttled request is not logged, because a flood would then write a log line per request and push every
+# useful line out of the 50 MB the container's log keeps. One in 256 is, which is enough to see that the limit is
+# tripping and to tune it (a line with status 204 and an empty upstream_status). $request_id is 32 random
+# hexadecimal characters.
+map $request_id $sd_log_throttle_sample {
+    default 0;
+    "~00$"  1;
 }
 
 server {
@@ -88,6 +115,29 @@ server {
     }
 
     # --- API --------------------------------------------------------------------------------------------------
+
+    # The page-view beacon, rate limited per visitor (zone above). A regex and not "location =": the API's
+    # routing ignores a trailing slash and the case of the path, so "/api/traffic/page-views/" and
+    # "/API/Traffic/Page-Views" reach the same endpoint and must meet the same limit.
+    #
+    # When the limit trips nginx answers 429 internally and error_page turns it into the empty 204 the endpoint
+    # itself returns on success, so the browser cannot tell and the shopper's page is unaffected. It is 429
+    # rather than limit_req's default 503 so that a real 503 from the API is not mistaken for a throttle and
+    # hidden. nodelay: a request over the burst is refused at once instead of being held open to wait its turn.
+    # Refusals are logged at "info" so they stay out of the error log (which carries the client address) even if
+    # its level is lowered to diagnose something else.
+    location ~* ^/api/traffic/page-views/?$ {
+        limit_req        zone=sd_page_views burst=${SD_PAGE_VIEW_BURST} nodelay;
+        limit_req_status 429;
+        limit_req_log_level info;
+        error_page 429 = @sd_page_view_throttled;
+        proxy_pass $sd_api;
+    }
+    location @sd_page_view_throttled {
+        access_log /dev/stdout sd_json if=$sd_log_throttle_sample;
+        return 204;
+    }
+
     location /api/ {
         proxy_pass $sd_api;
     }

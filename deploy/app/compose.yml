@@ -122,6 +122,15 @@ services:
       Email__Smtp__Password: ${SD_SMTP_PASSWORD:-}
       Email__Smtp__FromAddress: ${SD_SMTP_FROM_ADDRESS:-}
       Email__Smtp__FromName: ${SD_SMTP_FROM_NAME:-}
+      # Order-placement limit (#107): orders one visitor address may place per window. The defaults here are the
+      # code's own, and OrderPlacementThrottleDeploymentTests fails if the two ever differ. Raise PERMITS on a
+      # campaign day if shoppers behind one carrier address are refused; SHARED_PERMITS must then be at least as
+      # large, or the API refuses to start. This container has no env_file, so a variable that is not listed
+      # here never reaches it, whatever config/app.env says.
+      OrderPlacementThrottle__PermitsPerWindow: ${SD_ORDER_THROTTLE_PERMITS:-20}
+      OrderPlacementThrottle__SharedAddressPermitsPerWindow: ${SD_ORDER_THROTTLE_SHARED_PERMITS:-200}
+      OrderPlacementThrottle__WindowSeconds: ${SD_ORDER_THROTTLE_WINDOW_SECONDS:-600}
+
       # Traffic recording (W4-03, #193; docs/15 §4). Unset, each is the code default shown.
       Traffic__RecordingEnabled: ${SD_TRAFFIC_RECORDING_ENABLED:-true}
       # The shop's own host names, comma-separated, so a click from www. to the bare domain is not a "source".
@@ -186,6 +195,10 @@ services:
       # SD_REAL_IP_FROM (the only peer whose X-Forwarded-For the gateway believes) is set by the environment file.
       SD_MAX_BODY_SIZE: 2m
       SD_MAX_UPLOAD_SIZE: 67m
+      # The page-view beacon's limit per visitor address (issue #179, docs/15 section 8a): generous, because many
+      # Sri Lankan shoppers share one carrier-grade-NAT address. Tune here; the gateway answers 204 when it trips.
+      SD_PAGE_VIEW_RATE: 20r/s
+      SD_PAGE_VIEW_BURST: "40"
     # The published port (127.0.0.1 only) and the fixed address are set by the environment file.
     networks:
       edge: {}

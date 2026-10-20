@@ -35,7 +35,8 @@ Internet ──► host nginx (80/443, certbot; already serves other sites on th
 | SQL Server | `deploy/database/compose.yml` | `mssql/server:2025-CU9-ubuntu-24.04` | `mssql` (10001) | `sqlcmd SELECT 1` |
 
 Every application container runs with a read-only root filesystem (writable `/tmp` tmpfs only), all Linux
-capabilities dropped and `no-new-privileges`. Logs rotate at 10 MB × 5 files per container. Build contexts are
+capabilities dropped and `no-new-privileges`. Logs rotate at 10 MB × 5 files per container; what the web
+servers may write into them, and what they must never write, is §8a. Build contexts are
 allow-lists (`deploy/docker/*.Dockerfile.dockerignore`): secrets, `.env` files, `reference/`, `client-progress/`,
 `worktrees/`, `node_modules`, `bin/obj` and the docs never enter an image.
 
@@ -103,6 +104,15 @@ the first install, check on the server that neither the ports nor the subnets ar
    rate limit read — is therefore the visitor. The newsletter limit is now per visitor: **20 signups per address
    per 10 minutes** (was 600 while every visitor shared the proxy's address). If it logs warning 1101
    ("signups are arriving from … not a visitor's own address"), step 2 or 3 is misconfigured.
+   The **order-placement limit** (`POST /api/checkout/orders`, #107) reads the same address: **20 orders per
+   address per 10 minutes**, answering 429 with `Retry-After`; a resend of an order that was already placed is
+   never counted or refused. Tune it in `config/app.env` with `SD_ORDER_THROTTLE_PERMITS`,
+   `SD_ORDER_THROTTLE_SHARED_PERMITS` (the budget when the address is the proxy's, default 200 and never below the
+   first) and `SD_ORDER_THROTTLE_WINDOW_SECONDS`, then redeploy: the API container has no `env_file`, so these reach
+   it only through the lines in `compose.yml` that map them to `OrderPlacementThrottle__PermitsPerWindow`,
+   `…SharedAddressPermitsPerWindow` and `…WindowSeconds`. A shared figure below the per-address one stops the API
+   at start-up, by name. Warning 3311 ("orders are arriving from … not a visitor's
+   own address") means step 2 or 3 is misconfigured, as for 1101.
 
 5. The **storefront** gets only `X-Forwarded-Host` and `X-Forwarded-Proto` (both overwritten by the gateway) and
    trusts exactly those (`NG_TRUST_PROXY_HEADERS`). Angular's SSR engine falls back to the **empty client-side
@@ -119,7 +129,9 @@ Never set `ASPNETCORE_FORWARDEDHEADERS_ENABLED`: that framework switch trusts ev
 Secrets live only in the two env files on the server (root-owned, mode 600), never in git or an image.
 `scripts/check-env.sh <env>` validates both without printing a secret: it refuses `CHANGE_ME` placeholders,
 quoted values, `$` (compose would interpolate it), the same login for API and migrator, and passwords containing
-`' " ] \ ; $` (they are embedded in T-SQL and connection strings).
+`' " ] \ ; $` (they are embedded in T-SQL and connection strings). With `SD_SEED_ADMIN_ENABLED=true` it also refuses
+a `SD_SEED_ADMIN_PASSWORD` shorter than 10 characters, because the API would create no first Super Admin with it
+(issue #200).
 
 | File | Variable | Meaning |
 |---|---|---|
@@ -132,12 +144,15 @@ quoted values, `$` (compose would interpolate it), the same login for API and mi
 | | `SD_APP_DB_CONNECTION` | API login `sd_<env>_app` (read/write). `Server=sqlserver,1433;…;TrustServerCertificate=True` |
 | | `SD_MIGRATOR_DB_CONNECTION` | Migrator login `sd_<env>_migrator` (db_owner). The API never sees it |
 | | `SD_DB_COMPATIBILITY_LEVEL` | `170` (SQL Server 2025) |
-| | `SD_SEED_ADMIN_ENABLED/EMAIL/PASSWORD` | First Super Admin, first install only; set back to `false` afterwards |
+| | `SD_SEED_ADMIN_ENABLED/EMAIL/PASSWORD` | First Super Admin, first install only; set back to `false` afterwards. The password is held to the same rule as every account: **at least 10 characters** with an upper-case letter, a lower-case letter, a number and a symbol (not `$`, and not starting with a quote: compose reads the file literally). A shorter one creates no account, so `check-env.sh` refuses it while the seed is on |
 | | `SD_IMAGE_REPOSITORY` | `spencer-denim` (image name prefix) |
 | `config/db.env` | `SD_ENV` | `production` / `staging` |
 | | `SD_MSSQL_SA_PASSWORD` | sa: healthcheck and provisioning only |
 | | `SD_MSSQL_PID` | `Express` |
 | | `SD_MSSQL_MEMORY_LIMIT_MB` / `SD_MSSQL_CONTAINER_MEMORY` | `2048`/`2560m` production, `1024`/`1536m` staging |
+
+Set on the gateway by `compose.yml`, also not in the env file: `SD_PAGE_VIEW_RATE` (`20r/s`) and
+`SD_PAGE_VIEW_BURST` (`40`), the page-view beacon's limit per visitor address (§8a).
 
 Set by `compose.yml` itself, not the env file: `DataProtection__KeysPath`, `Media__PublicRoot`,
 `Media__PrivateRoot` and `Media__UploadSpoolPath` (the four `data/` directories above). **Production refuses to
@@ -174,6 +189,16 @@ Everything else the API reads (README "Other settings") can be added to the `api
 Prerequisites on the server: Docker Engine with the Compose plugin **≥ 2.24**, git, curl, the host nginx and
 certbot. Run as a sudoer; `<env>` is `staging` first, then `production`.
 
+> **Order matters: `install.sh <env>` first, then `db-provision.sh <env>`, always from the same checkout and a
+> commit at or after `8bd27a7` (#163/#183).** `install.sh` copies `tools/db/provision-database.sql` onto the VPS
+> (`/opt/server/database/<env>/scripts/`), and `db-provision.sh` pipes **that copy** to `sqlcmd`, not the file in the
+> checkout. Run them the other way round, or run `db-provision.sh` on a server whose copy was installed before
+> `8bd27a7`, and the old script runs: the database is created **without `READ_COMMITTED_SNAPSHOT`**, silently, while
+> the code assumes it. After provisioning, check that
+> `SELECT name, is_read_committed_snapshot_on FROM sys.databases;` shows **1** for the shop database (the command
+> is in "Existing database without READ_COMMITTED_SNAPSHOT" below, with the one-off fix for a database that already
+> exists).
+
 ```bash
 # 0. Source checkout (once for both environments)
 sudo git clone git@github.com:MASACHITH/spencer-denim-ecommerce.git /opt/apps/src/spencer-denim-ecommerce
@@ -187,7 +212,9 @@ sudo nano /opt/server/database/<env>/config/db.env
 sudo nano /opt/apps/<env>/spencer-denim-app/config/app.env
 sudo /opt/apps/<env>/spencer-denim-app/scripts/check-env.sh <env>
 
-# 3. SQL Server up, then the database (collation Latin1_General_100_CI_AS_SC, READ_COMMITTED_SNAPSHOT ON) and the two logins
+# 3. SQL Server up, then the database (collation Latin1_General_100_CI_AS_SC, READ_COMMITTED_SNAPSHOT ON) and the two logins.
+#    db-provision.sh runs the copy of provision-database.sql that step 1's install.sh put on the server: step 1 FIRST
+#    (see the note above), then verify is_read_committed_snapshot_on = 1.
 sudo /opt/apps/<env>/spencer-denim-app/scripts/db-up.sh <env>
 sudo /opt/apps/<env>/spencer-denim-app/scripts/db-provision.sh <env>
 
@@ -195,7 +222,12 @@ sudo /opt/apps/<env>/spencer-denim-app/scripts/db-provision.sh <env>
 tag=$(sudo deploy/scripts/build-images.sh | tail -n 1)
 sudo /opt/apps/<env>/spencer-denim-app/scripts/deploy.sh <env> "$tag"
 
-# 5. Host nginx site + certificate
+# 5. Host nginx site + certificate. The site file writes its (crit-only) error log to /var/log/nginx/spencer-denim/ and
+#    has no access log (§8a), so create that directory and install the 3-day rotation BEFORE `nginx -t`, or nginx -t fails
+#    on the missing directory. Once per server, not per environment.
+sudo install -d -m 750 -o www-data -g adm /var/log/nginx/spencer-denim
+sudo install -m 644 deploy/host-nginx/spencer-denim.logrotate /etc/logrotate.d/spencer-denim
+sudo logrotate -d /etc/logrotate.d/spencer-denim                   # dry run: must end without an error
 sudo cp deploy/host-nginx/spencer-denim-<env>.conf.template /etc/nginx/sites-available/spencer-denim-<env>.conf
 sudo nano /etc/nginx/sites-available/spencer-denim-<env>.conf      # __SERVER_NAME__, __PRIMARY_HOST__
 sudo certbot certonly --webroot -w /var/www/certbot -d <host>      # or: certbot --nginx -d <host>
@@ -241,7 +273,8 @@ connection to it (SSMS, Azure Data Studio, a running test host), then run `tools
 cd /opt/apps/src/spencer-denim-ecommerce
 sudo git fetch && sudo git checkout <commit>           # the commit that passed CI and the tester
 tag=$(sudo deploy/scripts/build-images.sh | tail -n 1)  # tag = 12-character commit id
-sudo deploy/scripts/install.sh <env>                   # refreshes compose files and scripts; config untouched
+sudo deploy/scripts/install.sh <env>                   # refreshes compose files, scripts and the provisioning SQL; config untouched
+                                                       # (any db-provision.sh must come AFTER this, §5 note)
 sudo /opt/apps/<env>/spencer-denim-app/scripts/deploy.sh <env> "$tag"
 ```
 
@@ -318,7 +351,7 @@ work and not part of W0-15.
 cd /opt/apps/<env>/spencer-denim-app/compose
 C="docker compose -p sd-<env> --project-directory . -f compose.yml -f compose.<env>.yml --env-file ../config/app.env"
 $C ps                          # state and health of every service
-$C logs -f --tail 100 api      # API (JSON, Serilog); also: web (JSON access log), storefront, migrator
+$C logs -f --tail 100 api      # API (JSON, Serilog); also: web (JSON access log, §8a), storefront, migrator
 $C exec api wget -q -O - http://127.0.0.1:8080/health/ready   # readiness detail (not exposed through the gateway)
 tail -n 5 ../data/deploy-history.log
 
@@ -326,11 +359,182 @@ cd /opt/server/database/<env>/compose && docker compose --env-file ../config/db.
 ```
 
 `SD_IMAGE_TAG` is required by the compose file; export it (`export SD_IMAGE_TAG=$(tail -n1 ../data/deploy-history.log | awk '{print $3}')`)
-before using `$C` by hand. The host nginx logs are `/var/log/nginx/spencer-denim-<env>.*.log`.
+before using `$C` by hand. The host nginx has no access log for these sites; its error log is
+`/var/log/nginx/spencer-denim/<env>.error.log` (§8a).
 
 **Upgrading a base image or SQL Server:** change the pinned tag (`deploy/docker/*.Dockerfile` `ARG …_IMAGE`,
 `deploy/database/compose.yml`), open a pull request, deploy to staging, then production. For SQL Server read the
 cumulative update's notes, take `backup-db.sh` first, then `install.sh <env>` and `db-up.sh <env>`.
+
+## 8a. Logs and privacy, and the page-view limit (issue #179)
+
+**The rule: no web-server log may hold a visitor's address or a credential.** This shop puts credentials in web
+addresses by design, and a log line that copies the address copies the credential, for as long as the log is
+kept and for everyone who can read it (hosting staff, a backup, a log shipper added later):
+
+| Address | What a log reader could do with it |
+|---|---|
+| `/order/{token}` | Open that customer's order: name, delivery address, phone, items. The address is the order's only credential |
+| `/account/reset-password?token=…` | Reset the password and take over the account, if used before it expires |
+| `/account/confirm-email?token=…` | Confirm an address |
+| `/api/payments/paypal/return/{id}?token=…&PayerID=…` | PayPal flow identifiers, and the order token in the path |
+| the `Referer` of the next request | Copies any of the above a second time |
+
+and the application itself stores **no IP address** (doc 08 §3.8, `analytics.PageViews`), so a web server that
+keeps one would undo that on purpose. Until this was fixed (#179) both nginx hops wrote every visitor's address
+and full address to a log.
+
+### What is written where
+
+| Log | Holds | Kept |
+|---|---|---|
+| **Gateway access log** (`$C logs web`) | One JSON line per request: method, the **rewritten path**, status, bytes, duration, upstream and its status, `Host`, the **referring host name** only, user agent. No address of any kind, no query string | Docker `json-file`, 10 MB × 5 files: at most 50 MB, and a deploy that changes the image recreates the container, which deletes its log. Docker has no time limit; the size cap is the limit |
+| Gateway error log (same stream) | Level `crit` only: a crashed worker, a failed start or reload, and (rarely) a temporary file nginx could not write, which DOES carry the request: see the paragraph below | as above |
+| **Host nginx access log** (production and staging sites) | **Off.** The gateway's log is the only access log. The port-80 redirect is off too, because it would otherwise land in the server-wide log the client's other sites share | — |
+| Host nginx error log | `/var/log/nginx/spencer-denim/<env>.error.log`, level `crit`: normally empty | 3 days (`/etc/logrotate.d/spencer-denim`, from `deploy/host-nginx/spencer-denim.logrotate`) |
+| API (Serilog, JSON) | See "Still open" below | Docker, 10 MB × 5 |
+| Storefront (Node) | See "Still open" below | Docker, 10 MB × 5 |
+
+The gateway line, exactly (one line in the log; wrapped here):
+
+```json
+{"time":"2026-10-17T09:41:07+00:00","method":"GET","path":"/order/*","status":200,"bytes":4212,"duration":0.031,
+ "upstream":"10.251.0.130:4000","upstream_status":"200","host":"shop.example.com","referer_host":"www.example.org",
+ "user_agent":"Mozilla/5.0 …"}
+```
+
+The old fields `remote_addr`, `peer`, `uri` and `referer` are gone. If a script of yours reads `uri`, read `path`.
+
+### Which paths are rewritten, and how that list was made
+
+The gateway logs `$uri` (the decoded, normalised **path**, never `$request_uri`), so every query-string credential
+(`?token=` on the two account pages and the PayPal return, `?returnTo=`) is gone in one step, and an encoded
+spelling of a secret route (`/%6frder/…`, `//order//…`, `/x/../order/…`) cannot dodge a rule. Then
+`$sd_log_path` (in `deploy/gateway/nginx.conf`) reduces the path. The routes that carry a credential **in the
+path** were found by reading the storefront's `app.routes.ts` and `account.routes.ts`, the admin's `app.routes.ts`
+and every `MapGet`/`MapPost`/`MapMethods` template in `SpencerDenim.Api/Endpoints` for a `{token}`, an order `{publicId}`
+or similar:
+
+| Route | Credential | Logged as |
+|---|---|---|
+| `/order/{token}` (storefront `order/:token`) | the order token (`Orders.PublicId`, a GUID) | `/order/*` (also `/Order/…`, `/order;x=1/…`) |
+| `/api/orders/{publicId}` and `…/payment-reference`, `/cancel`, `/payment-slip` | the same token, in the API path the order page calls | `/api/orders/*` |
+| `/api/payments/paypal/{start,return,cancel}/{publicId}` | the same token (browser navigation) | `/api/payments/paypal/<action>/*` |
+| `/api/admin/orders/{id}`, `…/invoice` | staff calls with the customer's order token | `/api/admin/orders/*` |
+| `/api/admin/orders/bank-transfers/{id}/approve,reject,accept-late,slip` | same | `/api/admin/orders/bank-transfers/*` |
+| `/admin/orders/{id}` (admin screen) | same | `/admin/index.html` (`try_files`) |
+| `/account/reset-password`, `/account/confirm-email`, PayPal return query | token in the **query** | the path only (`$uri`) |
+| `/media/public/{**key}`, `/api/admin/media/{guid}` | none (public media; ids) | slugs and file names kept, the GUID starred |
+
+No other storefront or admin route puts a secret in its path (the rest are slugs, fixed words or integer ids).
+
+Everything not on that list goes through the same rule as the traffic recorder's `PagePath`
+(`SpencerDenim.Application.Analytics`): the leading segments that are **slugs** are kept, up to seven; at the
+first that is not, it and everything after become `*`. A slug is lower-case letters and digits separated by single
+hyphens, at most 100 characters, not a GUID, and without a run of seven digits (hyphens ignored; a phone number).
+One check is added: no run of 16 or more letters and digits without a hyphen (a random token has one, a slug does
+not). A static file as the last segment (`main-AB12CD34.js`, `inter.woff2`) is kept when its extension is on the
+list in `nginx.conf`. It is an **allow-list**, so a route added later cannot leak by default. It is a net for
+shapes and not a proof: a secret of fifteen lower-case letters would pass it. **When you add a route that puts a
+secret in its path, add it to the list in `nginx.conf` and to the table above.**
+
+### The error log: the one place a format cannot reach
+
+nginx appends the client address, the request line with its query string, the upstream URL and the `Referer` to
+most request-related error lines, for example
+
+```
+[error] connect() failed (111: Connection refused) while connecting to upstream, client: 203.0.113.9, server: _,
+request: "GET /order/<token>?x=y HTTP/1.1", upstream: "http://10.251.0.130:4000/order/<token>?x=y", host: "…", referrer: "…"
+```
+
+and no `log_format` redacts it. Those lines are written at `error` (upstream refused, timed out, not resolved;
+request body too large) and `warn` (a body or response spilled to a temporary file) — **so they appear during every
+deploy**, while the gateway or the storefront restarts. The mitigation is the level: the gateway's `error_log` is
+`crit` and so are the host sites'. At that level the ordinary failures above are not written at all, but **`crit` is not a
+guarantee that no request is ever written**: when nginx cannot write a temporary file (a full disk, a directory it may
+not write) it logs `[crit] pwrite() "…" failed (28: No space left on device), client: <IP>, request: "POST …?token=…",
+referrer: "…"` — the address, the whole request line and the Referer (the #179 tester reproduced it on both tiers). Two
+settings keep that rare: `proxy_max_temp_file_size 0` on the gateway **and on both host sites**, so a response is never
+spilled to disk, and the host tier buffering a request body before it reaches the gateway (the gateway's own `/tmp` is a tmpfs inside its
+128 MB memory limit, so a body that does not fit there is an out-of-memory kill, not a disk-full line). What remains is a request body larger
+than `client_body_buffer_size` arriving while a disk is full or unwritable. Such a line means something is badly wrong;
+**treat the host error files and the gateway's container log as sensitive** (next section). The access log still records
+every failure (status 502/504, the upstream tried, the time taken) without the secret. What is lost is nginx's own
+explanation of a failure (refused, timed out, not resolved). The rate limit's refusals are logged at `info`, so
+they stay out of the error log even if its level is lowered.
+
+**To get the explanation back** (an upstream problem the access log cannot explain): do it on staging with test
+data if you can. Otherwise change `crit` to `error` in `deploy/gateway/nginx.conf` (and, for the TLS hop, in the
+site file, then `nginx -t && systemctl reload nginx`), redeploy, reproduce once, **change it back**, redeploy, and
+then delete what it wrote: `$C up -d --force-recreate web` removes the gateway's container log; for the host,
+`sudo truncate -s 0 /var/log/nginx/spencer-denim/<env>.error.log` **and delete the rotated copies** that were made
+while the level was lowered (`sudo sh -c 'rm -f /var/log/nginx/spencer-denim/<env>.error.log.*'` (inside `sh -c`, so that root expands the glob: the directory is `0750 www-data:adm`, and a sudoer who is not in group `adm` would otherwise get a glob that matches nothing and no error): a daily rotation leaves
+`.1`, `.2.gz`, `.3.gz`, and each keeps what it held). Treat the window as one in which the logs hold credentials.
+
+### Retention, and who can read it
+
+The gateway log holds no personal data and no credential, so its size cap (50 MB; a deploy resets it) is a
+sensible limit; it is not a time limit. Docker's container logs (`/var/lib/docker/containers/…`) are readable by root and
+the `docker` group only: keep that group to the people who deploy. The host error files are created by nginx as `root:root 0644`
+(logrotate's `create 0640 www-data adm` applies only to the files it recreates after a rotation); what keeps other users out
+is the directory, `0750 www-data:adm` (§5 step 5). They rotate daily for 3 days. Nothing here needs months of history. **If an address is ever wanted for abuse
+investigation** (a flood from one source, a fraud pattern), decide it with the owner as an exception, truncated
+(IPv4 `/24`, IPv6 `/48`, by a `map` on `$remote_addr`), in its own field, and with a retention of days. It is not
+in the log by default.
+
+### Still open (found while checking the rest of the stack for #179; not fixed here)
+
+- **The API's request log writes the order token.** `UseSerilogRequestLogging` logs
+  `HTTP GET /api/orders/{publicId} responded 200 in …` at `Information` for every request, with `RequestPath`
+  holding the **path** (not the query; confirmed on the built API image: a `GET /api/orders/<guid>?token=abc` logs the
+  GUID and not `abc`). So the order token, the PayPal path ids and staff's order ids are in the API container's log.
+  No IP and no query string. A fix needs a small change in
+  `SerilogSetup.cs` (redact `RequestPath` with the same rules as the gateway's) and is a separate issue.
+- **The storefront's render-failure line writes the full address.** `server/render-failure.ts` logs
+  `GET <originalUrl> failed` with the query string, to stderr, when a render fails unexpectedly. Rare, but
+  `/order/{token}` and `/account/reset-password?token=` are both rendered there. Also a code change.
+- Both containers keep 10 MB × 5 and are recreated by a deploy that changes the image, which bounds the exposure
+  but does not remove it. Treat their logs as secret until those two are fixed.
+
+### The page-view rate limit
+
+`POST /api/traffic/page-views` is public and has to stay so. Without a limit one client sent about 9,600 requests a
+second, wrote 138,000 rows (each a visit in the owner's figures) in 20 seconds and slowed the catalogue API by 41%
+(W4-03 tester). The gateway now limits it per visitor address:
+
+- **`SD_PAGE_VIEW_RATE=20r/s`, `SD_PAGE_VIEW_BURST=40`** (`deploy/app/compose.yml`; override per environment in
+  `compose.<env>.yml` under `web: environment:`). Generous on purpose: Sri Lankan mobile carriers put many shoppers
+  behind one address (carrier-grade NAT), so a tight limit would throttle real people. Raise it if the owner's
+  figures dip on busy days and the log shows the limit tripping; `r/m` is accepted too (`600r/m`).
+- **When it trips the browser gets `204`**, the same empty answer the endpoint gives on success, so the shopper's
+  page is unaffected. Internally the limit answers `429` and `error_page` turns it into `204`; it is not
+  `limit_req`'s default `503`, so that a real `503` from the API still reaches the browser. The check is on the
+  *path*, matched case-insensitively with an optional trailing slash, because the API's routing ignores both.
+- **The storefront's own (server-side) recording is never throttled**: it posts to `http://api:8080` directly and
+  does not pass through the gateway.
+- **To see that it trips**, one throttled request in 256 is logged: `$C logs web | grep '"method":"POST"' | grep '"upstream":""' | grep -E '"path":"(/api/traffic/page-views|/\*)"'`
+  (a normal hit has an upstream address). A request spelled in capitals, or with `%2D` or `//`, is logged as `/*`, which is why
+  the last grep accepts both. A flood would otherwise write a line per request and push every other
+  line out of the 50 MB.
+- **It does not stop** a determined attacker: an IPv6 visitor can send from any address in a /64, and many
+  addresses each get their own bucket. It stops a runaway client or a script on one machine. The API's 10,000-row
+  queue still caps what a flood writes. If `SD_REAL_IP_FROM` is wrong (§3), every visitor shares one bucket and
+  real beacons are dropped silently: the warning 1101 check in §3 is how to notice.
+
+### Checking it
+
+`tools/verify-gateway-logging.sh` builds the real gateway (the `web` stage of `frontend.Dockerfile`), the real host
+site files, a stub upstream and a client with a known address, sends the requests of the issue (`/order/<token>`,
+`/account/reset-password?token=abc`, `/account/confirm-email?token=xyz`, a page with a `Referer`, 2,000 beacons),
+takes the dependencies down, and greps both hops' logs for the token, `abc`, `xyz`, the referring link and the
+client's address. Needs Docker and python3; touches only containers named `sd179-*`. Run it after any change to
+`deploy/gateway` or `deploy/host-nginx`. Against the configuration before #179 (`git archive 154b5e4 deploy`,
+`--deploy-dir`) it fails every leak check, which is how you know the checks can fail.
+
+On the server, after the first deploy, the same test by hand: request `/order/<a real token>` and
+`/account/reset-password?token=abc` once each, then `$C logs --tail 50 web | grep -E '<token>|abc'` and
+`sudo grep -rE '<token>|abc' /var/log/nginx/spencer-denim/` must print nothing.
 
 ## 9. Local smoke test (developer machine with Docker Desktop)
 

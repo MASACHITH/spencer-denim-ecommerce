@@ -411,7 +411,7 @@ public sealed class AdminSaleCampaignEndpointTests(SqlServerDatabaseFixture sqlS
     /// The literal below is therefore a copy of that Vitest's expected body and must stay one — nine keys,
     /// in the screen's names and types, with <b>no <c>rowVersion</c></b> (the screen sends it in
     /// <c>If-Match</c> and omits it from the body, which <c>AdminJsonBody.RowVersionIn</c> tolerates and
-    /// no test had shown), <c>bannerAssetId</c> null because the screen does not choose one, and
+    /// no test had shown), <c>bannerPublicId</c> null because no banner was chosen (#191 renamed it from <c>bannerAssetId</c>), and
     /// <c>description</c> null because the optional note was left blank.
     /// </para>
     /// <para>
@@ -444,7 +444,7 @@ public sealed class AdminSaleCampaignEndpointTests(SqlServerDatabaseFixture sqlS
             ["startsAt"] = ShopTime.Midnight(7),
             ["endsAt"] = ShopTime.Midnight(14),
             ["isActive"] = true,
-            ["bannerAssetId"] = null,
+            ["bannerPublicId"] = null,
             ["targets"] = new[]
             {
                 new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -593,7 +593,7 @@ public sealed class AdminSaleCampaignEndpointTests(SqlServerDatabaseFixture sqlS
     [InlineData("startsAt")]
     [InlineData("endsAt")]
     [InlineData("isActive")]
-    [InlineData("bannerAssetId")]
+    [InlineData("bannerPublicId")]
     [InlineData("targets")]
     public async Task A_body_missing_a_field_is_refused_naming_it(string field)
     {
@@ -703,7 +703,7 @@ public sealed class AdminSaleCampaignEndpointTests(SqlServerDatabaseFixture sqlS
             ["startsAt"] = ShopTime.Midnight(0),
             ["endsAt"] = ShopTime.Midnight(7),
             ["isActive"] = true,
-            ["bannerAssetId"] = null,
+            ["bannerPublicId"] = null,
             ["targets"] = targets,
             ["rowVersion"] = rowVersion,
         };

@@ -331,14 +331,22 @@ internal sealed class CustomerPasswordStore(
     /// needs is the message at the top. Identity's own descriptions are used verbatim rather than
     /// rewritten: they are the ones that match what is actually enforced, and a second wording would be a
     /// second source of truth about the rule (#126's lesson, in copy rather than in a column width).
+    /// <para>
+    /// <b>The length is now checked twice and said once.</b> Since issue #200 Identity's own validator
+    /// enforces <see cref="PasswordPolicy.MinimumLength"/> too (<c>IdentityRegistration</c> sets
+    /// <c>RequiredLength</c> from it), and its refusal is worded with <see cref="PasswordPolicy.Requirement"/>
+    /// (<c>PasswordPolicyErrorDescriber</c>) — the very sentence added first below. This check is kept so the
+    /// customer path stays correct if Identity's options are ever changed independently, and the repeat is
+    /// dropped so a shopper is never shown the same sentence twice.
+    /// </para>
     /// </remarks>
     private async Task<IReadOnlyList<string>> ValidatePasswordAsync(AppUser user, string password)
     {
         var problems = new List<string>();
 
-        if (!CustomerPasswordPolicy.IsLongEnough(password))
+        if (!PasswordPolicy.IsLongEnough(password))
         {
-            problems.Add(CustomerPasswordPolicy.Requirement);
+            problems.Add(PasswordPolicy.Requirement);
         }
 
         foreach (var validator in userManager.PasswordValidators)
@@ -351,7 +359,7 @@ internal sealed class CustomerPasswordStore(
             }
         }
 
-        return problems;
+        return [.. problems.Distinct(StringComparer.Ordinal)];
     }
 
     /// <summary>

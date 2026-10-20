@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Application.Ops.Email.Abstractions;
@@ -291,7 +292,8 @@ public sealed class SendEmailsServiceTests
     private static async Task SweepAsync(
         IEmailOutboxStore store,
         IEmailTransport transport,
-        IDeadEmailAlerts? alerts = null)
+        IDeadEmailAlerts? alerts = null,
+        ILogger<SendEmailsService>? logger = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(store);
@@ -306,9 +308,78 @@ public sealed class SendEmailsServiceTests
             provider.GetRequiredService<IServiceScopeFactory>(),
             new FixedClock(new DateTimeOffset(SweepClock, TimeSpan.Zero)),
             options,
-            NullLogger<SendEmailsService>.Instance);
+            logger ?? NullLogger<SendEmailsService>.Instance);
 
         await job.SweepAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// <b>The error line for a dead email does not carry the order's public token</b> (issue #201).
+    /// </summary>
+    /// <remarks>
+    /// For an order email the outbox row's <c>RelatedEntityId</c> <i>is</i> the order's public token, which is
+    /// the order page's only credential, and this line is written at <c>Error</c> to a log Docker keeps. Found by
+    /// #201's tester reading the code: the line printed <c>{OrderPublicId}</c>. Every property of every event the
+    /// sweep writes is searched, not only the rendered text, because a structured sink keeps the property
+    /// even when the message template stops mentioning it. The row id stays: it is how the line is matched to
+    /// the banner, which is the place the order is named.
+    /// </remarks>
+    [Fact]
+    public async Task The_dead_email_error_line_names_the_row_and_never_the_orders_token()
+    {
+        var store = new FakeStore();
+        var claim = Claim(41, attemptCount: EmailBackoff.MaxAttempts);
+        store.Queue.Add(claim);
+
+        var logger = new CapturingLogger();
+
+        await SweepAsync(
+            store,
+            new FakeTransport { Throw = new InvalidOperationException("550") },
+            new FakeAlerts(),
+            logger);
+
+        var dead = Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Error);
+
+        Assert.Contains("41", dead.Text, StringComparison.Ordinal);
+
+        var token = claim.RelatedEntityId!;
+        Assert.False(string.IsNullOrWhiteSpace(token), "the fixture must give the claim a token for this test to mean anything");
+
+        foreach (var entry in logger.Entries)
+        {
+            Assert.DoesNotContain(token, entry.Text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(
+                entry.Properties,
+                property => (property.Value?.ToString() ?? string.Empty)
+                    .Contains(token, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    /// <summary>A logger that keeps what it was given: the level, the rendered text and every structured property.</summary>
+    private sealed class CapturingLogger : ILogger<SendEmailsService>
+    {
+        public List<(LogLevel Level, string Text, IReadOnlyList<KeyValuePair<string, object?>> Properties)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            var properties = state as IReadOnlyList<KeyValuePair<string, object?>> ?? [];
+            // The exception is part of the text searched: a logger that is handed an exception writes its message and stack.
+            var rendered = formatter(state, exception);
+            var text = exception is null ? rendered : $"{rendered}{Environment.NewLine}{exception}";
+
+            Entries.Add((logLevel, text, properties));
+        }
     }
 
     /// <summary>

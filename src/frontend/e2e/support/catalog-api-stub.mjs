@@ -2465,6 +2465,49 @@ function contactDetails(state) {
  * Which content pages are published (GLB-10). `none` is the default, and the honest state of a shop
  * whose client has not written any copy yet.
  */
+/**
+ * The Sale page's campaign banner (#191), as `GET /api/content/sale-banner` answers it: `SaleBannerDto`,
+ * field for field — `banner` null on an ordinary day, otherwise `imageUrl`, `imageSrcSet` (null when there
+ * is one file), `width`, `height` and `altText` (empty, never null, for a picture with no description).
+ *
+ * Switched by `/__test__/sale-banner?state=none|live|no-alt|fail`, and **none by default**, because a
+ * banner nobody asked for would change the Sale page's layout under every other suite's measurements. The
+ * images are renditions under `/media/public/`, which this stub answers with a real WebP.
+ */
+const SALE_BANNERS = {
+  live: {
+    imageUrl: '/media/public/renditions/0000f00d-0000-4000-8000-0000000000b1/large.webp',
+    imageSrcSet:
+      '/media/public/renditions/0000f00d-0000-4000-8000-0000000000b1/card.webp 600w, ' +
+      '/media/public/renditions/0000f00d-0000-4000-8000-0000000000b1/large.webp 1200w, ' +
+      '/media/public/renditions/0000f00d-0000-4000-8000-0000000000b1/zoom.webp 1600w',
+    width: 1600,
+    height: 500,
+    altText: 'Linen Week: 20% off shirts and blouses',
+  },
+  'no-alt': {
+    imageUrl: '/media/public/originals/0000f00d-0000-4000-8000-0000000000b2.webp',
+    imageSrcSet: null,
+    width: 1600,
+    height: 500,
+    altText: '',
+  },
+  // Tester (#191): a description that tries to break out of the attribute and the transfer-state
+  // script. The API stores whatever a staff member typed, so the storefront must escape it.
+  hostile: {
+    imageUrl: '/media/public/originals/0000f00d-0000-4000-8000-0000000000b3.webp',
+    imageSrcSet: null,
+    width: 1600,
+    height: 500,
+    altText: '"><img src=x onerror="window.__pwned=1"></script><script>window.__pwned=2</script>',
+  },
+};
+
+/** Tester (#191): how long `state=slow` holds the answer, well past the storefront's 2 s timeout. */
+const SALE_BANNER_SLOW_MS = 8_000;
+
+let saleBannerState = 'none';
+
 let contentPagesState = 'none';
 
 /** Forced status for `/api/content/pages`, set through the test switch. 0 means answer normally. */
@@ -3932,6 +3975,31 @@ const server = createServer((request, response) => {
     }
 
     response.end(JSON.stringify(siteSettings));
+    return;
+  }
+
+  if (url.pathname === '/__test__/sale-banner') {
+    saleBannerState = url.searchParams.get('state') ?? 'none';
+    response.end(JSON.stringify({ state: saleBannerState }));
+    return;
+  }
+
+  if (url.pathname === '/api/content/sale-banner') {
+    // Answered here rather than by a `page.route` handler because the storefront reads it during the
+    // server render, which Playwright's request interception cannot reach.
+    if (saleBannerState === 'fail') {
+      response.statusCode = 500;
+      response.end(JSON.stringify({ title: 'An error occurred', status: 500 }));
+      return;
+    }
+
+    if (saleBannerState === 'slow') {
+      // A hung API: the live banner, but only after the storefront should have given up on it.
+      setTimeout(() => response.end(JSON.stringify({ banner: SALE_BANNERS.live })), SALE_BANNER_SLOW_MS);
+      return;
+    }
+
+    response.end(JSON.stringify({ banner: SALE_BANNERS[saleBannerState] ?? null }));
     return;
   }
 

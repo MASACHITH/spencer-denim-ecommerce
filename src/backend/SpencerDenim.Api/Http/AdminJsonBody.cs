@@ -144,6 +144,41 @@ internal static class AdminJsonBody
         return null;
     }
 
+    /// <summary>
+    /// A media-library <c>publicId</c>, or any other identifier a client is given as a GUID.
+    /// </summary>
+    /// <remarks>
+    /// Text in the canonical <c>D</c> form only (<c>0000f00d-0000-4000-8000-000000000001</c>), which is how
+    /// this API writes one. <c>Guid.TryParse</c> would also take braces, parentheses and 32 bare digits;
+    /// accepting spellings the API never sends would only widen what a client can get away with.
+    /// </remarks>
+    public static ValidationProblem? ReadGuid(JsonObject body, string field, out Guid? value)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        value = null;
+
+        if (!body.TryGetPropertyValue(field, out var node))
+        {
+            return Missing(field);
+        }
+
+        if (node is null)
+        {
+            return null;
+        }
+
+        if (node is not JsonValue json
+            || !json.TryGetValue<string>(out var text)
+            || !Guid.TryParseExact(text, "D", out var id))
+        {
+            return WrongType(field, "an identifier like 0000f00d-0000-4000-8000-000000000001");
+        }
+
+        value = id;
+        return null;
+    }
+
     /// <summary>A flag.</summary>
     public static ValidationProblem? ReadBool(JsonObject body, string field, out bool? value)
     {

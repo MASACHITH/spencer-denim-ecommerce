@@ -72,7 +72,8 @@ internal static class AdminSaleCampaignEndpoints
                 + "or product, and `includeSubcategories` is only meaningful for a category. On success "
                 + "the stored price summary of every affected product is recomputed in batches and the "
                 + "count comes back as `productsRepriced`; a campaign that repriced nothing answers with "
-                + "a warning, because that is almost always a targeting mistake. Listing prices and the "
+                + "a warning, because that is almost always a targeting mistake. `bannerPublicId` is optional "
+                + "and must name a ready public image from the media library. Listing prices and the "
                 + "Sale page may still lag up to five minutes at a boundary (doc 08 §7.4) — the bag and "
                 + "checkout always price live. **Send every field**, including the empty ones.")
             .Accepts<AdminSaleCampaignRequest>("application/json")
@@ -259,7 +260,7 @@ internal static class AdminSaleCampaignEndpoints
             return badActive;
         }
 
-        if (AdminJsonBody.ReadInt(body, "bannerAssetId", out var bannerAssetId) is { } badBanner)
+        if (AdminJsonBody.ReadGuid(body, "bannerPublicId", out var bannerPublicId) is { } badBanner)
         {
             return badBanner;
         }
@@ -289,7 +290,7 @@ internal static class AdminSaleCampaignEndpoints
             startsAt,
             endsAt,
             isActive,
-            bannerAssetId,
+            bannerPublicId,
             targets);
 
         return null;
@@ -396,6 +397,11 @@ public sealed record AdminSaleCampaignTargetRequest(
 /// <c>+05:30</c> is refused, because guessing wrong moves a campaign's window by five and a half hours.
 /// </param>
 /// <param name="EndsAt">The same, and required.</param>
+/// <param name="BannerPublicId">
+/// Doc 11 P3 step 1's optional banner: the <c>publicId</c> <c>POST /api/admin/media/images</c> answered
+/// with, or null for none. It must name a ready public image. The Sale page shows the banner of the live
+/// campaign while the campaign is live (<c>GET /api/content/sale-banner</c>).
+/// </param>
 /// <param name="Targets">At least one. A campaign with no target discounts nothing.</param>
 /// <param name="RowVersion">
 /// On an edit: the row version from the list, unless it is sent in <c>If-Match</c>. Ignored on a create.
@@ -408,6 +414,6 @@ public sealed record AdminSaleCampaignRequest(
     string? StartsAt,
     string? EndsAt,
     bool? IsActive,
-    int? BannerAssetId,
+    Guid? BannerPublicId,
     IReadOnlyList<AdminSaleCampaignTargetRequest>? Targets,
     string? RowVersion);

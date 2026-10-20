@@ -226,95 +226,152 @@ public sealed class MediaService(
             return new MediaDeleteOutcome.NotFound();
         }
 
-        var usages = await LoadUsagesAsync(asset.Id, cancellationToken);
-        if (usages.Count > 0)
+        // **One transaction, and the asset row locked first (#191).** Every check below reads the tables
+        // that can hold the asset; a sale campaign's save takes the same update lock on this row before it
+        // writes its banner and usage row (SaleCampaignAdminStore.BannerStillUsableAsync). So exactly one
+        // of the two wins: a save that got there first has committed its usage row before these reads run,
+        // and a save that comes second waits for this commit and then sees the asset deleted. The reads
+        // after the lock are plain RCSI reads, each taking its snapshot when it starts, which is after the
+        // lock was granted and so after any save holding it committed. Lock order: the asset row first, in
+        // both paths (doc 08 §5.3). Changes are accepted only after the commit, so a retried attempt still
+        // has the soft delete to write.
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+
+        var outcome = await strategy.ExecuteAsync<MediaDeleteOutcome>(
+            async token =>
+            {
+                await using var transaction = await dbContext.Database.BeginTransactionAsync(token);
+
+                await dbContext.Database
+                    .SqlQuery<int>(
+                        $"SELECT 1 AS Value FROM media.MediaAssets WITH (UPDLOCK, READCOMMITTEDLOCK, ROWLOCK) WHERE Id = {asset.Id}")
+                    .ToListAsync(token);
+
+                var usages = await LoadUsagesAsync(asset.Id, token);
+                if (usages.Count > 0)
+                {
+                    return new MediaDeleteOutcome.InUse(usages);
+                }
+
+                // MediaUsages is meant to mirror every structured reference (doc 08 §3.3), but the poster link is
+                // a real foreign key on MediaAssets itself, and a NO ACTION foreign key would still refuse the
+                // eventual purge. Checking it directly means the guard does not depend on a usage row having been
+                // written correctly by whoever created the video.
+                var usedAsPoster = await dbContext.MediaAssets
+                    .AnyAsync(candidate => candidate.PosterAssetId == asset.Id, token);
+
+                if (usedAsPoster)
+                {
+                    var videos = await dbContext.MediaAssets
+                        .AsNoTracking()
+                        .Where(candidate => candidate.PosterAssetId == asset.Id)
+                        .Select(candidate => new { candidate.Id, candidate.OriginalFileName, candidate.CreatedAtUtc })
+                        .ToListAsync(token);
+
+                    return new MediaDeleteOutcome.InUse(videos
+                        .Select(video => new MediaUsageDto(
+                            MediaUsageOwnerTypes.MediaAsset,
+                            video.Id.ToString(CultureInfo.InvariantCulture),
+                            MediaUsageRoles.Poster,
+                            video.OriginalFileName,
+                            video.CreatedAtUtc))
+                        .ToList());
+                }
+
+                // **A customer's payment slip, checked the same way and for a sharper reason** (PAY-01, doc 11 P7
+                // step 3). `sales.Payments.ProofAssetId` is the *only* reference a slip has: attaching one writes
+                // no usage row, deliberately, because the slip belongs to one payment and the media library's
+                // "used in…" panel is not where staff look for it. So without this check the guard above found
+                // nothing and a `Media.Delete` holder — Store Manager holds it alongside `Orders.View` — could
+                // soft-delete the evidence an approval is made on, with `MediaRetention` purging the bytes 30 days
+                // later and nothing on the order saying it had happened. A tester proved it end to end: 204, the
+                // queue's slip link gone, and both read-back routes 404.
+                //
+                // A direct read of the foreign key rather than a usage row, which is the argument the poster
+                // comment above makes and it applies more strongly here: a slip is a shopper's own document, and a
+                // guard that depends on a row having been written correctly is not the guard to put in front of
+                // it. It also protects the slips already attached before this check existed.
+                var usedAsProof = await dbContext.Payments
+                    .AnyAsync(payment => payment.ProofAssetId == asset.Id, token);
+
+                if (usedAsProof)
+                {
+                    var payments = await dbContext.Payments
+                        .AsNoTracking()
+                        .Where(payment => payment.ProofAssetId == asset.Id)
+                        .Select(payment => new { payment.Id, payment.Order!.OrderNumber, payment.CreatedAtUtc })
+                        .ToListAsync(token);
+
+                    return new MediaDeleteOutcome.InUse(payments
+                        .Select(payment => new MediaUsageDto(
+                            MediaUsageOwnerTypes.Payment,
+                            payment.Id.ToString(CultureInfo.InvariantCulture),
+                            MediaUsageRoles.PaymentSlip,
+                            payment.OrderNumber,
+                            payment.CreatedAtUtc))
+                        .ToList());
+                }
+
+                // **A sale campaign's banner, checked by its real foreign key as well (#191)**, for the reason the
+                // poster and the slip are: `marketing.SaleCampaigns.BannerAssetId` is a real column, and a campaign
+                // saved before #191 wrote no usage row for its banner, so the guard above finds nothing and the
+                // library would delete the picture of a live campaign. The global filter leaves removed campaigns
+                // out, which is right: a removed campaign holds nothing (SaleCampaignAdminStore releases its row).
+                var campaigns = await dbContext.SaleCampaigns
+                    .AsNoTracking()
+                    .Where(campaign => campaign.BannerAssetId == asset.Id)
+                    .OrderBy(campaign => campaign.Id)
+                    .Select(campaign => new { campaign.Id, campaign.Name, campaign.CreatedAtUtc })
+                    .ToListAsync(token);
+
+                if (campaigns.Count > 0)
+                {
+                    return new MediaDeleteOutcome.InUse(campaigns
+                        .Select(campaign => new MediaUsageDto(
+                            MediaUsageOwnerTypes.SaleCampaign,
+                            campaign.Id.ToString(CultureInfo.InvariantCulture),
+                            MediaUsageRoles.Banner,
+                            campaign.Name,
+                            campaign.CreatedAtUtc))
+                        .ToList());
+                }
+
+                // Doc 08 §3.3: "An owner's save rewrites its usage rows in the same transaction." A soft delete
+                // is such a save, so the rows this asset *owns* — what it uses, today only a video's poster —
+                // go with it, in the same SaveChangesAsync below.
+                //
+                // Leaving them behind bricks the poster permanently: LoadUsagesAsync would keep finding a row
+                // pointing at a video the soft-delete filter hides, so the poster could never be deleted (409
+                // for ever) and the "used in…" panel would list it with no label at all, because the label
+                // lookup reads through that same filter. The rows recording what *other* owners use of this
+                // asset are deliberately untouched — those belong to those owners, and the guard above has
+                // already refused the delete if any exist.
+                var ownerId = asset.Id.ToString(CultureInfo.InvariantCulture);
+                var owned = await dbContext.MediaUsages
+                    .Where(usage => usage.OwnerType == MediaUsageOwnerTypes.MediaAsset && usage.OwnerId == ownerId)
+                    .ToListAsync(token);
+
+                dbContext.MediaUsages.RemoveRange(owned);
+
+                // Doc 08 §3.3: soft delete now, files purged after 30 days (MediaRetention).
+                asset.SoftDelete(DateTime.UtcNow, deletedByUserId);
+                await dbContext.SaveChangesAsync(acceptAllChangesOnSuccess: false, token);
+                await transaction.CommitAsync(token);
+
+                return new MediaDeleteOutcome.Deleted();
+            },
+            cancellationToken);
+
+        if (outcome is not MediaDeleteOutcome.Deleted)
         {
-            return new MediaDeleteOutcome.InUse(usages);
+            return outcome;
         }
 
-        // MediaUsages is meant to mirror every structured reference (doc 08 §3.3), but the poster link is
-        // a real foreign key on MediaAssets itself, and a NO ACTION foreign key would still refuse the
-        // eventual purge. Checking it directly means the guard does not depend on a usage row having been
-        // written correctly by whoever created the video.
-        var usedAsPoster = await dbContext.MediaAssets
-            .AnyAsync(candidate => candidate.PosterAssetId == asset.Id, cancellationToken);
-
-        if (usedAsPoster)
-        {
-            var videos = await dbContext.MediaAssets
-                .AsNoTracking()
-                .Where(candidate => candidate.PosterAssetId == asset.Id)
-                .Select(candidate => new { candidate.Id, candidate.OriginalFileName, candidate.CreatedAtUtc })
-                .ToListAsync(cancellationToken);
-
-            return new MediaDeleteOutcome.InUse(videos
-                .Select(video => new MediaUsageDto(
-                    MediaUsageOwnerTypes.MediaAsset,
-                    video.Id.ToString(CultureInfo.InvariantCulture),
-                    MediaUsageRoles.Poster,
-                    video.OriginalFileName,
-                    video.CreatedAtUtc))
-                .ToList());
-        }
-
-        // **A customer's payment slip, checked the same way and for a sharper reason** (PAY-01, doc 11 P7
-        // step 3). `sales.Payments.ProofAssetId` is the *only* reference a slip has: attaching one writes
-        // no usage row, deliberately, because the slip belongs to one payment and the media library's
-        // "used in…" panel is not where staff look for it. So without this check the guard above found
-        // nothing and a `Media.Delete` holder — Store Manager holds it alongside `Orders.View` — could
-        // soft-delete the evidence an approval is made on, with `MediaRetention` purging the bytes 30 days
-        // later and nothing on the order saying it had happened. A tester proved it end to end: 204, the
-        // queue's slip link gone, and both read-back routes 404.
-        //
-        // A direct read of the foreign key rather than a usage row, which is the argument the poster
-        // comment above makes and it applies more strongly here: a slip is a shopper's own document, and a
-        // guard that depends on a row having been written correctly is not the guard to put in front of
-        // it. It also protects the slips already attached before this check existed.
-        var usedAsProof = await dbContext.Payments
-            .AnyAsync(payment => payment.ProofAssetId == asset.Id, cancellationToken);
-
-        if (usedAsProof)
-        {
-            var payments = await dbContext.Payments
-                .AsNoTracking()
-                .Where(payment => payment.ProofAssetId == asset.Id)
-                .Select(payment => new { payment.Id, payment.Order!.OrderNumber, payment.CreatedAtUtc })
-                .ToListAsync(cancellationToken);
-
-            return new MediaDeleteOutcome.InUse(payments
-                .Select(payment => new MediaUsageDto(
-                    MediaUsageOwnerTypes.Payment,
-                    payment.Id.ToString(CultureInfo.InvariantCulture),
-                    MediaUsageRoles.PaymentSlip,
-                    payment.OrderNumber,
-                    payment.CreatedAtUtc))
-                .ToList());
-        }
-
-        // Doc 08 §3.3: "An owner's save rewrites its usage rows in the same transaction." A soft delete
-        // is such a save, so the rows this asset *owns* — what it uses, today only a video's poster —
-        // go with it, in the same SaveChangesAsync below.
-        //
-        // Leaving them behind bricks the poster permanently: LoadUsagesAsync would keep finding a row
-        // pointing at a video the soft-delete filter hides, so the poster could never be deleted (409
-        // for ever) and the "used in…" panel would list it with no label at all, because the label
-        // lookup reads through that same filter. The rows recording what *other* owners use of this
-        // asset are deliberately untouched — those belong to those owners, and the guard above has
-        // already refused the delete if any exist.
-        var ownerId = asset.Id.ToString(CultureInfo.InvariantCulture);
-        var owned = await dbContext.MediaUsages
-            .Where(usage => usage.OwnerType == MediaUsageOwnerTypes.MediaAsset && usage.OwnerId == ownerId)
-            .ToListAsync(cancellationToken);
-
-        dbContext.MediaUsages.RemoveRange(owned);
-
-        // Doc 08 §3.3: soft delete now, files purged after 30 days (MediaRetention).
-        asset.SoftDelete(DateTime.UtcNow, deletedByUserId);
-        await dbContext.SaveChangesAsync(cancellationToken);
+        dbContext.ChangeTracker.AcceptAllChanges();
 
         MediaLog.AssetSoftDeleted(logger, publicId, MediaRetention.PurgeAfterDays);
 
-        return new MediaDeleteOutcome.Deleted();
+        return outcome;
     }
 
     // ------------------------------------------------------------------ images
@@ -872,6 +929,19 @@ public sealed class MediaService(
                             .Select(item => new LabelRow(
                                 item.Id,
                                 item.Title ?? item.Department!.Name ?? "Homepage block")),
+                        cancellationToken);
+                    break;
+
+                case MediaUsageOwnerTypes.SaleCampaign:
+                    // The campaign's own name, which is what the sale-campaign screen lists it by. A
+                    // removed campaign owns no usage row (SaleCampaignAdminStore), so the soft-delete
+                    // filter here hides nothing that should be labelled.
+                    await AddLabelsAsync(
+                        labels,
+                        group.Key,
+                        dbContext.SaleCampaigns.AsNoTracking()
+                            .Where(campaign => ids.Contains(campaign.Id))
+                            .Select(campaign => new LabelRow(campaign.Id, campaign.Name)),
                         cancellationToken);
                     break;
 

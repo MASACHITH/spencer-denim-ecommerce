@@ -289,7 +289,7 @@ describe('RegisterPage (ACC-01)', () => {
   describe('when a field is refused', () => {
     /**
      * **The password rule comes from the server, which is the thing that enforces it.**
-     * `CustomerPasswordPolicy`'s own remarks say the front end must not hold a second copy of the
+     * `PasswordPolicy`'s own remarks say the front end must not hold a second copy of the
      * number: #126 shipped a `maxlength` of 120 against a 100-character column, and a form promising
      * eight characters against an API refusing nine is the same defect. So the sentence a shopper reads
      * is the server's, and this test uses the server's real wording.
@@ -323,7 +323,7 @@ describe('RegisterPage (ACC-01)', () => {
      * ## This reverses an earlier decision in this file, and the reversal is the point
      *
      * The first version of this spec asserted the opposite — that the form states no rule of its own,
-     * because `CustomerPasswordPolicy`'s remarks say the front end should not hold a second copy of the
+     * because `PasswordPolicy`'s remarks say the front end should not hold a second copy of the
      * number. That reading was right about the hazard (#126: a form promising one rule while the server
      * enforces another passed the form, the stub and sixteen browser tests) and wrong about the cure.
      * Leaving the rule out means a shopper learns it only by being refused — WCAG 2.2 **3.3.2 Labels or
@@ -331,7 +331,7 @@ describe('RegisterPage (ACC-01)', () => {
      * opaque.
      *
      * The cure is a copy that cannot drift: `PASSWORD_RULE` in `account.model.ts`, pinned to
-     * `CustomerPasswordPolicy.Requirement` by `CustomerPasswordHintConventionTests` in the C# unit
+     * `PasswordPolicy.Requirement` by `PasswordHintConventionTests` in the C# unit
      * suite, which fails the build if the two are not byte-identical. That is the technique
      * `BrandNameConventionTests` already uses across the three source trees for the shop's name.
      *

@@ -25,11 +25,11 @@ namespace SpencerDenim.Infrastructure.Identity.Customers;
 /// customer endpoint always names its own.
 /// <para>
 /// <b>Nothing here touches <c>IdentityOptions</c>.</b> Those options are global, so they are the staff
-/// rules too, and Tharanga has three open PRs against that startup path (#142, #144, #146). The customer
-/// lockout reads <see cref="CustomerSecurityOptions"/> and counts for itself
-/// (<see cref="CustomerAccountLockout"/>); the customer password rule is one extra check beside
-/// Identity's own validators (<see cref="CustomerPasswordPolicy"/>). Both consequences are in the task
-/// report.
+/// rules too. The customer lockout reads <see cref="CustomerSecurityOptions"/> and counts for itself
+/// (<see cref="CustomerAccountLockout"/>). The password rule is the one thing both populations share, and
+/// it is set where the options are, in <c>IdentityRegistration</c>, from <see cref="PasswordPolicy"/>
+/// (issue #200) — staff used to sit on Identity's default of six while this path added a ten-character
+/// check of its own beside Identity's validators.
 /// </para>
 /// </remarks>
 public static class CustomerIdentityRegistration
