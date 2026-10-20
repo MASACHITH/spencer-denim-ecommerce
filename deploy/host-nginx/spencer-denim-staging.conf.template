@@ -25,6 +25,12 @@ server {
     listen [::]:80;
     server_name __SERVER_NAME__;
 
+    # Logged nowhere (issue #179). Without this the redirect below, which carries the whole address, would go to
+    # the server-wide access log in the combined format: visitor address, query string and Referer, in a file
+    # that also belongs to the client's other sites. See the 443 server for the reasoning.
+    access_log off;
+    error_log  /var/log/nginx/spencer-denim/staging.error.log crit;
+
     # certbot's HTTP-01 challenge, then everything else to HTTPS.
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/certbot;
@@ -50,8 +56,20 @@ server {
     # One year, this host only. Add includeSubDomains / preload only once every subdomain is HTTPS-only.
     add_header Strict-Transport-Security "max-age=31536000" always;
 
-    access_log /var/log/nginx/spencer-denim-staging.access.log;
-    error_log  /var/log/nginx/spencer-denim-staging.error.log warn;
+    # Logs (issue #179, docs/15 section 8a). Both of nginx's logs copy the visitor's address and the whole
+    # request into a file on this server: the access log in the default combined format, the error log on every
+    # upstream failure ("client: 203.0.113.9 ... request: "GET /order/<token>?..." ... referrer: ..."). This shop
+    # puts credentials in addresses (/order/{token}, ?token= on password reset and email confirmation), so
+    # either would hand anyone who can read the file a customer's order or account.
+    #
+    # So there is no access log here at all: the gateway container logs every request after removing the
+    # addresses and credentials (docs/15 section 8a), and a 502 from this hop means the gateway is down, which
+    # `docker compose ps` says. The error log is kept to crit, which carries no request in normal operation (a crashed
+    # worker, a failed reload) but CAN when nginx cannot write a temporary file (see proxy_max_temp_file_size below and
+    # docs/15 section 8a), in its own directory so that deploy/host-nginx/
+    # spencer-denim.logrotate can keep it for days instead of weeks. Create the directory before `nginx -t`.
+    access_log off;
+    error_log  /var/log/nginx/spencer-denim/staging.error.log crit;
 
     # 2 MB by default, matching the gateway; only the two upload routes below take more.
     #
@@ -75,6 +93,11 @@ server {
     proxy_connect_timeout 5s;
     proxy_read_timeout    60s;
     proxy_send_timeout    60s;
+
+    # Never spill a response to a temporary file on this host's disk (the gateway sets the same, issue #179). A
+    # spilled response that cannot be written (a full disk) is logged at crit WITH the client address, the request
+    # line, its query string and the Referer, which is exactly what error_log crit above is meant to avoid.
+    proxy_max_temp_file_size 0;
 
     # A product video (MediaLimits.MaxVideoBytes, 50 MB) travels with its poster (MaxImageBytes, 15 MB) in one
     # request: 66 MiB plus multipart overhead, staff only. proxy_request_buffering off streams it through

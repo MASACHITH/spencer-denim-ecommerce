@@ -65,7 +65,9 @@ ENV NGINX_ENVSUBST_OUTPUT_DIR=/tmp \
     SD_STOREFRONT_UPSTREAM=storefront:4000 \
     SD_REAL_IP_FROM=127.0.0.1/32 \
     SD_MAX_BODY_SIZE=2m \
-    SD_MAX_UPLOAD_SIZE=67m
+    SD_MAX_UPLOAD_SIZE=67m \
+    SD_PAGE_VIEW_RATE=20r/s \
+    SD_PAGE_VIEW_BURST=40
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=5 \
   CMD wget -q -O /dev/null http://127.0.0.1:8080/gateway-health || exit 1

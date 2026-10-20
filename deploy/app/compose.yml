@@ -186,6 +186,10 @@ services:
       # SD_REAL_IP_FROM (the only peer whose X-Forwarded-For the gateway believes) is set by the environment file.
       SD_MAX_BODY_SIZE: 2m
       SD_MAX_UPLOAD_SIZE: 67m
+      # The page-view beacon's limit per visitor address (issue #179, docs/15 section 8a): generous, because many
+      # Sri Lankan shoppers share one carrier-grade-NAT address. Tune here; the gateway answers 204 when it trips.
+      SD_PAGE_VIEW_RATE: 20r/s
+      SD_PAGE_VIEW_BURST: "40"
     # The published port (127.0.0.1 only) and the fixed address are set by the environment file.
     networks:
       edge: {}
