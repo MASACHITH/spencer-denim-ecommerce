@@ -146,6 +146,10 @@ export class CheckoutApi {
  * - `promoRejected` — **409** with `promoRefusal`. The code stopped qualifying, or somebody took its
  *   last use; nothing was placed and the order has to be re-quoted and placed again.
  * - `blocked` — **409** with `blockers`. The bag or the shop's state refuses checkout.
+ * - `rateLimited` — **429** with `Retry-After` (issue #107). This connection has placed as many orders as
+ *   one address may in the current window. Nothing was placed and nothing was charged; the bag and the
+ *   checkout key are untouched, so pressing Place order again after the wait is safe — and a resend of an
+ *   order that *was* placed is answered with that order, never with this.
  * - `notFound` — **404**, for an order link that names no order.
  * - `offline` — status 0: the browser never reached the shop.
  * - `failed` — anything else.
@@ -156,6 +160,7 @@ export type CheckoutFailure =
   | 'totalChanged'
   | 'promoRejected'
   | 'blocked'
+  | 'rateLimited'
   | 'notFound'
   | 'offline'
   | 'failed';
@@ -185,6 +190,13 @@ export function checkoutFailure(error: unknown): CheckoutFailure {
 
   if (error.status === 404) {
     return 'notFound';
+  }
+
+  if (error.status === 429) {
+    // The limiter on `POST /api/checkout/orders` (issue #107). Told apart from `failed` because the advice
+    // is different: a generic failure says "try again in a moment" and a shopper who does so at once is
+    // refused again, while this one can say how long to wait and that nothing was lost.
+    return 'rateLimited';
   }
 
   if (error.status === 409) {
@@ -302,6 +314,14 @@ export function checkoutErrorMessage(error: unknown): string {
     }
     case 'blocked':
       return problemBody(error)?.detail ?? 'Checkout is not available at the moment.';
+    case 'rateLimited':
+      // Reaches this function from the place-order request only: it is the one checkout route with a
+      // limiter. The order page's slip upload has its own 429 handling and never calls this.
+      return (
+        'Too many orders have been placed from your connection in a short time, so yours has not been ' +
+        `placed. Nothing has been charged and your bag is unchanged. Please wait ${waitPhrase(error)} and ` +
+        'press Place order again. If you keep seeing this, contact us and we will help you order.'
+      );
     case 'notFound':
       return 'We could not find that order.';
     case 'offline':
@@ -342,6 +362,31 @@ const PROMO_REFUSALS: readonly PromoRefusal[] = [
   'NoEligibleItems',
   'AlreadyUsedByCustomer',
 ];
+
+/**
+ * How long to wait, in a sentence, from a refusal's `Retry-After`.
+ *
+ * Whole seconds only — the one form the API sends — rounded **up** to whole minutes, so a shopper is
+ * never told to come back before the window has turned, and to hours past the hour. A header that is
+ * missing, or is an HTTP date, or is nonsense, says "a few minutes": a vague true sentence beats a
+ * precise wrong one.
+ */
+function waitPhrase(error: unknown): string {
+  const header = error instanceof HttpErrorResponse ? error.headers?.get('Retry-After')?.trim() : null;
+
+  if (!header || !/^\d+$/.test(header)) {
+    return 'a few minutes';
+  }
+
+  const minutes = Math.max(1, Math.ceil(Number(header) / 60));
+
+  if (minutes >= 60) {
+    const hours = Math.ceil(minutes / 60);
+    return `about ${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+  }
+
+  return `about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+}
 
 function problemBody(error: unknown): CheckoutProblem | null {
   if (!(error instanceof HttpErrorResponse)) {

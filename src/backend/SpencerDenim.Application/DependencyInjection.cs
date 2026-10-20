@@ -42,6 +42,7 @@ using SpencerDenim.Application.Diagnostics.Ping;
 using SpencerDenim.Application.Inventory;
 using SpencerDenim.Application.Inventory.Contracts;
 using SpencerDenim.Application.Marketing.Newsletter;
+using SpencerDenim.Application.Marketing.SaleBanner;
 using SpencerDenim.Application.Marketing.Newsletter.Admin;
 using SpencerDenim.Application.Sales.Cart;
 using SpencerDenim.Application.Sales.Orders.Admin;
@@ -232,6 +233,9 @@ public static class DependencyInjection
         services.AddScoped<
             IQueryHandler<GetAnnouncementsQuery, IReadOnlyList<AnnouncementDto>>,
             GetAnnouncementsQueryHandler>();
+
+        // The Sale page's campaign banner (ADM-14, #191). Read live, not cached: see the handler.
+        services.AddScoped<IQueryHandler<GetSaleBannerQuery, SaleBannerDto>, GetSaleBannerQueryHandler>();
         services.AddScoped<
             ICommandHandler<SubscribeToNewsletterCommand, NewsletterSubscriptionOutcome>,
             SubscribeToNewsletterCommandHandler>();

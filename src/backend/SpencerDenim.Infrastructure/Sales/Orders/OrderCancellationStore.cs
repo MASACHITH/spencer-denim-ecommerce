@@ -177,6 +177,18 @@ internal sealed class OrderCancellationStore(
         // that would matter the moment a provider settled a payment in a transaction separate from the
         // order's status — which is exactly what a webhook does. `OrderCancellationTests` reaches the
         // state with a fixture, so the guard is proved rather than assumed.
+        //
+        // **The settlement `NOT EXISTS` reads `sales.Payments` WITH (READCOMMITTEDLOCK), and this is the claim
+        // where it matters most (issue #185).** Every database runs READ_COMMITTED_SNAPSHOT since #163, where a
+        // plain read takes the last committed version of a row instead of waiting for the transaction that holds
+        // it. An unhinted guard therefore cannot see a settlement that has not committed yet, and nothing backs
+        // this claim up: a settlement has `UX_Payments_OneSettlement` behind its own `NOT EXISTS`; a cancellation
+        // has this predicate and no other, so a stale read here closes an order whose money is arriving. The hint
+        // makes the read wait for that writer, as it did before the option was on, and in whatever order the plan
+        // reads the two tables (a statement's read point is fixed at its first versioned read, so an unhinted
+        // payments read that came before the order's own wait would be stale too).
+        // `PaymentGuardLockTests` holds a settlement open and requires the claim to wait for it; with the hint
+        // removed the same scenario cancels the order.
         var claimed = await dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""
             UPDATE sales.Orders
@@ -192,7 +204,7 @@ internal sealed class OrderCancellationStore(
                AND (CaptureLockedUntilUtc IS NULL OR CaptureLockedUntilUtc < {cancellation.NowUtc})
                AND NOT EXISTS (
                      SELECT 1
-                       FROM sales.Payments AS settlement
+                       FROM sales.Payments AS settlement WITH (READCOMMITTEDLOCK)
                       WHERE settlement.OrderId = {snapshot.OrderId}
                         AND settlement.IsOrderSettlement = 1);
             """,

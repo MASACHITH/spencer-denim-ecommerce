@@ -289,7 +289,12 @@ internal sealed class BankTransferReviewStore(
                 }
 
                 // Doc 08 §4.1 "Expired / Cancelled -> Paid" (DB8): Status IN (5,6) AND StockState = 2,
-                // with the same NOT EXISTS settlement guard and the same literal 1.
+                // with the same NOT EXISTS settlement guard and the same literal 1 — and the same
+                // `WITH (READCOMMITTEDLOCK)` on the payments (issue #185), so the guard waits for a settlement
+                // that has not committed instead of reading the table as it was before it; see
+                // `OrderSettlementEffects.ClaimPendingOrderPaidAsync`, which says why. Without it a stale read
+                // claims the order and the unique index then refuses the payment: a thrown error where this
+                // path owes staff a refusal naming the settlement.
                 var claimed = await dbContext.Database.ExecuteSqlInterpolatedAsync(
                     $"""
                     UPDATE sales.Orders
@@ -304,7 +309,7 @@ internal sealed class BankTransferReviewStore(
                        AND Status IN ({(byte)OrderStatus.Cancelled}, {(byte)OrderStatus.Expired})
                        AND StockState = {(byte)OrderStockState.Released}
                        AND NOT EXISTS (
-                             SELECT 1 FROM sales.Payments s
+                             SELECT 1 FROM sales.Payments s WITH (READCOMMITTEDLOCK)
                               WHERE s.OrderId = {decision.OrderId} AND s.IsOrderSettlement = 1);
                     """,
                     cancellationToken);

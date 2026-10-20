@@ -298,3 +298,46 @@ jobs:
           fi
 
           echo "robots.txt is served without a catalogue, and sitemap.xml answers 503."
+
+  # Dependency advisories (#84). A separate job so it answers in about a minute instead of after the
+  # 35-minute backend suite, and so the two existing jobs are untouched. It needs no `npm ci`: npm
+  # audit reads package-lock.json. The gate fails on any high or critical advisory that is not in
+  # tools/audit/audit-allowlist.json, on an allow-list entry past its review date, and on an entry
+  # whose advisory is gone; if an audit cannot run it fails rather than passing. Run it yourself with
+  # `node tools/audit/audit-gate.mjs` from the repository root. See docs/06 section 4.
+  dependency-audit:
+    name: Dependency audit (npm and NuGet advisories)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      DOTNET_NOLOGO: "true"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      # The gate's own tests: every way it can go red, and the ways an audit can fail to run.
+      - name: Audit gate self-tests
+        run: node --test tools/audit/audit-gate.test.mjs
+
+      - name: npm advisories
+        if: ${{ !cancelled() }}
+        run: node tools/audit/audit-gate.mjs npm
+
+      # Restores with NuGet's own audit off (see the header of audit-gate.mjs): the gate reads the
+      # advisory report itself, so a finding is explained here rather than as a failed restore.
+      - name: NuGet advisories
+        if: ${{ !cancelled() }}
+        run: node tools/audit/audit-gate.mjs nuget

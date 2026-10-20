@@ -3,6 +3,7 @@ using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Abstractions.Time;
+using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Content.Admin;
 using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Application.Marketing.Promotions.Contracts;
@@ -38,7 +39,7 @@ public sealed record SaleCampaignInput(
     DateTime? StartsAt,
     DateTime? EndsAt,
     bool? IsActive,
-    int? BannerAssetId,
+    Guid? BannerPublicId,
     IReadOnlyList<SaleCampaignTargetInput>? Targets);
 
 /// <summary>Create a sale campaign (ADM-14, <c>Promotions.Create</c>).</summary>
@@ -102,13 +103,23 @@ public abstract record SaleCampaignWriteResult
 /// member was told succeeded. If it does fail, the <c>RefreshCampaignPricing</c> job picks the boundary up
 /// within five minutes and the bag and checkout were never affected: they price live (doc 08 §7.4).
 /// </para>
+/// <para>
+/// <b>Every write also evicts the homepage cache</b> (doc 08 §3.7: "homepage output cached 5 min and
+/// evicted on save"). The homepage's product rows and its Sale section (HOME-07) print prices from the
+/// stored summary this class has just recomputed, so without the eviction the busiest page on the site
+/// could show the pre-campaign prices for up to five minutes after a sale was switched on, while the bag
+/// already charged the campaign price. Issue #192 named the missing call. It runs after the recompute, and
+/// in a <c>finally</c>, so a render that happened between the commit and the recompute cannot be what the
+/// cache keeps.
+/// </para>
 /// </summary>
 public sealed class SaleCampaignWriteHandlers(
     ISaleCampaignAdminStore store,
     ISaleCampaignAdminReader reader,
     ICampaignPricingRefresher refresher,
     IAuditLogWriter auditLog,
-    IClock clock)
+    IClock clock,
+    IHomePageCache homePage)
     : ICommandHandler<CreateSaleCampaignCommand, SaleCampaignWriteResult>,
         ICommandHandler<UpdateSaleCampaignCommand, SaleCampaignWriteResult>,
         ICommandHandler<DeleteSaleCampaignCommand, SaleCampaignWriteResult>
@@ -129,6 +140,11 @@ public sealed class SaleCampaignWriteHandlers(
     /// </remarks>
     public const int MaxTargets = 200;
 
+    /// <summary>Why a banner was refused: it is not, or is no longer, a ready public image.</summary>
+    private const string BannerUnavailableMessage =
+        "That banner is not a ready public image in the media library. Upload a picture, or leave the "
+        + "banner empty.";
+
     public async Task<SaleCampaignWriteResult> HandleAsync(
         CreateSaleCampaignCommand command,
         CancellationToken cancellationToken)
@@ -139,7 +155,7 @@ public sealed class SaleCampaignWriteHandlers(
 
         if (errors.Count == 0)
         {
-            errors = await CheckReferencesAsync(fields, cancellationToken);
+            (fields, errors) = await CheckReferencesAsync(fields, cancellationToken);
         }
 
         if (errors.Count > 0)
@@ -189,7 +205,7 @@ public sealed class SaleCampaignWriteHandlers(
 
         if (errors.Count == 0)
         {
-            errors = await CheckReferencesAsync(fields, cancellationToken);
+            (fields, errors) = await CheckReferencesAsync(fields, cancellationToken);
         }
 
         if (errors.Count > 0)
@@ -261,7 +277,7 @@ public sealed class SaleCampaignWriteHandlers(
             command.Actor,
             now));
 
-        var outcome = await store.SaveAsync(command.Actor.UserId, cancellationToken);
+        var outcome = await store.SaveAsync(campaign, command.Actor.UserId, cancellationToken);
 
         if (outcome == SaleCampaignSaveOutcome.ConcurrencyConflict)
         {
@@ -271,7 +287,7 @@ public sealed class SaleCampaignWriteHandlers(
         // The sale is over for the listing as well as for the bag, which is the whole of doc 11 P3 step 3
         // on a delete: without this the Sale page would go on advertising a campaign that no longer
         // exists until the next job pass.
-        var pass = await refresher.RefreshProductsAsync(affected, cancellationToken);
+        var pass = await RefreshAndEvictAsync(affected, cancellationToken);
 
         return new SaleCampaignWriteResult.Succeeded(
             new AdminSaleCampaignSavedDto(ToDto(campaign, now), [], pass.Products));
@@ -284,11 +300,18 @@ public sealed class SaleCampaignWriteHandlers(
         int? actingUserId,
         CancellationToken cancellationToken)
     {
-        var outcome = await store.SaveAsync(actingUserId, cancellationToken);
+        var outcome = await store.SaveAsync(campaign, actingUserId, cancellationToken);
 
         if (outcome == SaleCampaignSaveOutcome.ConcurrencyConflict)
         {
             return StaleRowVersion();
+        }
+
+        if (outcome == SaleCampaignSaveOutcome.BannerUnavailable)
+        {
+            // Deleted from the media library after CheckReferencesAsync looked, and caught by the save's
+            // locked re-check: the same sentence the earlier check would have given.
+            return new SaleCampaignWriteResult.Invalid("bannerPublicId", BannerUnavailableMessage);
         }
 
         var now = clock.UtcNow.UtcDateTime;
@@ -305,10 +328,33 @@ public sealed class SaleCampaignWriteHandlers(
         var nowTargeted = await refresher.ProductsTargetedByAsync([campaign.Id], cancellationToken);
         var affected = previouslyTargeted.Concat(nowTargeted).Distinct().ToList();
 
-        var pass = await refresher.RefreshProductsAsync(affected, cancellationToken);
+        var pass = await RefreshAndEvictAsync(affected, cancellationToken);
 
         return new SaleCampaignWriteResult.Succeeded(
             new AdminSaleCampaignSavedDto(saved, Warnings(fields, affected.Count, now), pass.Products));
+    }
+
+    /// <summary>
+    /// Doc 11 P3 step 3's recompute, then the homepage eviction doc 08 §3.7 asks of every save.
+    /// </summary>
+    /// <remarks>
+    /// <b>The eviction is in a <c>finally</c></b>: if the recompute fails, the campaign is still saved and
+    /// the bag already prices it live, so the homepage should at least stop serving a page assembled before
+    /// the save. It comes <i>after</i> the recompute, not after the commit, so a visitor who rendered the
+    /// homepage in between cannot leave the pre-recompute prices cached for five minutes.
+    /// </remarks>
+    private async Task<CampaignPricingRefreshPass> RefreshAndEvictAsync(
+        IReadOnlyCollection<int> affected,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await refresher.RefreshProductsAsync(affected, cancellationToken);
+        }
+        finally
+        {
+            homePage.Evict();
+        }
     }
 
     /// <summary>
@@ -333,6 +379,17 @@ public sealed class SaleCampaignWriteHandlers(
             warnings.Add(
                 "This campaign's targets do not reach any product, so no price has changed. Check the "
                 + "departments, categories and products it applies to.");
+        }
+
+        if (fields.BannerAssetId is not null && string.IsNullOrWhiteSpace(fields.BannerAltText))
+        {
+            // A warning and not a refusal. The description lives on the media-library asset, and a file
+            // uploaded once before without one is answered from the checksum index with its old, empty
+            // description, so a refusal here could leave a staff member with no way to choose that
+            // picture at all. The Sale page draws it as decorative (alt="") instead.
+            warnings.Add(
+                "The banner image has no description, so people using a screen reader will not hear "
+                + "what it says. Upload it with a description if it carries words or an offer.");
         }
 
         if (fields.DiscountType == SaleDiscountType.Percent
@@ -440,9 +497,9 @@ public sealed class SaleCampaignWriteHandlers(
             errors.Add(new ValidationError("endsAt", "The end must be after the start."));
         }
 
-        if (input.BannerAssetId is { } banner && banner <= 0)
+        if (input.BannerPublicId is { } banner && banner == Guid.Empty)
         {
-            errors.Add(new ValidationError("bannerAssetId", "Choose a banner image, or leave it empty."));
+            errors.Add(new ValidationError("bannerPublicId", "Choose a banner image, or leave it empty."));
         }
 
         var targets = ValidateTargets(input.Targets, errors);
@@ -458,7 +515,11 @@ public sealed class SaleCampaignWriteHandlers(
             // Null is "off": a form that did not send the flag has not asked for a live campaign, and the
             // safe reading of a half-filled request is the one that does not put a discount on the shop.
             input.IsActive ?? false,
-            input.BannerAssetId,
+            input.BannerPublicId,
+
+            // Resolved by CheckReferencesAsync, which is the only place that can ask the media library.
+            null,
+            null,
             targets);
 
         return (fields, errors);
@@ -599,20 +660,33 @@ public sealed class SaleCampaignWriteHandlers(
     /// foreign-key violation.
     /// </summary>
     /// <remarks>
+    /// Also resolves the banner's <c>publicId</c> to the internal id the column stores, and fetches its
+    /// description for the warning about a banner without one.
+    /// <para>
     /// Run only once the shape is valid, so a form with a missing name does not also pay for three
     /// round-trips — and so the errors a staff member sees are the ones they can act on first.
+    /// </para>
     /// </remarks>
-    private async Task<List<ValidationError>> CheckReferencesAsync(
+    private async Task<(ValidFields Fields, List<ValidationError> Errors)> CheckReferencesAsync(
         ValidFields fields,
         CancellationToken cancellationToken)
     {
         var errors = new List<ValidationError>();
 
-        if (fields.BannerAssetId is { } banner && !await store.BannerExistsAsync(banner, cancellationToken))
+        if (fields.BannerPublicId is { } banner)
         {
-            errors.Add(new ValidationError(
-                "bannerAssetId",
-                "That banner image is not in the media library any more. Choose another, or leave it empty."));
+            if (await store.FindBannerAsync(banner, cancellationToken) is { } candidate)
+            {
+                fields = fields with
+                {
+                    BannerAssetId = candidate.MediaAssetId,
+                    BannerAltText = candidate.AltText,
+                };
+            }
+            else
+            {
+                errors.Add(new ValidationError("bannerPublicId", BannerUnavailableMessage));
+            }
         }
 
         var existence = await store.WhichTargetsExistAsync(
@@ -640,7 +714,7 @@ public sealed class SaleCampaignWriteHandlers(
             }
         }
 
-        return errors;
+        return (fields, errors);
     }
 
     private static List<int> Ids(IReadOnlyList<ValidTarget> targets, SaleCampaignTargetType type) =>
@@ -733,7 +807,11 @@ public sealed class SaleCampaignWriteHandlers(
             CampaignWindow.ToColombo(campaign.StartsAtUtc),
             CampaignWindow.ToColombo(campaign.EndsAtUtc),
             campaign.IsActive,
-            campaign.BannerAssetId,
+
+            // Null on a delete's response: the row is gone from the screen, and resolving the asset's URL
+            // is the reader's job.
+            null,
+            false,
 
             // Empty, and deliberately not the entity's own targets: resolving them to the names the DTO
             // carries needs the catalogue, which is the reader's job, and a removed campaign's targets are
@@ -751,7 +829,9 @@ public sealed class SaleCampaignWriteHandlers(
         DateTime StartsAtUtc,
         DateTime EndsAtUtc,
         bool IsActive,
+        Guid? BannerPublicId,
         int? BannerAssetId,
+        string? BannerAltText,
         IReadOnlyList<ValidTarget> Targets);
 
     private sealed record ValidTarget(
