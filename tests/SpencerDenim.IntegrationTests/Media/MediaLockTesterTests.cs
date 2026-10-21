@@ -370,6 +370,137 @@ public sealed class MediaLockTesterTests(SqlServerDatabaseFixture sqlServer)
         }
     }
 
+    // ================================================================== a save retried after a failed commit
+
+    /// <summary>
+    /// The execution strategy re-runs a save whose commit attempt failed with a transient error. The retried
+    /// attempt still has the first attempt's tracked usage rows (<c>Added</c>, never written): it must write each
+    /// once, not trip <c>UX_MediaUsages_Asset_Owner_Role</c> or lose them. Category, department and product.
+    /// </summary>
+    [Fact]
+    public async Task Saves_retried_after_a_failed_commit_attempt_write_their_pictures_and_usage_rows_once()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
+
+        var failing = new FailNextCommit();
+        await using var host = MediaTestHost.Create(
+            sqlServer.ConnectionString,
+            configureServices: services => services.AddSingleton<IInterceptor>(failing));
+        using var client = await host.SignInAsync(Everything);
+
+        var assets = new List<int>();
+        var categories = new List<int>();
+        var products = new List<int>();
+        var kids = await ScalarAsync(host, $"SELECT Id FROM catalog.Departments WHERE Slug = 'kids'");
+        var originalHero = await ScalarAsync(host, $"SELECT HeroImageAssetId FROM catalog.Departments WHERE Id = {kids}");
+        string? originalDescription;
+        List<(int AssetId, string Role)> originalUsages;
+        await using (var scope = host.Factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var owner = kids.ToString(CultureInfo.InvariantCulture);
+            originalDescription = await db.Departments.Where(row => row.Id == kids).Select(row => row.Description).SingleAsync(Token);
+            originalUsages = (await db.MediaUsages.AsNoTracking()
+                    .Where(usage => usage.OwnerType == MediaUsageOwnerTypes.Department && usage.OwnerId == owner)
+                    .Select(usage => new { usage.MediaAssetId, usage.UsageRole })
+                    .ToListAsync(Token))
+                .Select(usage => (usage.MediaAssetId, usage.UsageRole))
+                .ToList();
+        }
+
+        try
+        {
+            var image = await AddImageAsync(host, assets);
+            var banner = await AddImageAsync(host, assets);
+            var hero = await AddImageAsync(host, assets);
+            var gallery = await AddImageAsync(host, assets);
+
+            // ---- category
+            var women = await ScalarAsync(host, $"SELECT Id FROM catalog.Departments WHERE Slug = 'women'");
+            var categoryId = await CreatedIdAsync(await SendAsync(client, HttpMethod.Post, CategoriesUrl, new Dictionary<string, object?>
+            {
+                ["departmentId"] = women,
+                ["parentCategoryId"] = null,
+                ["name"] = "T223T retry",
+                ["slug"] = "t223t-retry",
+                ["showInMegaMenu"] = false,
+            }));
+            categories.Add(categoryId);
+
+            var categoryBody = await CategoryBodyAsync(host, categoryId, image.Id, banner.Id);
+            failing.Arm();
+            using (var saved = await SendAsync(client, HttpMethod.Put, $"{CategoriesUrl}/{categoryId}", categoryBody))
+            {
+                Assert.True(saved.StatusCode == HttpStatusCode.NoContent, $"category {(int)saved.StatusCode}: {await saved.Content.ReadAsStringAsync(Token)}");
+            }
+
+            Assert.Equal(1, failing.Fired);
+            Assert.Equal(2, await ScalarAsync(host, $"SELECT COUNT(*) FROM media.MediaUsages WHERE OwnerType = 'Category' AND OwnerId = CAST({categoryId} AS varchar(100))"));
+            Assert.Equal(image.Id, await ScalarAsync(host, $"SELECT ImageAssetId FROM catalog.Categories WHERE Id = {categoryId}"));
+
+            // ---- department
+            failing.Arm();
+            using (var saved = await SendAsync(client, HttpMethod.Put, $"/api/admin/catalog/departments/{kids}", new Dictionary<string, object?>
+            {
+                ["description"] = "T223T retry",
+                ["heroImageAssetId"] = hero.Id,
+                ["seoTitle"] = null,
+                ["seoDescription"] = null,
+                ["rowVersion"] = await VersionAsync(host, $"SELECT RowVersion FROM catalog.Departments WHERE Id = {kids}"),
+            }))
+            {
+                Assert.True(saved.StatusCode == HttpStatusCode.NoContent, $"department {(int)saved.StatusCode}: {await saved.Content.ReadAsStringAsync(Token)}");
+            }
+
+            Assert.Equal(2, failing.Fired);
+            Assert.Equal(1, await ScalarAsync(host, $"SELECT COUNT(*) FROM media.MediaUsages WHERE OwnerType = 'Department' AND OwnerId = CAST({kids} AS varchar(100))"));
+            Assert.Equal(hero.Id, await ScalarAsync(host, $"SELECT HeroImageAssetId FROM catalog.Departments WHERE Id = {kids}"));
+
+            // ---- product
+            var productId = await CreatedIdAsync(await SendAsync(client, HttpMethod.Post, ProductsUrl, await ProductBodyAsync(host, "T223T-RETRY", [], null, null)));
+            products.Add(productId);
+
+            var productBody = await ProductBodyAsync(host, "T223T-RETRY", [gallery], null, await VersionAsync(host, $"SELECT RowVersion FROM catalog.Products WHERE Id = {productId}"));
+            failing.Arm();
+            using (var saved = await SendAsync(client, HttpMethod.Put, $"{ProductsUrl}/{productId}", productBody))
+            {
+                Assert.True(saved.StatusCode == HttpStatusCode.NoContent, $"product {(int)saved.StatusCode}: {await saved.Content.ReadAsStringAsync(Token)}");
+            }
+
+            Assert.Equal(3, failing.Fired);
+            Assert.Equal(1, await ScalarAsync(host, $"SELECT COUNT(*) FROM catalog.ProductMedia WHERE ProductId = {productId}"));
+            Assert.Equal(2, await ScalarAsync(host, $"SELECT COUNT(*) FROM media.MediaUsages WHERE OwnerType = 'Product' AND OwnerId = CAST({productId} AS varchar(100))"));
+        }
+        finally
+        {
+            failing.Disarm();
+            await using (var scope = host.Factory.Services.CreateAsyncScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                await db.Database.ExecuteSqlRawAsync(
+                    "DELETE FROM media.MediaUsages WHERE OwnerType = 'Department' AND OwnerId = CAST({0} AS varchar(100));",
+                    [kids],
+                    CancellationToken.None);
+                await db.Departments.Where(row => row.Id == kids)
+                    .ExecuteUpdateAsync(
+                        set => set
+                            .SetProperty(row => row.HeroImageAssetId, originalHero == 0 ? null : originalHero)
+                            .SetProperty(row => row.Description, originalDescription),
+                        CancellationToken.None);
+                foreach (var (assetId, role) in originalUsages)
+                {
+                    await db.Database.ExecuteSqlRawAsync(
+                        "INSERT INTO media.MediaUsages (MediaAssetId, OwnerType, OwnerId, UsageRole) VALUES ({0}, 'Department', CAST({1} AS varchar(100)), {2});",
+                        [assetId, kids, role],
+                        CancellationToken.None);
+                }
+            }
+
+            await CleanUpAsync(host, products, categories, assets);
+        }
+    }
+
     // ================================================================== helpers
 
     private sealed record Picture(int Id, Guid PublicId);
@@ -728,6 +859,40 @@ public sealed class MediaLockTesterTests(SqlServerDatabaseFixture sqlServer)
                 command.Parameters.Add(new SqlParameter("@by", System.Data.SqlDbType.Int) { Value = (object?)DeletedByUserId ?? DBNull.Value });
                 command.Parameters.AddWithValue("@id", AssetId);
                 command.ExecuteNonQuery();
+            }
+        }
+    }
+
+    /// <summary>Fails the next commit attempt before it commits (transient), once per <see cref="Arm"/>.</summary>
+    private sealed class FailNextCommit : DbTransactionInterceptor
+    {
+        private int _armed;
+        private int _fired;
+
+        public int Fired => Volatile.Read(ref _fired);
+
+        public void Arm() => Volatile.Write(ref _armed, 1);
+
+        public void Disarm() => Volatile.Write(ref _armed, 0);
+
+        public override InterceptionResult TransactionCommitting(DbTransaction transaction, TransactionEventData eventData, InterceptionResult result)
+        {
+            Fail();
+            return base.TransactionCommitting(transaction, eventData, result);
+        }
+
+        public override ValueTask<InterceptionResult> TransactionCommittingAsync(DbTransaction transaction, TransactionEventData eventData, InterceptionResult result, CancellationToken cancellationToken = default)
+        {
+            Fail();
+            return base.TransactionCommittingAsync(transaction, eventData, result, cancellationToken);
+        }
+
+        private void Fail()
+        {
+            if (Interlocked.CompareExchange(ref _armed, 0, 1) == 1)
+            {
+                Interlocked.Increment(ref _fired);
+                throw new TimeoutException("Injected: the commit attempt failed before committing (#223 tester).");
             }
         }
     }
