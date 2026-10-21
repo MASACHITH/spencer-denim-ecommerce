@@ -198,6 +198,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     public DbSet<District> Districts => Set<District>();
 
+    /// <summary><c>ref.Countries</c> (owner decision 2026-10-21): every country, and how overseas parcels are charged.</summary>
+    public DbSet<Country> Countries => Set<Country>();
+
+    /// <summary><c>sales.DeliveryRegions</c> (owner decision 2026-10-21): the overseas delivery bands.</summary>
+    public DbSet<DeliveryRegion> DeliveryRegions => Set<DeliveryRegion>();
+
     public DbSet<Cart> Carts => Set<Cart>();
 
     public DbSet<CartItem> CartItems => Set<CartItem>();

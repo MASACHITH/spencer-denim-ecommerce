@@ -449,6 +449,19 @@ public sealed class PlaceOrderCommandHandlerTests
             Task.FromResult<IReadOnlyList<CheckoutPaymentMethod>>(
                 [new CheckoutPaymentMethod(PaymentProviderCodes.BankTransfer, "Bank transfer", null)]);
 
+        // Owner decision 2026-10-21: every request in these tests is a Sri Lankan one.
+        public Task<IReadOnlyList<CheckoutCountry>> CountriesAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<CheckoutCountry>>([SriLanka]);
+
+        public Task<CheckoutCountry?> FindCountryAsync(string countryCode, CancellationToken cancellationToken) =>
+            Task.FromResult<CheckoutCountry?>(countryCode == "LK" ? SriLanka : null);
+
+        public Task<CheckoutDeliveryMethod?> InternationalMethodAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<CheckoutDeliveryMethod?>(null);
+
+        private static CheckoutCountry SriLanka { get; } =
+            new("LK", "Sri Lanka", true, false, false, new OverseasQuote(OverseasRefusal.None, 0m, 0, 0));
+
         /// <summary>
         /// No code matches. These tests are about the idempotency race and none of them sends a promo
         /// code, so the resolver short-circuits on a null code and never reaches this — answering "no

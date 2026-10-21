@@ -86,25 +86,32 @@ public sealed class Order : IAuditable
     public string? LastName { get; set; }
 
     /// <summary>
-    /// The delivery address's district, or the pickup location's (R7).
-    /// <para>
-    /// Doc 08 §3.5 calls it an "entity-level FK Districts". <b>The column is here and the constraint is
-    /// not</b>: no migration has created <c>ref.Districts</c> (GLB-06), so there is nothing to point at.
-    /// Dropping the column was not an option — doc 08 makes it <c>NOT NULL</c>, and
-    /// <see cref="DeliveryZone"/> below is derived from it.
-    /// </para>
+    /// FK <c>ref.Countries</c>: the country the order is going to, ISO 3166-1 alpha-2 (owner decision
+    /// 2026-10-21). <c>NOT NULL</c>; every order placed before overseas delivery existed was backfilled as
+    /// <see cref="Reference.Country.SriLankaCode"/>. <c>CK_Orders_Destination</c> ties the district columns to
+    /// it: a Sri Lankan order has a district and a zone, an overseas order has neither and travels by
+    /// <see cref="DeliveryMethod.InternationalCode"/>.
     /// </summary>
-    public int DeliveryDistrictId { get; set; }
+    public string DeliveryCountryCode { get; set; } = Reference.Country.SriLankaCode;
+
+    /// <summary>Snapshot of the country's English name, so a renamed country does not rewrite old orders.</summary>
+    public string DeliveryCountryName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The delivery address's district, or the pickup location's (R7). Null for an overseas order, and for
+    /// nothing else (<c>CK_Orders_Destination</c>).
+    /// </summary>
+    public int? DeliveryDistrictId { get; set; }
 
     /// <summary>Snapshot of the district's name, so a renamed district does not rewrite old orders.</summary>
-    public string DeliveryDistrictName { get; set; } = string.Empty;
+    public string? DeliveryDistrictName { get; set; }
 
     /// <summary>
     /// Snapshot of the district's zone at placement (N4). Snapshotted rather than joined because the zone
     /// is <b>admin-editable</b> (doc 08 §3.1): reassigning a district must not change what a past order
-    /// was charged for delivery.
+    /// was charged for delivery. Null for an overseas order, which is charged by country, not by zone.
     /// </summary>
-    public DeliveryZone DeliveryZone { get; set; }
+    public DeliveryZone? DeliveryZone { get; set; }
 
     /// <summary>
     /// Required complex property (doc 08 §3.5): the <c>Ship_*</c> columns on this row. Every inner column

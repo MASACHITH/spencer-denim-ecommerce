@@ -88,7 +88,16 @@ public sealed record PaymentMethodRow(string Code, string Name, int PaidOrders, 
 public sealed record BuyersByDistrict(int DistinctBuyers, IReadOnlyList<DistrictBuyersRow> Districts);
 
 /// <summary>One delivery district: distinct buyers, their paid orders and the gross revenue from them.</summary>
-public sealed record DistrictBuyersRow(int DistrictId, string Name, int Buyers, int PaidOrders, decimal Revenue);
+/// <param name="DistrictId">The Sri Lankan district, or null for an overseas country's row.</param>
+/// <param name="Name">The district's name, or the overseas country's name (owner decision 2026-10-21).</param>
+/// <param name="CountryCode">ISO 3166-1 alpha-2: <c>LK</c> for a district, the country for an overseas row.</param>
+public sealed record DistrictBuyersRow(
+    int? DistrictId,
+    string Name,
+    int Buyers,
+    int PaidOrders,
+    decimal Revenue,
+    string CountryCode = Domain.Reference.Country.SriLankaCode);
 
 /// <summary>The Revenue &amp; Orders trend (ADM-04): twelve months, by ISO week or by month.</summary>
 /// <param name="Interval"><c>Week</c> or <c>Month</c>.</param>

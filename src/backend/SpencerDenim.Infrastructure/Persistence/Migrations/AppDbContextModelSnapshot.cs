@@ -1939,6 +1939,10 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         .HasMaxLength(80)
                         .HasColumnType("nvarchar(80)");
 
+                    b.Property<string>("CountryCode")
+                        .IsRequired()
+                        .HasColumnType("char(2)");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2(3)")
@@ -1947,7 +1951,7 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.Property<int?>("CreatedByUserId")
                         .HasColumnType("int");
 
-                    b.Property<int>("DistrictId")
+                    b.Property<int?>("DistrictId")
                         .HasColumnType("int");
 
                     b.Property<bool>("IsDefault")
@@ -1984,6 +1988,10 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         .HasMaxLength(120)
                         .HasColumnType("nvarchar(120)");
 
+                    b.Property<string>("Region")
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
                     b.Property<DateTime?>("UpdatedAtUtc")
                         .HasColumnType("datetime2(3)");
 
@@ -1994,6 +2002,9 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         .HasColumnType("int");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CountryCode")
+                        .HasDatabaseName("IX_CustomerAddresses_CountryCode");
 
                     b.HasIndex("DistrictId")
                         .HasDatabaseName("IX_CustomerAddresses_District");
@@ -2006,7 +2017,10 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.HasIndex("UserId", "Id")
                         .HasDatabaseName("IX_CustomerAddresses_User");
 
-                    b.ToTable("CustomerAddresses", "identity");
+                    b.ToTable("CustomerAddresses", "identity", t =>
+                        {
+                            t.HasCheckConstraint("CK_CustomerAddresses_Destination", "([CountryCode] = 'LK' AND [DistrictId] IS NOT NULL) OR ([CountryCode] <> 'LK' AND [DistrictId] IS NULL)");
+                        });
                 });
 
             modelBuilder.Entity("SpencerDenim.Domain.Inventory.InventoryMovement", b =>
@@ -2775,6 +2789,92 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Reference.Country", b =>
+                {
+                    b.Property<string>("Code")
+                        .HasColumnType("char(2)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<decimal?>("DeliveryFeeOverride")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<byte?>("EstimatedDaysMaxOverride")
+                        .HasColumnType("tinyint");
+
+                    b.Property<byte?>("EstimatedDaysMinOverride")
+                        .HasColumnType("tinyint");
+
+                    b.Property<bool>("IsShippingEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<bool>("PostalCodeRequired")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("RegionCode")
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<bool>("RegionRequired")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<short>("SortOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("smallint")
+                        .HasDefaultValue((short)0);
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UpdatedByUserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Code")
+                        .HasName("PK_Countries");
+
+                    b.HasIndex("Name")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Countries_Name");
+
+                    b.HasIndex("RegionCode")
+                        .HasDatabaseName("IX_Countries_RegionCode");
+
+                    b.ToTable("Countries", "ref", t =>
+                        {
+                            t.HasCheckConstraint("CK_Countries_Code", "[Code] COLLATE Latin1_General_100_BIN2 LIKE '[A-Z][A-Z]'");
+
+                            t.HasCheckConstraint("CK_Countries_DaysOverride", "([EstimatedDaysMinOverride] IS NULL AND [EstimatedDaysMaxOverride] IS NULL) OR ([EstimatedDaysMinOverride] IS NOT NULL AND [EstimatedDaysMaxOverride] IS NOT NULL AND [EstimatedDaysMinOverride] <= [EstimatedDaysMaxOverride])");
+
+                            t.HasCheckConstraint("CK_Countries_DeliveryFeeOverride", "[DeliveryFeeOverride] IS NULL OR [DeliveryFeeOverride] >= 0");
+
+                            t.HasCheckConstraint("CK_Countries_Region", "([Code] = 'LK' AND [RegionCode] IS NULL) OR ([Code] <> 'LK' AND [RegionCode] IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_Countries_SriLankaEnabled", "[Code] <> 'LK' OR [IsShippingEnabled] = 1");
+                        });
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Reference.District", b =>
                 {
                     b.Property<int>("Id")
@@ -3115,6 +3215,70 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Sales.DeliveryRegion", b =>
+                {
+                    b.Property<string>("Code")
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<byte>("EstimatedDaysMax")
+                        .HasColumnType("tinyint");
+
+                    b.Property<byte>("EstimatedDaysMin")
+                        .HasColumnType("tinyint");
+
+                    b.Property<decimal?>("Fee")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<bool>("IsEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("nvarchar(60)");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<short>("SortOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("smallint")
+                        .HasDefaultValue((short)0);
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UpdatedByUserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Code")
+                        .HasName("PK_DeliveryRegions");
+
+                    b.HasIndex("Name")
+                        .IsUnique()
+                        .HasDatabaseName("UX_DeliveryRegions_Name");
+
+                    b.ToTable("DeliveryRegions", "sales", t =>
+                        {
+                            t.HasCheckConstraint("CK_DeliveryRegions_EstimatedDays", "[EstimatedDaysMin] <= [EstimatedDaysMax]");
+
+                            t.HasCheckConstraint("CK_DeliveryRegions_Fee", "[Fee] IS NULL OR [Fee] >= 0");
+                        });
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Sales.NumberSeries", b =>
                 {
                     b.Property<string>("SeriesKey")
@@ -3199,15 +3363,23 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.Property<DateTime?>("DeliveredAtUtc")
                         .HasColumnType("datetime2(3)");
 
+                    b.Property<string>("DeliveryCountryCode")
+                        .IsRequired()
+                        .HasColumnType("char(2)");
+
+                    b.Property<string>("DeliveryCountryName")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
                     b.Property<decimal>("DeliveryDiscountAmount")
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
-                    b.Property<int>("DeliveryDistrictId")
+                    b.Property<int?>("DeliveryDistrictId")
                         .HasColumnType("int");
 
                     b.Property<string>("DeliveryDistrictName")
-                        .IsRequired()
                         .HasMaxLength(60)
                         .HasColumnType("nvarchar(60)");
 
@@ -3218,7 +3390,7 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.Property<int>("DeliveryMethodId")
                         .HasColumnType("int");
 
-                    b.Property<byte>("DeliveryZone")
+                    b.Property<byte?>("DeliveryZone")
                         .HasColumnType("tinyint");
 
                     b.Property<string>("Email")
@@ -3416,6 +3588,11 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                                 .HasMaxLength(120)
                                 .HasColumnType("nvarchar(120)")
                                 .HasColumnName("Ship_RecipientName");
+
+                            b1.Property<string>("Region")
+                                .HasMaxLength(80)
+                                .HasColumnType("nvarchar(80)")
+                                .HasColumnName("Ship_Region");
                         });
 
                     b.HasKey("Id");
@@ -3426,6 +3603,9 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("CourierId")
                         .HasDatabaseName("IX_Orders_CourierId");
+
+                    b.HasIndex("DeliveryCountryCode")
+                        .HasDatabaseName("IX_Orders_DeliveryCountryCode");
 
                     b.HasIndex("DeliveryDistrictId")
                         .HasDatabaseName("IX_Orders_DeliveryDistrictId");
@@ -3453,7 +3633,7 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_Orders_Paid")
                         .HasFilter("[PaidAtUtc] IS NOT NULL");
 
-                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("PaidAtUtc"), new[] { "GrandTotal", "DeliveryDistrictId", "PaymentProviderCode", "CustomerUserId", "EmailNormalized", "Status" });
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("PaidAtUtc"), new[] { "GrandTotal", "DeliveryDistrictId", "DeliveryCountryCode", "PaymentProviderCode", "CustomerUserId", "EmailNormalized", "Status" });
 
                     b.HasIndex("PaymentDueAtUtc")
                         .HasDatabaseName("IX_Orders_Pending_Due")
@@ -3509,17 +3689,19 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_Orders_DeliveryZone", "[DeliveryZone] BETWEEN 1 AND 3");
 
+                            t.HasCheckConstraint("CK_Orders_Destination", "([DeliveryCountryCode] = 'LK'\r\n    AND [DeliveryDistrictId] IS NOT NULL AND [DeliveryDistrictName] IS NOT NULL\r\n    AND [DeliveryZone] IS NOT NULL\r\n    AND [DeliveryMethodCode] <> 'INTERNATIONAL')\r\nOR ([DeliveryCountryCode] <> 'LK'\r\n    AND [DeliveryDistrictId] IS NULL AND [DeliveryDistrictName] IS NULL\r\n    AND [DeliveryZone] IS NULL\r\n    AND [DeliveryMethodCode] = 'INTERNATIONAL')");
+
                             t.HasCheckConstraint("CK_Orders_InvoiceSellerSnapshotJson", "[InvoiceSellerSnapshotJson] IS NULL OR ISJSON([InvoiceSellerSnapshotJson]) = 1");
 
                             t.HasCheckConstraint("CK_Orders_Pickup", "[DeliveryMethodCode] <> 'PICKUP' OR [PickupLocationId] IS NOT NULL");
 
-                            t.HasCheckConstraint("CK_Orders_ShipAddress", "[DeliveryMethodCode] = 'PICKUP'\nOR ([Ship_RecipientName] IS NOT NULL AND [Ship_Phone] IS NOT NULL\n    AND [Ship_Line1] IS NOT NULL AND [Ship_City] IS NOT NULL)");
+                            t.HasCheckConstraint("CK_Orders_ShipAddress", "[DeliveryMethodCode] = 'PICKUP'\r\nOR ([Ship_RecipientName] IS NOT NULL AND [Ship_Phone] IS NOT NULL\r\n    AND [Ship_Line1] IS NOT NULL AND [Ship_City] IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_Orders_Status", "[Status] BETWEEN 0 AND 7");
 
                             t.HasCheckConstraint("CK_Orders_StockState", "[StockState] BETWEEN 0 AND 3");
 
-                            t.HasCheckConstraint("CK_Orders_Totals", "[ItemsOriginalTotal] - [ItemsListTotal] = [MarkdownDiscountTotal]\nAND [ItemsListTotal] - [ItemsSubtotal] = [CampaignDiscountTotal]\nAND [GrandTotal] = [ItemsSubtotal] - [PromoDiscountAmount] + [DeliveryFeeAmount] - [DeliveryDiscountAmount]\nAND [GrandTotal] >= 0\nAND [RefundedAmount] <= [GrandTotal]");
+                            t.HasCheckConstraint("CK_Orders_Totals", "[ItemsOriginalTotal] - [ItemsListTotal] = [MarkdownDiscountTotal]\r\nAND [ItemsListTotal] - [ItemsSubtotal] = [CampaignDiscountTotal]\r\nAND [GrandTotal] = [ItemsSubtotal] - [PromoDiscountAmount] + [DeliveryFeeAmount] - [DeliveryDiscountAmount]\r\nAND [GrandTotal] >= 0\r\nAND [RefundedAmount] <= [GrandTotal]");
                         });
                 });
 
@@ -4829,17 +5011,25 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("SpencerDenim.Domain.Identity.CustomerAddress", b =>
                 {
+                    b.HasOne("SpencerDenim.Domain.Reference.Country", "Country")
+                        .WithMany()
+                        .HasForeignKey("CountryCode")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired()
+                        .HasConstraintName("FK_CustomerAddresses_Countries_CountryCode");
+
                     b.HasOne("SpencerDenim.Domain.Reference.District", "District")
                         .WithMany()
                         .HasForeignKey("DistrictId")
-                        .OnDelete(DeleteBehavior.NoAction)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.NoAction);
 
                     b.HasOne("SpencerDenim.Infrastructure.Identity.AppUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
+
+                    b.Navigation("Country");
 
                     b.Navigation("District");
                 });
@@ -4953,6 +5143,17 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         .HasConstraintName("FK_AdminAlerts_AcknowledgedBy_Users");
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Reference.Country", b =>
+                {
+                    b.HasOne("SpencerDenim.Domain.Sales.DeliveryRegion", "Region")
+                        .WithMany()
+                        .HasForeignKey("RegionCode")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .HasConstraintName("FK_Countries_DeliveryRegions_RegionCode");
+
+                    b.Navigation("Region");
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Reference.District", b =>
                 {
                     b.HasOne("SpencerDenim.Domain.Reference.Province", "Province")
@@ -5021,11 +5222,17 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         .HasForeignKey("CustomerUserId")
                         .OnDelete(DeleteBehavior.NoAction);
 
+                    b.HasOne("SpencerDenim.Domain.Reference.Country", null)
+                        .WithMany()
+                        .HasForeignKey("DeliveryCountryCode")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired()
+                        .HasConstraintName("FK_Orders_Countries_DeliveryCountryCode");
+
                     b.HasOne("SpencerDenim.Domain.Reference.District", null)
                         .WithMany()
                         .HasForeignKey("DeliveryDistrictId")
-                        .OnDelete(DeleteBehavior.NoAction)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.NoAction);
 
                     b.HasOne("SpencerDenim.Domain.Sales.DeliveryMethod", "DeliveryMethod")
                         .WithMany()

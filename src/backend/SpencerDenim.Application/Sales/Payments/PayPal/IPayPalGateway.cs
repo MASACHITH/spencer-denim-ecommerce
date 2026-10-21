@@ -60,6 +60,11 @@ public interface IPayPalGateway
 /// <param name="Description">What the buyer sees beside the amount: the order number.</param>
 /// <param name="ReturnUrl">Where PayPal sends the buyer after approval — the shop's own return endpoint.</param>
 /// <param name="CancelUrl">Where PayPal sends a buyer who backs out.</param>
+/// <param name="Shipping">
+/// The address the parcel goes to, sent with <c>SET_PROVIDED_ADDRESS</c> so the buyer sees it and cannot change
+/// it at PayPal (owner decision 2026-10-21: Sri Lankan and overseas addresses alike). Null for a store pickup,
+/// which is sent with <c>NO_SHIPPING</c> as every order was before.
+/// </param>
 public sealed record PayPalCreateOrderRequest(
     string RequestId,
     decimal Amount,
@@ -67,7 +72,28 @@ public sealed record PayPalCreateOrderRequest(
     string CustomId,
     string Description,
     string ReturnUrl,
-    string CancelUrl);
+    string CancelUrl,
+    PayPalShipping? Shipping = null);
+
+/// <summary>
+/// The ship-to address in PayPal's shape: <c>purchase_units[0].shipping</c>. Built from the order's own snapshot,
+/// never from anything the browser sends at payment time.
+/// </summary>
+/// <param name="FullName"><c>shipping.name.full_name</c>: the recipient.</param>
+/// <param name="Line1"><c>address_line_1</c>.</param>
+/// <param name="Line2"><c>address_line_2</c>, or null.</param>
+/// <param name="City"><c>admin_area_2</c>.</param>
+/// <param name="Region"><c>admin_area_1</c> (state, province) for an overseas address, or null.</param>
+/// <param name="PostalCode"><c>postal_code</c>, or null.</param>
+/// <param name="CountryCode"><c>country_code</c>: ISO 3166-1 alpha-2, <c>LK</c> for Sri Lanka.</param>
+public sealed record PayPalShipping(
+    string FullName,
+    string Line1,
+    string? Line2,
+    string City,
+    string? Region,
+    string? PostalCode,
+    string CountryCode);
 
 /// <summary>The answer to <see cref="IPayPalGateway.CreateOrderAsync"/>.</summary>
 public abstract record PayPalCreateOrderResult

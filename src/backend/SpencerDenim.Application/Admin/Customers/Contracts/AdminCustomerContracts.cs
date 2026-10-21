@@ -55,6 +55,9 @@ public sealed record AdminDistrictOption(int Id, string Name);
 /// </param>
 /// <param name="Currency">Always LKR (<c>CK_Orders_Currency</c>); sent so the screen never assumes.</param>
 /// <param name="LastOrderAtUtc">When the newest order on the account was placed, or <see langword="null"/>.</param>
+/// <param name="CountryName">
+/// The country of the customer's default saved address, or null when they have none (owner decision 2026-10-21).
+/// </param>
 public sealed record AdminCustomerListRow(
     int CustomerId,
     string Name,
@@ -67,7 +70,8 @@ public sealed record AdminCustomerListRow(
     int OrderCount,
     decimal LifetimeSpend,
     string Currency,
-    DateTime? LastOrderAtUtc);
+    DateTime? LastOrderAtUtc,
+    string? CountryName = null);
 
 /// <summary>
 /// One customer in full (ADM-15, doc 11 P11 step 16: "detail with addresses and order history").
@@ -109,10 +113,13 @@ public sealed record AdminCustomerAddressDto(
     string Line1,
     string? Line2,
     string City,
-    string DistrictName,
+    string? DistrictName,
     string? PostalCode,
     string? Landmark,
-    bool IsDefault);
+    bool IsDefault,
+    string CountryCode = Domain.Reference.Country.SriLankaCode,
+    string CountryName = "Sri Lanka",
+    string? Region = null);
 
 /// <summary>
 /// One page of a customer's order history, newest first.

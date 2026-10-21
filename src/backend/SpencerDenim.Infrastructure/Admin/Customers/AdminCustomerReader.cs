@@ -69,7 +69,8 @@ internal sealed class AdminCustomerReader(AppDbContext dbContext) : IAdminCustom
                     row.OrderCount,
                     row.LifetimeSpend ?? 0m,
                     SalesCurrency.Lkr,
-                    row.LastOrderAtUtc))
+                    row.LastOrderAtUtc,
+                    row.CountryName))
                 .ToList(),
             page,
             pageSize,
@@ -95,6 +96,13 @@ internal sealed class AdminCustomerReader(AppDbContext dbContext) : IAdminCustom
                 DistrictName = dbContext.Districts
                     .Where(district => district.Id == user.DefaultDistrictId)
                     .Select(district => district.Name)
+                    .FirstOrDefault(),
+
+                // Owner decision 2026-10-21: the country of the customer's default saved address, on the
+                // filtered unique index UX_CustomerAddresses_UserId_Default — one row at most.
+                CountryName = dbContext.CustomerAddresses
+                    .Where(address => address.UserId == user.Id && address.IsDefault)
+                    .Select(address => address.Country!.Name)
                     .FirstOrDefault(),
                 OrderCount = dbContext.Orders.Count(order => order.CustomerUserId == user.Id),
                 LifetimeSpend = dbContext.Orders
@@ -126,13 +134,14 @@ internal sealed class AdminCustomerReader(AppDbContext dbContext) : IAdminCustom
                 address.Line1,
                 address.Line2,
                 address.City,
-                dbContext.Districts
-                    .Where(district => district.Id == address.DistrictId)
-                    .Select(district => district.Name)
-                    .First(),
+                // Null for an overseas address, which has no district (owner decision 2026-10-21).
+                address.District != null ? address.District.Name : null,
                 address.PostalCode,
                 address.Landmark,
-                address.IsDefault))
+                address.IsDefault,
+                address.CountryCode,
+                address.Country!.Name,
+                address.Region))
             .ToListAsync(cancellationToken);
 
         return new AdminCustomerDetailDto(
@@ -245,6 +254,13 @@ internal sealed class AdminCustomerReader(AppDbContext dbContext) : IAdminCustom
                     .Where(district => district.Id == user.DefaultDistrictId)
                     .Select(district => district.Name)
                     .FirstOrDefault(),
+
+                // Owner decision 2026-10-21: the country of the customer's default saved address, on the
+                // filtered unique index UX_CustomerAddresses_UserId_Default — one row at most.
+                CountryName = dbContext.CustomerAddresses
+                    .Where(address => address.UserId == user.Id && address.IsDefault)
+                    .Select(address => address.Country!.Name)
+                    .FirstOrDefault(),
                 OrderCount = dbContext.Orders.Count(order => order.CustomerUserId == user.Id),
                 LifetimeSpend = dbContext.Orders
                     .Where(order => order.CustomerUserId == user.Id && order.PaidAtUtc != null)
@@ -339,6 +355,8 @@ internal sealed class AdminCustomerReader(AppDbContext dbContext) : IAdminCustom
         public DateTime? LastLoginAtUtc { get; init; }
 
         public string? DistrictName { get; init; }
+
+        public string? CountryName { get; init; }
 
         public int OrderCount { get; init; }
 

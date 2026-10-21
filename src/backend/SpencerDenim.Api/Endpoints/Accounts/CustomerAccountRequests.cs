@@ -68,7 +68,9 @@ internal sealed record CustomerAddressRequest(
     int? DistrictId,
     string? PostalCode,
     string? Landmark,
-    bool? IsDefault);
+    bool? IsDefault,
+    string? CountryCode = null,
+    string? Region = null);
 
 /// <summary>One sentence, for the endpoints whose whole answer is one sentence.</summary>
 /// <remarks>

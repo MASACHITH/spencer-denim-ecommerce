@@ -98,7 +98,14 @@ public sealed class PlaceOrderCommandHandler(
             ? await reader.FindEnabledDeliveryMethodAsync(methodId, cancellationToken)
             : null;
 
-        var errors = PlaceOrderValidator.Validate(command, method?.RequiresAddress);
+        // 2a. The country (owner decision 2026-10-21). A request that names none is a Sri Lankan order, which is
+        // what every client sent before overseas delivery existed — so the domestic path is unchanged for them.
+        var countryCode = DestinationRules.NormaliseCountryCode(command.CountryCode);
+        var country = countryCode is null
+            ? null
+            : await reader.FindCountryAsync(countryCode, cancellationToken);
+
+        var errors = PlaceOrderValidator.Validate(command, method?.RequiresAddress, country);
 
         if (method is null && command.DeliveryMethodId is > 0)
         {
@@ -121,7 +128,33 @@ public sealed class PlaceOrderCommandHandler(
         // Non-null from here: the validator reports a missing method and we returned above.
         var deliveryMethod = method!;
 
+        // Non-null from here as well: the validator reports a malformed or unknown country.
+        var destinationCountry = country!;
+
+        if (DestinationRules.MethodMismatch(destinationCountry, deliveryMethod) is { } mismatch)
+        {
+            return PlaceOrderResult.Invalid([mismatch]);
+        }
+
+        if (!destinationCountry.IsServed)
+        {
+            // Switched off, its region switched off, International delivery switched off, or no fee: an
+            // overseas order is never priced with an invented figure.
+            return PlaceOrderResult.Invalid([DestinationRules.NotServed(destinationCountry)]);
+        }
+
         var choice = await ResolvePaymentProviderAsync(command.PaymentMethodCode!, cancellationToken);
+        if (choice.NoneEnabled)
+        {
+            // Owner decision 2026-10-21: with bank transfer switched off, PayPal is the only method, and until
+            // PayPal is configured there may be none at all. Refused as the shop's state, not the shopper's
+            // input, and nothing is written.
+            return await RefuseUnlessAlreadyPlacedAsync(
+                command,
+                PlaceOrderResult.Blocked([CheckoutBlocker.NoPaymentMethod]),
+                cancellationToken);
+        }
+
         if (choice.Error is { } paymentError)
         {
             return PlaceOrderResult.Invalid([paymentError]);
@@ -131,15 +164,21 @@ public sealed class PlaceOrderCommandHandler(
         var paymentProvider = choice.Provider!;
 
         // 3. Where the order is going, and therefore which zone prices it (doc 08 §3.5 R7).
-        var destination = await ResolveDestinationAsync(command, deliveryMethod, cancellationToken);
+        var destination = await ResolveDestinationAsync(
+            command,
+            deliveryMethod,
+            destinationCountry,
+            cancellationToken);
         if (destination.Error is { } destinationError)
         {
             return PlaceOrderResult.Invalid([destinationError]);
         }
 
-        var district = destination.District!.Value;
-
-        var rate = await reader.FindZoneRateAsync(deliveryMethod.Id, district.DeliveryZone, cancellationToken);
+        // Overseas: the country's own quote (OverseasDeliveryRate), already known to be available. Sri Lanka:
+        // the district's zone rate, exactly as before.
+        var rate = destination.District is { } district
+            ? await reader.FindZoneRateAsync(deliveryMethod.Id, district.DeliveryZone, cancellationToken)
+            : destinationCountry.OverseasRate;
         if (rate is not { IsAvailable: true } zoneRate)
         {
             // No row, or a row that says this method is not offered in this zone. Doc 08 §6 step 10 has no
@@ -202,12 +241,14 @@ public sealed class PlaceOrderCommandHandler(
             return PlaceOrderResult.PromoRejected(promoRefusal, promo.MinimumSpend);
         }
 
-        var pricing = CheckoutQuote.Price(lines, zoneRate, promo.Charge);
+        // A free-delivery code covers Sri Lankan delivery only (2026-10-21, safe choice recorded for the owner).
+        var charge = CheckoutQuote.ForDestination(promo.Charge, destinationCountry.IsDomestic);
+        var pricing = CheckoutQuote.Price(lines, zoneRate, charge);
 
         // 5. G-10. The figure the shopper was looking at, or nothing is placed.
         if (pricing.GrandTotal != command.ExpectedGrandTotal)
         {
-            return PlaceOrderResult.TotalChanged(CheckoutQuote.Totals(lines, zoneRate, promo.Charge)!);
+            return PlaceOrderResult.TotalChanged(CheckoutQuote.Totals(lines, zoneRate, charge)!);
         }
 
         // 5a. Issue #107. **The permit, and the reason it is exactly here.** Everything above this line is
@@ -423,6 +464,11 @@ public sealed class PlaceOrderCommandHandler(
         CancellationToken cancellationToken)
     {
         var enabled = await reader.EnabledPaymentMethodsAsync(cancellationToken);
+        if (enabled.Count == 0)
+        {
+            return new PaymentChoice(null, null, null, NoneEnabled: true);
+        }
+
         var trimmed = code.Trim();
 
         // Ordinal against the enabled list, as it always was: this compares a value from the request with
@@ -460,10 +506,14 @@ public sealed class PlaceOrderCommandHandler(
     /// transfer" and not a code — and it comes from the row the shop can edit rather than from a literal
     /// in this file, which is also what keeps this type's name clear of PAY-03's rule.
     /// </param>
+    /// <param name="NoneEnabled">
+    /// No provider at all is enabled and available, so no choice could be right (owner decision 2026-10-21).
+    /// </param>
     private readonly record struct PaymentChoice(
         IPaymentProvider? Provider,
         string? DisplayName,
-        ValidationError? Error);
+        ValidationError? Error,
+        bool NoneEnabled = false);
 
     /// <summary>
     /// Doc 08 §3.5 R7: a delivery order's district is the address's; a pickup order's is the pickup
@@ -472,8 +522,15 @@ public sealed class PlaceOrderCommandHandler(
     private async Task<Destination> ResolveDestinationAsync(
         PlaceOrderCommand command,
         CheckoutDeliveryMethod method,
+        CheckoutCountry country,
         CancellationToken cancellationToken)
     {
+        // Overseas (owner decision 2026-10-21): no district and no pickup. The country is the destination.
+        if (!country.IsDomestic)
+        {
+            return new Destination(null, null, null, country);
+        }
+
         if (!method.RequiresAddress)
         {
             var location = await reader.FindActivePickupLocationAsync(
@@ -486,11 +543,13 @@ public sealed class PlaceOrderCommandHandler(
                     null,
                     new ValidationError(
                         "pickupLocationId",
-                        "That store is no longer available for collection. Choose another."))
+                        "That store is no longer available for collection. Choose another."),
+                    country)
                 : new Destination(
                     new CheckoutDistrict(location.DistrictId, location.DistrictName, location.DeliveryZone),
                     location,
-                    null);
+                    null,
+                    country);
         }
 
         var district = await reader.FindActiveDistrictAsync(command.DistrictId!.Value, cancellationToken);
@@ -499,8 +558,9 @@ public sealed class PlaceOrderCommandHandler(
             ? new Destination(
                 null,
                 null,
-                new ValidationError("districtId", "Choose the district your order is going to."))
-            : new Destination(district, null, null);
+                new ValidationError("districtId", "Choose the district your order is going to."),
+                country)
+            : new Destination(district, null, null, country);
     }
 
     private static OrderPlacement BuildPlacement(
@@ -518,7 +578,8 @@ public sealed class PlaceOrderCommandHandler(
         PaymentInstructions? instructions,
         ResolvedPromo promo)
     {
-        var district = destination.District!.Value;
+        var district = destination.District;
+        var country = destination.Country;
         var isPickup = !method.RequiresAddress;
         var address = command.Address;
 
@@ -534,6 +595,10 @@ public sealed class PlaceOrderCommandHandler(
                 Line1 = PlaceOrderValidator.Trimmed(address.Line1),
                 Line2 = PlaceOrderValidator.Trimmed(address.Line2),
                 City = PlaceOrderValidator.Trimmed(address.City),
+
+                // An overseas address's state or region; a Sri Lankan address names its district instead, so
+                // anything sent here for one is not recorded.
+                Region = country.IsDomestic ? null : PlaceOrderValidator.Trimmed(address.Region),
                 PostalCode = PlaceOrderValidator.Trimmed(address.PostalCode),
                 Landmark = PlaceOrderValidator.Trimmed(address.Landmark),
             };
@@ -598,9 +663,9 @@ public sealed class PlaceOrderCommandHandler(
             PlaceOrderValidator.Trimmed(command.Phone),
             PlaceOrderValidator.Trimmed(command.FirstName)!,
             PlaceOrderValidator.Trimmed(command.LastName),
-            district.Id,
-            district.Name,
-            district.DeliveryZone,
+            district?.Id,
+            district?.Name,
+            district?.DeliveryZone,
             ship,
             method.Id,
             destination.PickupLocation?.Id,
@@ -624,12 +689,16 @@ public sealed class PlaceOrderCommandHandler(
 
             // ADM-13. Only the id and the stored code: the two limits are applied inside the transaction
             // against the row as it is then, not against the snapshot this resolution read (doc 08 §3.6).
-            promo.Terms is { } terms ? new PromoTake(terms.Id, terms.Code) : null);
+            promo.Terms is { } terms ? new PromoTake(terms.Id, terms.Code) : null,
+            country.Code,
+            country.Name);
     }
 
     /// <summary>Where the order is going, or why it cannot be worked out.</summary>
+    /// <param name="Country">The destination country (owner decision 2026-10-21). Never null.</param>
     private readonly record struct Destination(
         CheckoutDistrict? District,
         CheckoutPickupLocation? PickupLocation,
-        ValidationError? Error);
+        ValidationError? Error,
+        CheckoutCountry Country);
 }

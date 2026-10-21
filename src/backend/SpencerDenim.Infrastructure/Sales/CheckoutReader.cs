@@ -79,7 +79,10 @@ internal sealed class CheckoutReader(
         // showing one option fewer than the shopper saw last week.
         var rows = await dbContext.DeliveryMethods
             .AsNoTracking()
-            .Where(method => method.IsEnabled)
+
+            // International delivery is the overseas method and has no zone rates (owner decision
+            // 2026-10-21). Left in, it would be listed as unavailable on every Sri Lankan checkout.
+            .Where(method => method.IsEnabled && method.Code != DeliveryMethod.InternationalCode)
             .OrderBy(method => method.SortOrder)
             .ThenBy(method => method.Id)
             .Select(method => new
@@ -148,6 +151,109 @@ internal sealed class CheckoutReader(
 
         return ToRate(row);
     }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<CheckoutCountry>> CountriesAsync(CancellationToken cancellationToken)
+    {
+        var methodEnabled = await InternationalEnabledAsync(cancellationToken);
+
+        // Ordered on the entity, before the projection: EF cannot translate an OrderBy applied after a
+        // positional-record Select (the #126 promo-code 500).
+        var rows = await CountryRows(dbContext.Countries
+                .AsNoTracking()
+                .OrderBy(country => country.SortOrder)
+                .ThenBy(country => country.Name))
+            .ToListAsync(cancellationToken);
+
+        return rows.Select(row => ToCountry(row, methodEnabled)).ToList();
+    }
+
+    /// <inheritdoc />
+    public async Task<CheckoutCountry?> FindCountryAsync(string countryCode, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(countryCode);
+
+        // Case-insensitive by the database collation; the caller has already upper-cased it.
+        var row = await CountryRows(dbContext.Countries
+                .AsNoTracking()
+                .Where(candidate => candidate.Code == countryCode))
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return row is null ? null : ToCountry(row, await InternationalEnabledAsync(cancellationToken));
+    }
+
+    /// <inheritdoc />
+    public async Task<CheckoutDeliveryMethod?> InternationalMethodAsync(CancellationToken cancellationToken) =>
+        await dbContext.DeliveryMethods
+            .AsNoTracking()
+            .Where(method => method.Code == DeliveryMethod.InternationalCode && method.IsEnabled)
+            .Select(method => new CheckoutDeliveryMethod(
+                method.Id,
+                method.Code,
+                method.Name,
+                method.Description,
+                method.RequiresAddress,
+                null))
+            .FirstOrDefaultAsync(cancellationToken);
+
+    private Task<bool> InternationalEnabledAsync(CancellationToken cancellationToken) =>
+        dbContext.DeliveryMethods
+            .AsNoTracking()
+            .AnyAsync(
+                method => method.Code == DeliveryMethod.InternationalCode && method.IsEnabled,
+                cancellationToken);
+
+    private static IQueryable<CountryRow> CountryRows(IQueryable<Country> countries) =>
+        countries
+            .Select(country => new CountryRow(
+                country.Code,
+                country.Name,
+                country.SortOrder,
+                country.PostalCodeRequired,
+                country.RegionRequired,
+                country.IsShippingEnabled,
+                country.DeliveryFeeOverride,
+                country.EstimatedDaysMinOverride,
+                country.EstimatedDaysMaxOverride,
+                country.Region != null && country.Region.IsEnabled,
+                country.Region != null ? country.Region.Fee : null,
+                country.Region != null ? country.Region.EstimatedDaysMin : (byte)0,
+                country.Region != null ? country.Region.EstimatedDaysMax : (byte)0));
+
+    private static CheckoutCountry ToCountry(CountryRow row, bool internationalEnabled)
+    {
+        var domestic = string.Equals(row.Code, Country.SriLankaCode, StringComparison.OrdinalIgnoreCase);
+
+        var quote = domestic
+            ? new OverseasQuote(OverseasRefusal.None, 0m, 0, 0)
+            : OverseasDeliveryRate.Resolve(new OverseasRateInputs(
+                internationalEnabled,
+                row.IsShippingEnabled,
+                row.FeeOverride,
+                row.DaysMinOverride,
+                row.DaysMaxOverride,
+                row.RegionEnabled,
+                row.RegionFee,
+                row.RegionDaysMin,
+                row.RegionDaysMax));
+
+        return new CheckoutCountry(row.Code, row.Name, domestic, row.PostalCodeRequired, row.RegionRequired, quote);
+    }
+
+    private sealed record CountryRow(
+        string Code,
+        string Name,
+        short SortOrder,
+        bool PostalCodeRequired,
+        bool RegionRequired,
+        bool IsShippingEnabled,
+        decimal? FeeOverride,
+        byte? DaysMinOverride,
+        byte? DaysMaxOverride,
+        bool RegionEnabled,
+        decimal? RegionFee,
+        byte RegionDaysMin,
+        byte RegionDaysMax);
 
     public async Task<IReadOnlyList<CheckoutPickupLocation>> ActivePickupLocationsAsync(
         CancellationToken cancellationToken)
@@ -504,7 +610,12 @@ internal sealed class CheckoutReader(
                 dbContext.Couriers
                     .Where(courier => courier.Id == order.CourierId)
                     .Select(courier => courier.TrackingUrlTemplate)
-                    .FirstOrDefault()))
+                    .FirstOrDefault(),
+
+                // Owner decision 2026-10-21: where in the world it is going.
+                order.ShipAddress.Region,
+                order.DeliveryCountryCode,
+                order.DeliveryCountryName))
             .FirstOrDefaultAsync(cancellationToken);
 
         return row is null
@@ -591,7 +702,10 @@ internal sealed class CheckoutReader(
                 row.PostalCode,
                 row.Landmark,
                 row.EstimatedDaysMin,
-                row.EstimatedDaysMax),
+                row.EstimatedDaysMax,
+                row.ShipRegion,
+                row.DeliveryCountryCode,
+                row.DeliveryCountryName),
             row.ItemsOriginalTotal,
             row.ItemsSubtotal,
 
@@ -763,7 +877,7 @@ internal sealed class CheckoutReader(
         string? City,
         string? PostalCode,
         string? Landmark,
-        string DeliveryDistrictName,
+        string? DeliveryDistrictName,
         decimal ItemsOriginalTotal,
         decimal ItemsSubtotal,
         decimal MarkdownDiscountTotal,
@@ -790,7 +904,10 @@ internal sealed class CheckoutReader(
         string? CourierName,
         string? TrackingNumber,
         DateTime? ShippedAtUtc,
-        string? TrackingUrlTemplate);
+        string? TrackingUrlTemplate,
+        string? ShipRegion,
+        string DeliveryCountryCode,
+        string DeliveryCountryName);
 
     private sealed record OrderLineRow(
         short LineNumber,

@@ -47,7 +47,7 @@ public sealed class CartModelTests
     }
 
     /// <summary>
-    /// <b>The sales schema holds all fifteen tables of doc 08 §3.5, and no more.</b> W2-09 mapped the two
+    /// <b>The sales schema holds all sixteen tables of doc 08 §3.5, and no more.</b> W2-09 mapped the two
     /// cart tables, W3-03 (#53) the twelve for orders, payments and delivery, and W2-08 the last one,
     /// <c>WishlistItems</c>.
     /// <para>
@@ -74,6 +74,9 @@ public sealed class CartModelTests
                 "Couriers",
                 "DeliveryMethodZoneRates",
                 "DeliveryMethods",
+
+                // Owner decision 2026-10-21: the overseas delivery bands, recorded in doc 08 §3.5 with it.
+                "DeliveryRegions",
                 "NumberSeries",
                 "OrderLines",
                 "OrderStatusHistory",

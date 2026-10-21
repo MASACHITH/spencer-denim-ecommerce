@@ -375,9 +375,16 @@ public sealed class CheckoutApiClient(HttpClient client)
         int? districtId,
         int? deliveryMethodId,
         CancellationToken cancellationToken,
-        string? promoCode = null)
+        string? promoCode = null,
+        string? countryCode = null)
     {
         var query = new List<string>();
+
+        // Owner decision 2026-10-21. Omitted means Sri Lanka, which is what every suite before it sent.
+        if (countryCode is not null)
+        {
+            query.Add($"countryCode={Uri.EscapeDataString(countryCode)}");
+        }
 
         if (districtId is { } district)
         {

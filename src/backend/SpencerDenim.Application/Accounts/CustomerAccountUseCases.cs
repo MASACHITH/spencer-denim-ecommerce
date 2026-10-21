@@ -2,6 +2,8 @@ using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Accounts.Abstractions;
 using SpencerDenim.Application.Accounts.Contracts;
+using SpencerDenim.Application.Sales.Checkout;
+using SpencerDenim.Application.Sales.Checkout.Abstractions;
 
 namespace SpencerDenim.Application.Accounts;
 
@@ -99,10 +101,19 @@ public sealed record SaveCustomerAddressCommand(
     int DistrictId,
     string? PostalCode,
     string? Landmark,
-    bool IsDefault);
+    bool IsDefault,
+    string? CountryCode = null,
+    string? Region = null);
 
 /// <summary>Saves one address.</summary>
-public sealed class SaveCustomerAddressCommandHandler(ICustomerAddressStore store)
+/// <remarks>
+/// <b>The country decides the shape</b> (owner decision 2026-10-21): a Sri Lankan address keeps its district
+/// and is validated exactly as before; an overseas one has no district and follows
+/// <see cref="DestinationRules"/> — the same rules checkout applies, so a saved address checkout would refuse
+/// cannot be saved. Saving an address in a country the shop does not currently deliver to is allowed: the book
+/// is the shopper's, and checkout is where "not at the moment" is said.
+/// </remarks>
+public sealed class SaveCustomerAddressCommandHandler(ICustomerAddressStore store, IDeliveryCountryReader countries)
     : ICommandHandler<SaveCustomerAddressCommand, Result<CustomerAddressResult>>
 {
     public async Task<Result<CustomerAddressResult>> HandleAsync(
@@ -111,6 +122,10 @@ public sealed class SaveCustomerAddressCommandHandler(ICustomerAddressStore stor
     {
         ArgumentNullException.ThrowIfNull(command);
 
+        var countryCode = DestinationRules.NormaliseCountryCode(command.CountryCode);
+        var country = countryCode is null ? null : await countries.FindCountryAsync(countryCode, cancellationToken);
+        var domestic = country is null or { IsDomestic: true };
+
         var edit = new CustomerAddressEdit(
             command.Label,
             command.RecipientName ?? string.Empty,
@@ -118,12 +133,19 @@ public sealed class SaveCustomerAddressCommandHandler(ICustomerAddressStore stor
             command.Line1 ?? string.Empty,
             command.Line2,
             command.City ?? string.Empty,
-            command.DistrictId,
+
+            // An overseas address has no district, whatever the request sent.
+            domestic ? command.DistrictId : null,
             command.PostalCode,
             command.Landmark,
-            command.IsDefault);
+            command.IsDefault,
+            // The code as resolved, or as sent when it names no country, so the validator can refuse it.
+            country?.Code ?? (string.IsNullOrWhiteSpace(command.CountryCode)
+                ? Domain.Reference.Country.SriLankaCode
+                : command.CountryCode.Trim()),
+            domestic ? null : command.Region);
 
-        var errors = CustomerAccountValidator.ValidateAddress(edit);
+        var errors = CustomerAccountValidator.ValidateAddress(edit, country);
         if (errors.Count > 0)
         {
             return Result.Failure<CustomerAddressResult>(errors);

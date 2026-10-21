@@ -580,7 +580,7 @@ public sealed class OrderEmailComposer(EmailOptions options)
         if (delivery.IsPickup)
         {
             AddIfPresent(rows, "Collect from", delivery.PickupLocationName);
-            rows.Add(("District", delivery.DistrictName));
+            AddIfPresent(rows, "District", delivery.DistrictName);
         }
         else
         {
@@ -589,7 +589,16 @@ public sealed class OrderEmailComposer(EmailOptions options)
                 AddIfPresent(rows, rows.Count == 1 ? "Delivering to" : string.Empty, line);
             }
 
-            rows.Add(("District", delivery.DistrictName));
+            // Owner decision 2026-10-21: an overseas address names its country (its region and postcode are
+            // already among the address lines); a Sri Lankan one keeps its district.
+            if (delivery.IsOverseas)
+            {
+                rows.Add(("Country", delivery.CountryName));
+            }
+            else
+            {
+                AddIfPresent(rows, "District", delivery.DistrictName);
+            }
         }
 
         html.AppendLine(EmailBody.DetailBlock(rows.Select(row => EmailBody.DetailRow(row.Label, row.Value))));

@@ -148,8 +148,8 @@ internal static class HomeContentData
         new(
             IconKey: "delivery",
             SortOrder: 1,
-            Title: "Island-wide delivery",
-            Body: "We deliver across Sri Lanka. The charge for your district is shown at checkout."),
+            Title: "Delivery across Sri Lanka and worldwide",
+            Body: "We deliver across Sri Lanka and overseas. The charge for your district or country is shown at checkout."),
         new(
             IconKey: "returns",
             SortOrder: 2,
@@ -174,7 +174,9 @@ internal static class HomeContentData
         // does not exist yet, and a returns window is a GLB-10 policy page the client has not written —
         // so seeding either would put a promise on every page of the site that nothing in the system
         // can honour, and that nobody has agreed (#34). These three are true the day the shop opens.
-        new("Island-wide delivery across Sri Lanka", SortOrder: 1),
+        // Owner decision 2026-10-21: Sri Lanka plus worldwide. Applies to a new database only; an existing
+        // one keeps whatever its announcement says until an admin edits it (insert-missing, never overwrite).
+        new("Delivery across Sri Lanka and worldwide", SortOrder: 1),
         new("New season linen has arrived", SortOrder: 2),
         new("Questions? Message us on WhatsApp", SortOrder: 3),
     ];

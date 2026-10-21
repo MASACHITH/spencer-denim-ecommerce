@@ -86,7 +86,9 @@ public sealed record OrderEmailDelivery(
     bool IsPickup,
     string? PickupLocationName,
     IReadOnlyList<string> AddressLines,
-    string DistrictName);
+    string? DistrictName,
+    string CountryName = "Sri Lanka",
+    bool IsOverseas = false);
 
 /// <summary>Everything the <c>OrderPlaced</c> email prints (doc 11 §4.1's content summary).</summary>
 public sealed record PlacedOrderEmailFacts(

@@ -82,6 +82,12 @@ internal sealed class FakePayPalGateway : IPayPalGateway
 
     public List<PayPalCreateOrderRequest> Creates { get; } = [];
 
+    /// <summary>
+    /// When set and it answers an issue code for a create request, that request is refused with it, the way PayPal
+    /// refuses an address it will not accept (owner decision 2026-10-21's fallback).
+    /// </summary>
+    public Func<PayPalCreateOrderRequest, string?>? RejectCreate { get; set; }
+
     public List<(string OrderId, string RequestId)> Captures { get; } = [];
 
     public List<string> Gets { get; } = [];
@@ -185,6 +191,11 @@ internal sealed class FakePayPalGateway : IPayPalGateway
             if (Down)
             {
                 return Task.FromResult<PayPalCreateOrderResult>(new PayPalCreateOrderResult.Unavailable("down"));
+            }
+
+            if (RejectCreate?.Invoke(request) is { } issue)
+            {
+                return Task.FromResult<PayPalCreateOrderResult>(new PayPalCreateOrderResult.Rejected(issue));
             }
 
             // Idempotent on the request id, as PayPal is: the second call gets the first call's order.

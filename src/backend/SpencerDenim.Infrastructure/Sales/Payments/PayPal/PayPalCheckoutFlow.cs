@@ -110,16 +110,36 @@ internal sealed partial class PayPalCheckoutFlow(
             return new PayPalStartResult.Back(PayPalPageHints.Unavailable);
         }
 
-        var created2 = await gateway.CreateOrderAsync(
-            new PayPalCreateOrderRequest(
-                PayPalRequestIds.Create(payment.Id),
-                usd,
-                payment.ProviderCurrency ?? PayPalUsdAmount.Currency,
-                PayPalRequestIds.CustomId(payment.Id),
-                $"Order {order.OrderNumber}",
-                returnUrl,
-                cancelUrl),
-            cancellationToken);
+        var request = new PayPalCreateOrderRequest(
+            PayPalRequestIds.Create(payment.Id),
+            usd,
+            payment.ProviderCurrency ?? PayPalUsdAmount.Currency,
+            PayPalRequestIds.CustomId(payment.Id),
+            $"Order {order.OrderNumber}",
+            returnUrl,
+            cancelUrl,
+            order.Shipping);
+
+        var created2 = await gateway.CreateOrderAsync(request, cancellationToken);
+
+        // Owner decision 2026-10-21: the ship-to address is sent so the buyer sees where the parcel goes. PayPal
+        // validates addresses by its own per-country rules, and a refusal of the *address* must not leave a
+        // shopper unable to pay for an order that is already placed: once, and only for that refusal, ask again
+        // without it. The order still holds the address the shop ships to.
+        if (created2 is PayPalCreateOrderResult.Rejected { Reason: var reason }
+            && request.Shipping is not null
+            && PayPalAddressRefusal.IsAddressIssue(reason))
+        {
+            LogAddressRefused(logger, payment.Id, reason);
+
+            created2 = await gateway.CreateOrderAsync(
+                request with
+                {
+                    RequestId = PayPalRequestIds.CreateWithoutShipping(payment.Id),
+                    Shipping = null,
+                },
+                cancellationToken);
+        }
 
         switch (created2)
         {
@@ -317,4 +337,11 @@ internal sealed partial class PayPalCheckoutFlow(
         Message = "A buyer returned to order {OrderNumber} with a PayPal token that is not the order on the "
             + "payment. The stored PayPal order is the one used; the token was ignored.")]
     private static partial void LogReturnTokenDiffers(ILogger logger, string orderNumber);
+
+    [LoggerMessage(
+        EventId = 3544,
+        Level = LogLevel.Warning,
+        Message = "PayPal refused the shipping address for payment {PaymentId} ({Reason}); asking once more "
+            + "without it. The order keeps the address it ships to.")]
+    private static partial void LogAddressRefused(ILogger logger, int paymentId, string reason);
 }

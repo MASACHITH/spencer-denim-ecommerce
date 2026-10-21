@@ -187,6 +187,16 @@ internal static class SalesReferenceData
             IsEnabled: false,
             RequiresAddress: false,
             SortOrder: 3),
+        new(
+            DeliveryMethod.InternationalCode,
+            "International delivery",
+            "Sent overseas by an international service such as Sri Lanka Post EMS or DHL.",
+
+            // Owner decision 2026-10-21: any country in the world. It has no zone rates; its fee comes from
+            // sales.DeliveryRegions and ref.Countries (placeholder fees, owner to confirm).
+            IsEnabled: true,
+            RequiresAddress: true,
+            SortOrder: 4),
     ];
 
     /// <summary>
@@ -240,7 +250,12 @@ internal static class SalesReferenceData
         new(
             PaymentProviderCodes.BankTransfer,
             "Bank or online transfer",
-            IsEnabled: true,
+
+            // Owner decision 2026-10-21: bank transfer is switched off and PayPal is the only payment method,
+            // "block only for now". A Super Admin can switch it back on (Settings → Payment methods). An
+            // existing database is switched off once by SalesReferenceDataSeeder's Seed.PaymentProvidersVersion
+            // step; see its remarks for the rule.
+            IsEnabled: false,
             DisplayOrder: 1,
             "Place your order now and transfer the total to our bank account. We hold your items while we "
             + "wait for the payment."),

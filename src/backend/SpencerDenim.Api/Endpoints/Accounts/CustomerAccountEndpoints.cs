@@ -256,7 +256,11 @@ internal static class CustomerAccountEndpoints
                 request?.DistrictId ?? 0,
                 request?.PostalCode,
                 request?.Landmark,
-                request?.IsDefault ?? false),
+                request?.IsDefault ?? false,
+
+                // Owner decision 2026-10-21. Omitted means Sri Lanka, which is what every client sent before.
+                request?.CountryCode,
+                request?.Region),
             cancellationToken);
 
         if (!result.IsSuccess)

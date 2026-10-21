@@ -422,6 +422,14 @@ public static partial class SettingKeys
         /// written only into a body that is still empty or still exactly an earlier seed's, and never twice.
         /// </summary>
         public const string PolicyPagesVersion = "Seed.PolicyPagesVersion";
+
+        /// <summary>
+        /// The highest payment-provider seed increment applied to this database (owner decision 2026-10-21).
+        /// Version 1 switches bank transfer off once — see <c>SalesReferenceDataSeeder</c> for the rule. Same
+        /// shape as the markers above: an <see cref="SettingValueType.Int"/> row, written by the seeder and read
+        /// by nothing else.
+        /// </summary>
+        public const string PaymentProvidersVersion = "Seed.PaymentProvidersVersion";
     }
 
     /// <summary><c>ops.Settings.Key</c> is <c>varchar(100)</c>.</summary>

@@ -22,6 +22,14 @@ public sealed class DeliveryMethod : IAuditable
 
     public const string ExpressCode = "EXPRESS";
 
+    /// <summary>
+    /// Overseas delivery by an international service such as Sri Lanka Post EMS or DHL (owner decision
+    /// 2026-10-21). It has no zone rates: its fee comes from <c>sales.DeliveryRegions</c> and
+    /// <c>ref.Countries</c>. It is offered for an address outside Sri Lanka only, and the domestic methods
+    /// for an address inside it only — <c>CK_Orders_Destination</c> holds that on every order.
+    /// </summary>
+    public const string InternationalCode = "INTERNATIONAL";
+
     /// <summary>Doc 08 §3.5: <c>varchar(20)</c>, shared with the order's snapshot of the code.</summary>
     public const int MaxCodeLength = 20;
 

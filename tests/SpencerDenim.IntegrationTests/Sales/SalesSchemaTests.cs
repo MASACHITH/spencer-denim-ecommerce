@@ -646,7 +646,7 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
     [InlineData("Orders", "IX_Orders_Placed", "0|PlacedAtUtc DESC|FirstName,GrandTotal,LastName,OrderNumber,Status|")]
     [InlineData("Orders", "IX_Orders_Pending_Due", "0|PaymentDueAtUtc|CaptureLockedUntilUtc|([Status]=(0))")]
     [InlineData("Orders", "IX_Orders_StockReserved", "0|Id||([StockState]=(0))")]
-    [InlineData("Orders", "IX_Orders_Paid", "0|PaidAtUtc|CustomerUserId,DeliveryDistrictId,EmailNormalized,GrandTotal,PaymentProviderCode,Status|([PaidAtUtc] IS NOT NULL)")]
+    [InlineData("Orders", "IX_Orders_Paid", "0|PaidAtUtc|CustomerUserId,DeliveryCountryCode,DeliveryDistrictId,EmailNormalized,GrandTotal,PaymentProviderCode,Status|([PaidAtUtc] IS NOT NULL)")]
     [InlineData("Orders", "IX_Orders_Promo_Email", "0|PromoCodeId,EmailNormalized|PaidAtUtc,Status|([PromoCodeId] IS NOT NULL)")]
     [InlineData("Orders", "IX_Orders_Shipped", "0|ShippedAtUtc||([Status]=(3))")]
     [InlineData("Orders", "IX_Orders_EmailNormalized", "0|EmailNormalized||")]
@@ -809,14 +809,18 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
                 "Phone|varchar(20)|NULL",
                 "FirstName|nvarchar(80)|NOT NULL",
                 "LastName|nvarchar(80)|NULL",
-                "DeliveryDistrictId|int|NOT NULL",
-                "DeliveryDistrictName|nvarchar(60)|NOT NULL",
-                "DeliveryZone|tinyint|NOT NULL",
+                // Owner decision 2026-10-21: the country, and the district columns nullable for overseas orders.
+                "DeliveryCountryCode|char(2)|NOT NULL",
+                "DeliveryCountryName|nvarchar(80)|NOT NULL",
+                "DeliveryDistrictId|int|NULL",
+                "DeliveryDistrictName|nvarchar(60)|NULL",
+                "DeliveryZone|tinyint|NULL",
                 "Ship_RecipientName|nvarchar(120)|NULL",
                 "Ship_Phone|varchar(20)|NULL",
                 "Ship_Line1|nvarchar(150)|NULL",
                 "Ship_Line2|nvarchar(150)|NULL",
                 "Ship_City|nvarchar(80)|NULL",
+                "Ship_Region|nvarchar(80)|NULL",
                 "Ship_PostalCode|varchar(10)|NULL",
                 "Ship_Landmark|nvarchar(150)|NULL",
                 "DeliveryMethodId|int|NOT NULL",
@@ -1012,7 +1016,7 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
 
     /// <summary>Doc 08 §1.5's <c>[RV]</c> tables in the <c>sales</c> schema.</summary>
     private static readonly string[] RowVersionTables =
-        ["DeliveryMethodZoneRates", "DeliveryMethods", "Orders", "PaymentProviders", "Payments"];
+        ["DeliveryMethodZoneRates", "DeliveryMethods", "DeliveryRegions", "Orders", "PaymentProviders", "Payments"];
 
     /// <summary>Doc 08 §1.5's <c>[A]</c> tables in the <c>sales</c> schema.</summary>
     private static readonly string[] AuditedTables =
@@ -1020,6 +1024,9 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
         "Couriers",
         "DeliveryMethodZoneRates",
         "DeliveryMethods",
+
+        // Owner decision 2026-10-21 (doc 08 §3.5): the overseas delivery bands, [A] [RV].
+        "DeliveryRegions",
         "Orders",
         "PaymentProviders",
         "PickupLocations",

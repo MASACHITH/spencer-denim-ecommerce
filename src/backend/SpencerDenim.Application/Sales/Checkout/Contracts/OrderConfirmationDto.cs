@@ -28,6 +28,10 @@ public sealed record OrderLineDto(
 /// <param name="PickupLocationName">
 /// Set only for a store pickup order, from <c>Orders.Delivery.PickupLocationName</c>.
 /// </param>
+/// <param name="DistrictName">The district snapshot; null for an overseas order (owner decision 2026-10-21).</param>
+/// <param name="Region">An overseas address's state or region; null for Sri Lanka.</param>
+/// <param name="CountryCode">ISO 3166-1 alpha-2 of the destination, <c>LK</c> for Sri Lanka.</param>
+/// <param name="CountryName">The destination country's name as snapshotted on the order.</param>
 public sealed record OrderDeliveryDto(
     string MethodCode,
     string MethodName,
@@ -37,11 +41,14 @@ public sealed record OrderDeliveryDto(
     string? Line1,
     string? Line2,
     string? City,
-    string DistrictName,
+    string? DistrictName,
     string? PostalCode,
     string? Landmark,
     byte EstimatedDaysMin,
-    byte EstimatedDaysMax);
+    byte EstimatedDaysMax,
+    string? Region = null,
+    string CountryCode = Domain.Reference.Country.SriLankaCode,
+    string CountryName = "Sri Lanka");
 
 /// <summary>
 /// A placed order as the success page and the guest order link show it (CHK-04, doc 11 P6 steps 10–11).
