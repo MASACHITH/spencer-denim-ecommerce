@@ -4,7 +4,7 @@
 # Run from a checkout of the repository (the one the images are built from). Creates or refreshes the server
 # layout for <env> (docs/15 §2):
 #
-#   /opt/apps/<env>/spencer-denim-app/{compose,config,data,scripts}
+#   /opt/apps/<env>/spencer-denim-app/{compose,config,config/dataprotection,data,scripts}
 #   /opt/server/database/<env>/{compose,config,data,backups,scripts}
 #
 # Idempotent. Compose files and scripts are replaced with this checkout's copies; config/*.env files are created
@@ -22,6 +22,9 @@ db="$(db_root "$env")"
 log "Installing $env from $repo"
 install -d -m 755 "$app" "$app/compose" "$app/scripts" "$app/data"
 install -d -m 700 "$app/config"
+# Where scripts/make-dp-cert.sh puts the optional Data Protection certificate (#195): root-owned, readable by the
+# API's group only, mounted read-only into the API container. Empty until a certificate is made; never cleaned here.
+install -d -m 750 -o root -g "$SD_API_UID" "$app/config/dataprotection"
 # Written by the API (uid 1654) only: the key ring, the uploads and the upload spool.
 install -d -m 700 -o "$SD_API_UID" -g "$SD_API_UID" \
   "$app/data/dataprotection-keys" "$app/data/media-private" "$app/data/upload-spool"

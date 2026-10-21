@@ -93,6 +93,10 @@ services:
       - ${SD_DATA_DIR:-../data}/media-private:/var/lib/spencer-denim/media-private
       # A 50 MB video is spooled here while it streams in; /tmp is a RAM-backed tmpfs in this container.
       - ${SD_DATA_DIR:-../data}/upload-spool:/var/lib/spencer-denim/upload-spool
+      # The optional Data Protection certificate (#195, docs/16, scripts/make-dp-cert.sh): config/dataprotection/
+      # on the server, read-only. The directory is always mounted and is simply empty until a certificate is made;
+      # DataProtection__CertificatePath below says whether the API uses anything in it.
+      - ../config/dataprotection:/etc/spencer-denim/dataprotection:ro
     environment:
       ConnectionStrings__Database: ${SD_APP_DB_CONNECTION:?set SD_APP_DB_CONNECTION}
       Database__CompatibilityLevel: ${SD_DB_COMPATIBILITY_LEVEL:-170}
@@ -109,6 +113,11 @@ services:
       Seed__Admin__Password: ${SD_SEED_ADMIN_PASSWORD:-}
       Catalog__MediaBaseUrl: /media
       DataProtection__KeysPath: /var/lib/spencer-denim/dataprotection-keys
+      # Encrypts the key ring at rest. Both are empty unless SD_DP_CERT_FILE / SD_DP_CERT_PASSWORD are set in
+      # app.env, and the API reads an empty value as "no certificate" (DataProtectionSetup: IsNullOrWhiteSpace), so
+      # leaving them out changes nothing. scripts/check-env.sh refuses one without the other.
+      DataProtection__CertificatePath: ${SD_DP_CERT_FILE:+/etc/spencer-denim/dataprotection/}${SD_DP_CERT_FILE:-}
+      DataProtection__CertificatePassword: ${SD_DP_CERT_PASSWORD:-}
       Media__PublicRoot: /var/lib/spencer-denim/media-public
       Media__PrivateRoot: /var/lib/spencer-denim/media-private
       Media__UploadSpoolPath: /var/lib/spencer-denim/upload-spool

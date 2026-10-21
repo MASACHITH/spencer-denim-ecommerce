@@ -61,6 +61,78 @@ has_unsafe_password_chars() {
   return 1
 }
 
+# check_dp_cert <app.env>: the optional Data Protection certificate (#195, docs/16, make-dp-cert.sh).
+#
+# Two variables belong together: SD_DP_CERT_FILE (a file name inside config/dataprotection/) and
+# SD_DP_CERT_PASSWORD. Both empty is today's behaviour (the key ring is stored unencrypted) and needs no checking.
+# Anything else is checked here, because the API's own failure for a wrong setting is "the API does not start"
+# (DataProtectionSetup throws), and for a *missing* one is "every admin is signed out after a restore".
+# Warns once per problem and returns 1 if there was any; never prints the password.
+check_dp_cert() {
+  local file="$1" cert pw dir path mode problems=0
+  cert="$(env_value "$file" SD_DP_CERT_FILE)"
+  pw="$(env_value "$file" SD_DP_CERT_PASSWORD)"
+  { [ -n "$cert" ] || [ -n "$pw" ]; } || return 0
+
+  if [ -z "$cert" ]; then
+    warn "$file: SD_DP_CERT_PASSWORD is set but SD_DP_CERT_FILE is empty, so no certificate is used and the key ring stays unencrypted. Set both (make-dp-cert.sh prints the lines) or neither"
+    return 1
+  fi
+  if [ -z "$pw" ]; then
+    warn "$file: SD_DP_CERT_FILE is set but SD_DP_CERT_PASSWORD is empty. The API would try to open the certificate with no password and refuse to start"
+    problems=1
+  fi
+  case "$cert" in
+    .*|*[!A-Za-z0-9._-]*)
+      warn "$file: SD_DP_CERT_FILE must be a plain file name inside config/dataprotection/ (letters, digits, . _ -), not a path"
+      return 1 ;;
+  esac
+
+  dir="$(dirname "$file")/dataprotection"
+  path="$dir/$cert"
+  if [ ! -f "$path" ]; then
+    warn "$file: SD_DP_CERT_FILE names $cert, but $path does not exist (run make-dp-cert.sh, or restore the .pfx you kept off the server)"
+    return 1
+  fi
+
+  mode="$(stat -c '%a' "$path" 2>/dev/null || echo unknown)"
+  # 640 or stricter: any permission bit outside rw-r----- is refused (group write, anything for other users, execute,
+  # setuid/setgid/sticky). 600, 440 and 400 pass; 660, 644, 604, 700 do not.
+  case "$mode" in
+    unknown) ;;
+    *[!0-7]*|'') warn "$path: could not read its mode ('$mode')"; problems=1 ;;
+    *)
+      if [ $(( 8#$mode & ~8#640 )) -ne 0 ]; then
+        warn "$path is mode $mode, looser than 640 (the API's group can write it, or other users can read it). chmod 640, owner root, group 1654"
+        problems=1
+      fi ;;
+  esac
+  if [ "$(stat -c '%U' "$path" 2>/dev/null || echo root)" != root ]; then
+    warn "$path is not owned by root (chown root:1654 $path)"
+    problems=1
+  fi
+
+  if command -v openssl >/dev/null 2>&1 && [ -n "$pw" ]; then
+    # The password goes in through the environment, never on a command line. -legacy is for a .pfx that did not
+    # come from make-dp-cert.sh (3DES/RC2) on OpenSSL 3; OpenSSL 1.1 rejects the flag, and then both attempts fail.
+    local info
+    if info="$(SD_DP_PW_CHECK="$pw" openssl pkcs12 -in "$path" -passin env:SD_DP_PW_CHECK -info -noout 2>&1)" \
+       || info="$(SD_DP_PW_CHECK="$pw" openssl pkcs12 -legacy -in "$path" -passin env:SD_DP_PW_CHECK -info -noout 2>&1)"; then
+      case "$info" in
+        *[Kk]eybag*|*"Key bag"*) ;;
+        *) warn "$path opens, but openssl found no private key in it; the API refuses a certificate without one"
+           problems=1 ;;
+      esac
+    else
+      warn "openssl could not open $path with SD_DP_CERT_PASSWORD (wrong password, or not a PKCS#12 file). The API would refuse to start"
+      problems=1
+    fi
+    unset info
+  fi
+
+  [ "$problems" -eq 0 ]
+}
+
 # check_env_file <file> <kind: app|db>: refuse placeholders, quoting and characters that break interpolation.
 check_env_file() {
   local file="$1" kind="$2" problems=0
@@ -152,6 +224,7 @@ EOF_HOSTS
       warn "$file: the API and the migrator must use different logins (doc 08 §10.4)"
       problems=1
     fi
+    check_dp_cert "$file" || problems=1
 
     # First Super Admin (docs/15 §4). The API holds this password to the same rule as every other account: one
     # shorter than SD_PASSWORD_MIN_LENGTH creates no account, logs an error and starts anyway, so a first install

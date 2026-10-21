@@ -1,0 +1,41 @@
+# Spencer Denim: host nginx CATCH-ALL (#195, docs/16 §B "the catch-all").
+#
+# INSTALL THIS ONLY IF scripts/preflight.sh REPORTED "no default_server" FOR THE PORTS YOU WILL USE. A port can have
+# exactly one default_server: a second one makes `nginx -t` fail with "a duplicate default server", and then no
+# site on this machine can be reloaded. If preflight found an existing one (Ubuntu's own sites-enabled/default
+# usually is one for port 80), do NOT install this file; the unknown-host requests are then answered by that one.
+#
+# WHY IT EXISTS. The two site templates in this directory declare no default_server. For a request whose Host
+# matches none of the server_name lines, nginx uses the default server for that address and port, and when none is
+# declared that is whichever server block it read FIRST: with a name like spencer-denim-production.conf in
+# sites-enabled, that can be our own shop. Every unknown host (a scanner using the bare IP address, a stale DNS
+# record, somebody else's domain pointed here) then reaches the storefront, which answers 400 because the host is
+# not in SD_PUBLIC_HOSTS, and a certificate for our domain is presented for names that are not ours.
+#
+# WHAT IT DOES
+#   port 80   : closes the connection without an answer (444).
+#   port 443  : refuses the TLS handshake (ssl_reject_handshake, nginx 1.19.4+; Ubuntu 24.04 ships 1.24), so no
+#               certificate is shown for a name nobody here owns, and no certificate files are needed.
+# certbot's HTTP-01 challenge is unaffected: it asks for the real host name, which the site templates answer.
+#
+# Copy to /etc/nginx/sites-available/spencer-denim-00-default.conf, link it into sites-enabled, `nginx -t`, reload.
+# It has no placeholders. Check afterwards with: scripts/verify-public.sh <env> https://<host> (the "unknown host" checks).
+#
+# "listen 443 ssl http2" matches the site templates (works on nginx 1.24; on >= 1.25.1 it only warns, and the
+# newer form is "listen 443 ssl;" plus "http2 on;").
+
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    return 444;
+}
+
+server {
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
+    server_name _;
+
+    ssl_reject_handshake on;
+}
