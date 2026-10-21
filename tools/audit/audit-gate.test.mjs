@@ -583,11 +583,17 @@ describe('tools/audit/audit-allowlist.json', () => {
 
   test('can run from a scratch folder without the repository around it', () => {
     // The gate resolves its own default paths, so a fresh working directory must not matter.
+    // The report holds exactly the npm advisories the checked-in allow-list accepts: a clean report
+    // would make every real entry STALE, so this test would go red the day the first entry lands.
+    const accepted = JSON.parse(readFileSync(DEFAULT_ALLOWLIST, 'utf8')).entries
+      .filter((e) => e.ecosystem === 'npm')
+      .map((e) => npmAdvisory({ name: e.package, dependency: e.package, title: e.advisory, severity: e.severity,
+        url: `https://github.com/advisories/${e.advisory}` }));
     const cwd = mkdtempSync(join(tmpdir(), 'audit-gate-cwd-'));
     try {
       mkdirSync(join(cwd, 'x'));
       const input = join(cwd, 'x', 'r.json');
-      writeFileSync(input, JSON.stringify(cleanNpm()));
+      writeFileSync(input, JSON.stringify(accepted.length > 0 ? npmReport({ advisories: accepted }) : cleanNpm()));
       const run = spawnSync(process.execPath, [GATE, 'npm', '--input', input], { cwd, encoding: 'utf8' });
       assert.equal(run.status, 0, run.stdout + run.stderr);
     } finally {
