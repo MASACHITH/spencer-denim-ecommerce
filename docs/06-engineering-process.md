@@ -119,6 +119,18 @@ When it goes red:
    a `NuGetAuditSuppress` item as well, a coordinated change to `Directory.Build.props` or `Directory.Packages.props`.
    The suppression alone does not satisfy this gate: `dotnet list package --vulnerable` still reports it.
 
+**Current overrides and accepted advisories (#226, 2026-10-21).** Each one has an end condition; check it at every
+Angular tooling bump (`npm view @angular/cli@21 dependencies`, `npm view @angular/build@21 dependencies`).
+- `overrides` in `src/frontend/package.json`: `"@modelcontextprotocol/sdk": "1.32.1"` (from #224). It clears
+  GHSA-22jm-h49p-29qw and GHSA-46jr-4wx8-v453 (high). `@angular/cli` 21.2.27, the newest 21.x, pins the SDK to exactly
+  1.31.0, and the SDK serves only the optional `ng mcp` command. **Remove it** once an `@angular/cli` 21.x release
+  depends on `@modelcontextprotocol/sdk` >=1.32.0.
+- `vite` GHSA-587h-7wmj-h5pm (high; launch-editor on Windows) is **accepted** in the allow-list until 2026-11-20, not
+  overridden. `@angular/build` 21.2.27 pins vite to exactly 7.3.6, and 7.3.7 also changes dev-server behaviour, so
+  forcing it would run Angular on a vite it was not released with. vite runs only in `ng serve` on a developer machine
+  and never ships. **Delete the entry** once an `@angular/build` 21.x release ships vite >=7.3.7, bumping all
+  `@angular/*` tooling packages in step. The real fix beyond that is the Angular 22 upgrade, a separate decision.
+
 What it does **not** cover: an advisory published between runs (it runs on PRs and pushes to `main`, not on a
 schedule, so a quiet week finds nothing new); Docker base images and the SQL Server image; anything outside the
 npm lockfile and the NuGet graph. `projects/shared/package.json` is audited through the root lockfile. A scheduled
