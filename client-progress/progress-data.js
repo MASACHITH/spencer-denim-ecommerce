@@ -17,7 +17,7 @@ const progressData = {
     endDate: "2026-10-15"
   },
 
-  lastUpdated: "2026-10-20",
+  lastUpdated: "2026-10-21",
 
   milestones: [
     { week: "Week 0", title: "Setup & design", start: "2026-09-15", end: "2026-09-18" },
@@ -71,7 +71,7 @@ const progressData = {
         { name: "Colour & size selection with size guide", status: "done", progress: 100 },
         { name: "Product details & delivery information", status: "in-progress", progress: 60 },
         { name: "Related & recently viewed products", status: "done", progress: 100 },
-        { name: "Reviews & ratings", status: "planned", progress: 0 }
+        { name: "Reviews & ratings", status: "done", progress: 100 }
       ]
     },
     {
@@ -103,11 +103,11 @@ const progressData = {
         { name: "Category management", status: "done", progress: 100 },
         { name: "Inventory", status: "done", progress: 100 },
         { name: "Order management & payment approval", status: "done", progress: 100 },
-        { name: "Promo codes & sale campaigns", status: "in-progress", progress: 85 },
+        { name: "Promo codes & sale campaigns", status: "done", progress: 100 },
         { name: "Customers", status: "done", progress: 100 },
-        { name: "Review moderation", status: "planned", progress: 0 },
+        { name: "Review moderation", status: "done", progress: 100 },
         { name: "Newsletter subscriber list", status: "done", progress: 100 },
-        { name: "Homepage & content management", status: "in-progress", progress: 65 },
+        { name: "Homepage & content management", status: "done", progress: 100 },
         { name: "Dashboard", status: "done", progress: 100 },
         { name: "Reports & traffic", status: "done", progress: 100 },
         { name: "Settings", status: "in-progress", progress: 80 }
@@ -128,6 +128,21 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-10-21",
+      title: "Reviews and ratings",
+      text: "Signed-in customers can now rate and review products, with a Verified buyer badge for those who bought the item, and staff approve or hide reviews in the admin panel.",
+    },
+    {
+      date: "2026-10-21",
+      title: "Homepage and menu editing",
+      text: "Every homepage section, the announcement bar, size guides and the menu promo cards can now be edited from the admin panel.",
+    },
+    {
+      date: "2026-10-21",
+      title: "Sale campaigns",
+      text: "Sale campaigns can now include individual products, and show a banner on the Sale page while they run.",
+    },
     {
       date: "2026-10-20",
       title: "Inventory",
