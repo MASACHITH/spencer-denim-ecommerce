@@ -289,7 +289,7 @@ ENV=staging
 HOST=staging.colombowardrobecompany.com                 # A1 #2
 ADMIN_EMAIL='TO-FILL@example.com'                        # TO FILL: first Super Admin's e-mail
 APP=/opt/apps/$ENV/spencer-denim-app; DB=/opt/server/database/$ENV
-gen() { printf 'Aa1%s' "$(openssl rand -base64 60 | tr -dc 'A-Za-z0-9' | cut -c1-29)"; }   # 32 chars, letters+digits only
+gen() { printf 'Aa1-%s' "$(openssl rand -base64 60 | tr -dc 'A-Za-z0-9' | cut -c1-28)"; }   # 32 chars: upper, lower, digit and a hyphen (the staff password rule needs a symbol)
 sa="$(gen)"; app_pw="$(gen)"; mig_pw="$(gen)"; admin_pw="$(gen)"
 
 # set_kv <file> <KEY> <value>: replaces the KEY= line. The value reaches awk through its ENVIRONMENT, not its command
@@ -330,7 +330,7 @@ EOF
 
 *Expect:* the boxed line with the admin e-mail and password, and nothing else. **Save that password in the password manager now**, then
 run `clear` so it does not stay in the terminal's scrollback.
-Notes: the seed password is 32 characters, comfortably above the staff minimum of 10 that issue **#200** is introducing. The sa
+Notes: the seed password is 32 characters with an upper-case letter, a lower-case letter, a digit and a hyphen: **the API holds it to the staff rule (at least 10 characters and all four kinds), and the first UAT run found that the earlier generator, which made letters and digits only, created no account** (`SeedingFailed`, "Passwords must have at least one non alphanumeric character"). `check-env.sh` now refuses a seed password without all four kinds. The sa and the two login passwords live only in the two root-only files; read them with `sudo` when needed, never paste them. A password that is pasted anywhere, including the boxed line a few lines above, is exposed: replace it before the first deploy (nothing has used it yet) or sign in and change it. No password appears on any command line (`set_kv` hands it to `awk` through the environment), and awk prints the value as it is, so no character in it is treated specially. Do not "simplify" this back to `sed -i "s|…|$password|"`: a `sed` command line is readable by every local user in `ps` while it runs.
 and the two login passwords live only in the two root-only files; read them with `sudo` when needed, never paste them. No
 password appears on any command line (`set_kv` hands it to `awk` through the environment), and awk prints the value as it is, so
 no character in it is treated specially. Do not "simplify" this back to `sed -i "s|…|$password|"`: a `sed` command line is readable
@@ -472,7 +472,15 @@ docs/15 §5 lists "certbot, then link the site". On a new host that order cannot
 that does not exist yet, so `nginx -t` fails, and without the site nginx does not answer certbot's challenge for the new
 name. So: a tiny port-80 site first, then the certificate, then the real site.
 
-**a. Prerequisites** (only what B1 flagged)
+**a. Prerequisites** (what B1 flagged, **and the error-log directory**: the site templates write `error_log` to `/var/log/nginx/spencer-denim/` and `nginx -t` fails without it; B1 does not check for it)
+
+```bash
+sudo install -d -m 750 -o www-data -g adm /var/log/nginx/spencer-denim
+sudo install -m 644 "$SRC"/deploy/host-nginx/spencer-denim.logrotate /etc/logrotate.d/spencer-denim
+sudo logrotate -d /etc/logrotate.d/spencer-denim 2>&1 | tail -n 4     # dry run: ends without an error ("does not exist -- skipping" is fine: no logs yet)
+```
+
+The rest of this step, if B1 flagged it:
 
 ```bash
 sudo install -d -m 755 /var/www/certbot /etc/letsencrypt
@@ -526,7 +534,7 @@ server {
 CONF
 sudo ln -sf ../sites-available/spencer-denim-$ENV-acme.conf /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
-curl -sI "http://$HOST/" | head -n 1                  # expect: HTTP/1.1 404 Not Found   (it reaches OUR block)
+curl -sI "http://$HOST/" | head -n 1                  # expect: HTTP/1.1 404 Not Found   (it reaches OUR block). Straight after the reload the old workers can still answer: a 200 means wait a second and ask again
 ```
 
 **d. Certificate: rehearsal, then the real one**
@@ -755,7 +763,7 @@ planned switch of the nginx site, done only after UAT passed and the owner said 
 | B4 install | `install.sh staging` | `install.sh production`. The checkout is the one that passed UAT: **same commit, same tag** |
 | B5 env | database `SpencerDenim_Staging`, logins `sd_staging_*`, memory `1024` / `1536m` | database **`SpencerDenim`**, logins **`sd_production_app`** / **`sd_production_migrator`**, memory left at the template's **`2048` / `2560m`**. Use new generated passwords: never reuse UAT's |
 | SMTP (B5) | empty | **Set** `SD_SMTP_HOST`, `SD_SMTP_PORT`, `SD_SMTP_USERNAME`, `SD_SMTP_PASSWORD`, `SD_SMTP_FROM_ADDRESS`, `SD_SMTP_FROM_NAME` (A3). The password goes straight into `app.env` with `set_kv` (B5) or an editor (`sudo nano`), never through a `sed` with the password on its command line, and never into a message. Reminder: messages queued while SMTP was unset are sent at the first start with it set — on a new Live database there are none |
-| Seed admin (B5) | test admin | the **owner's** e-mail; the generated password is ≥ 10 characters (the staff minimum rises to 10 with #200, so a shorter one would be refused). After the first sign-in set `SD_SEED_ADMIN_ENABLED=false`, blank the password, redeploy the same tag |
+| Seed admin (B5) | test admin | the **owner's** e-mail; the generated password is ≥ 10 characters with an upper-case letter, a lower-case letter, a digit and a symbol (the staff rule; `check-env.sh` refuses one that lacks any of them, and the API would create no account). After the first sign-in set `SD_SEED_ADMIN_ENABLED=false`, blank the password, redeploy the same tag |
 | B7 certificate | before first deploy | before first deploy, same procedure; **separate** `.pfx` and password; the off-server copy is not optional |
 | B9 RCSI check | `SpencerDenim_Staging` → `1` | `SpencerDenim` → `1`. Replace the database name in the `SELECT`. |
 | B10 build | build | **Do not rebuild.** Use the image tag UAT ran (`docker images`). If the images were lost, rebuild from the same commit |
@@ -872,16 +880,16 @@ Fill in as you go; one line per step actually performed. **A blank row means "no
 | 2 | B2 decisions taken (A4) | staging | Tharanga | 2026-10-21 | | OK | | #9 no SMTP on UAT; #14 catch-all skipped and #16 certificate password in `app.env` taken as recommended, **owner still to confirm both**; #15 code by `git bundle`, not a deploy key; #12 basic auth and #2 per-environment SQL Server not yet decided/needed |
 | 3 | B3 code on server, preflight 2 | staging | Tharanga | 2026-10-21 | `ad122591f88c` | OK | yes | Cloned from `~/sd.bundle` into `/opt/apps/src/spencer-denim-ecommerce`; tree clean; contains `8bd27a7`. `/var/www/certbot` created here (B12-a). Preflight 2: 26 PASS, 1 WARN (partial `default_server`, expected), 0 FAIL |
 | 4 | B4 install.sh | staging | Tharanga | 2026-10-21 15:39 | `ad122591f88c` | **FAIL**, then fixed | yes | `install: invalid group: '1654'` (uutils coreutils on Ubuntu 26.04). Nothing sensitive was written; B5 refused to run because the templates were not copied. Fixed by `owned_dir` in `lib.sh` (see Deviations); re-run from the fixed commit |
-| 5 | B5 env files, check-env | staging | | | | | | |
-| 6 | B7 Data Protection certificate; copy kept off the server | staging | | | | | | |
-| 7 | B8 db-up | staging | | | | | | |
-| 8 | B9 db-provision; RCSI = 1 | staging | | | | | | |
-| 9 | B10 build-images | staging | | | | | | |
-| 10 | B11 deploy; "is missing" grep; key files encrypted | staging | | | | | | |
-| 11 | B12 nginx (a–e), certificate, renew dry-run | staging | | | | | | |
-| 12 | B13 basic auth (if chosen) | staging | | | | | | |
-| 13 | B14 seed admin switched off, redeployed | staging | | | | | | |
-| 14 | C1 verify-public (staging) | staging | | | | | | |
+| 5 | B5 env files, check-env | staging | Tharanga | 2026-10-21 15:56 | `dc970c99395b` | OK | yes | `check-env.sh` OK. **The admin password the generator made had no symbol: see Deviations.** The password was also pasted in the chat once and was replaced; the replacement used the same generator (no symbol), so it was replaced again after the first deploy (row 10) |
+| 6 | B7 Data Protection certificate; copy kept off the server | staging | Tharanga | 2026-10-21 16:11 | `dc970c99395b` | OK | yes | Certificate and password made; `.pfx` fetched with `scp` from a staged copy (3,617 bytes, SHA-256 `194805…9ab7` equal on the server and the PC); staged copy removed; `check-env.sh` OK |
+| 7 | B8 db-up | staging | Tharanga | 2026-10-21 16:13 | `dc970c99395b` | OK | yes | SQL Server 2025-CU9 healthy in its own network `sd-staging-db` |
+| 8 | B9 db-provision; RCSI = 1 | staging | Tharanga | 2026-10-21 16:15 | `dc970c99395b` | OK | yes | `SpencerDenim_Staging  1`; both logins created |
+| 9 | B10 build-images | staging | Tharanga | 2026-10-21 16:20-16:24 | `dc970c99395b` | OK | yes | Four images, about 4 minutes, no swap used. The first attempt was stopped by a stray `^C`/`^Z` and re-run detached (`nohup`) |
+| 10 | B11 deploy; "is missing" grep; key files encrypted | staging | Tharanga | 2026-10-21 16:25 | `dc970c99395b` | OK, redeployed once | yes | Healthy; 0 "is missing"; the one key file is encrypted (checked inside the API container); ports on 127.0.0.1 only. **First start: `SeedingFailed` (password rule); fixed the password and redeployed the same tag at 16:31: `SeededAdmin`, 0 errors** |
+| 11 | B12 nginx (a–e), certificate, renew dry-run | staging | Tharanga | 2026-10-21 16:38-16:42 | `dc970c99395b` | OK | yes | Bootstrap site, certificate (dry run then real, expires 2027-01-19), real site, `certbot renew --dry-run --cert-name` OK. The error-log directory and logrotate were missing and were added (Deviations) |
+| 12 | B13 basic auth (if chosen) | staging | Tharanga | 2026-10-21 | | skipped | | Not chosen yet (A4 #12); decide before outside testers |
+| 13 | B14 seed admin switched off, redeployed | staging | | | | | | Not done: after the first sign-in at `/admin/`, set `SD_SEED_ADMIN_ENABLED=false`, blank the password, redeploy the same tag |
+| 14 | C1 verify-public (staging) | staging | Tharanga | 2026-10-21 16:44 | `dc970c99395b` | OK, 2 WARN | yes | 18 PASS, 2 WARN, 0 FAIL. WARN `unknown-host-https` = the other project's front end answers an unknown name (A4 #14, owner to confirm); WARN `server-header` = A4 #13, not applied (a global nginx change: ask first). The first run reported a FAIL that was a false positive in the checker (Deviations) |
 | 15 | C2 UAT round (S1–S24, A1–A14, E1–E8, breakpoints) | staging | | | | | | |
 | 16 | C3 gate: owner's go | | | | | | | |
 | 17 | D0 gate items | production | | | | | | |
@@ -896,6 +904,11 @@ Deviations from this sheet (anything done differently, with the reason; docs/15 
 | Step | What was done instead | Why |
 |---|---|---|
 | B3 | The code reached the server as a `git bundle` of `main` (Route 2), copied with `scp` to `deploy1`'s home and cloned by root; `/var/www/certbot` was created in the same step | No deploy key was set up; preflight 1 warned about the missing directory |
+| B5 / B6 | The generated first-admin password now has a hyphen; `check-env.sh` refuses a seed password without a digit, a lower-case letter, an upper-case letter and a symbol | The API holds it to the staff password rule. The old generator made letters and digits only, the length check passed, the deploy went green and the API logged `SeedingFailed` with no account created. Fixed on the server by replacing the password and redeploying the same tag; fixed in the repo by this sheet and a new `test-check-env-seed.sh` (red when the rule is removed) |
+| B7 | The `.pfx` was copied off the server by staging a `deploy1`-readable copy (`install -m 600 -o deploy1`), `scp` from the PC, SHA-256 compared at both ends, staged copy deleted; not by pasting base64 | Shorter and less error-prone than a pasted 4 KB string |
+| B10 / B11 | Build and deploy ran detached: `sudo nohup … > ~/build-staging.log 2>&1 &` | A `^C`/`^Z` in the terminal had stopped the first build. The log is readable by `deploy1`, so progress could be watched without root |
+| B12-a | Created `/var/log/nginx/spencer-denim` and installed `deploy/host-nginx/spencer-denim.logrotate` | The site template writes its `error_log` there and `nginx -t` fails without the directory; the sheet did not list it (now in B12-a) |
+| C1 | `verify-public.sh` no longer treats a bare `<app-root` as one of our fingerprints | The other project on this server is an Angular app, so its front end answering the unknown name was reported as "the shop" (FAIL). Now only `ng-version` / `ng-server-context`, our headers, or the staging `noindex` header count. New mock fault `unknown-host-other-tenant` and test case (red if the old rule returns) |
 | B4 | `install.sh` and `deploy.sh` no longer call `install -d -o <uid> -g <gid>`; they call `owned_dir <mode> <owner:group> <dir>…` (`lib.sh`), which runs `install -d -m` and then `chown` | Ubuntu 26.04's default coreutils is **uutils** (rust-coreutils 0.8.0). Its `install` rejects a numeric `-o`/`-g` that has no passwd/group entry (`install: invalid group: '1654'`); the containers' users 1654 and 10001 have none on the host. GNU `install` accepted them, so neither the scripts' author nor the first tester run saw it. `chown`/`chgrp` accept numeric ids under uutils (probed on the server as `deploy1`: they got as far as "Operation not permitted"). New `tests/test-install-owners.sh` fails on the old code with the server's own message |
 
 ---
