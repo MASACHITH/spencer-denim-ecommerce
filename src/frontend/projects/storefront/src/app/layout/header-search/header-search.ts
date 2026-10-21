@@ -8,6 +8,7 @@ import {
   inject,
   input,
   linkedSignal,
+  output,
   signal,
   untracked,
   viewChild,
@@ -376,6 +377,22 @@ export class HeaderSearch {
    */
   readonly landmarkLabel = input('');
 
+  /**
+   * Emitted whenever this box itself navigates the shopper away — a submitted search, or a suggestion chosen by
+   * keyboard or click — never on Escape or Tab, which dismiss the popup in place and go nowhere (#118 tester
+   * pass).
+   *
+   * **Why the box has to say so, rather than `SiteHeader` noticing a navigation on its own.** `SiteHeader` already
+   * closes its panels on any `NavigationEnd` that followed a previous one (`isNavigationAway`), which covers every
+   * ordinary search. It cannot cover a search run **during start-up**: that navigation supersedes the router's own
+   * pending one and so becomes the first to *succeed*, which means it carries no `previousNavigation` either —
+   * exactly the shape a navigation the router started on its own has. `isNavigationAway` cannot tell the two apart
+   * from the outside, so the box tells `SiteHeader` directly, the same way `sd-drawer` and `sd-mini-bag` already
+   * do with `(closed)="closed.emit()"`. This is additional to the `NavigationEnd` tidy-up, not a replacement for
+   * it: this component does not know whether a shopper's own panel is even open.
+   */
+  readonly closed = output<void>();
+
   protected readonly inputId = inject(UniqueId).for('sd-search');
   protected readonly listboxId = `${this.inputId}-listbox`;
 
@@ -596,6 +613,7 @@ export class HeaderSearch {
 
     if (option.path) {
       this.close();
+      this.closed.emit();
       void this.router.navigateByUrl(option.path);
     }
   }
@@ -625,6 +643,7 @@ export class HeaderSearch {
     }
 
     this.close();
+    this.closed.emit();
     this.suggestions.reset();
     this.recentSearches.remember(term);
 

@@ -61,6 +61,52 @@ public static class SearchTerms
     }
 
     /// <summary>
+    /// True when <paramref name="raw"/> holds more distinct tokens of at least <see cref="MinTermLength"/>
+    /// characters than <see cref="Tokenise"/> keeps.
+    /// <para>
+    /// <b>Why this exists (issue #78 tester pass).</b> The search itself is allowed to drop anything past
+    /// <see cref="MaxTokens"/> — doc 08 §7.6 says so, and a shopper who pastes a six-word search still sees results
+    /// for the first five. But a caller deciding whether the <i>whole</i> term may be credited with "having
+    /// results", for the popular-searches list, cannot make the same allowance: five overlapping substrings of a
+    /// real word ("li in ne en lin", all five inside "linen") plus one unrelated sixth word passed the search
+    /// (which only ever looked at the first five) and let the sixth word ride onto the public list unverified.
+    /// This answers "could the search have missed something in this term", not "what does the search check" — the
+    /// two are the same question only while the term has five tokens or fewer.
+    /// </para>
+    /// </summary>
+    public static bool HasUncheckedTokens(string? raw) => CountDistinctTokens(raw) > MaxTokens;
+
+    /// <summary>
+    /// <see cref="Tokenise"/>'s own split, filter and de-duplication, but counting every token rather than
+    /// stopping at <see cref="MaxTokens"/>. A count, not the tokens themselves: nothing here needs to see them.
+    /// </summary>
+    private static int CountDistinctTokens(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return 0;
+        }
+
+        var trimmed = raw.Trim();
+        if (trimmed.Length > MaxTermLength)
+        {
+            trimmed = trimmed[..MaxTermLength];
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var part in trimmed.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var token = part.ToLowerInvariant();
+            if (token.Length >= MinTermLength)
+            {
+                seen.Add(token);
+            }
+        }
+
+        return seen.Count;
+    }
+
+    /// <summary>
     /// Escapes the LIKE wildcards in a token so a customer typing <c>50%</c> searches for the text
     /// "50%" instead of matching everything.
     /// </summary>

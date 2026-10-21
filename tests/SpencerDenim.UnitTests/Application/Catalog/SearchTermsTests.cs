@@ -68,6 +68,26 @@ public sealed class SearchTermsTests
     {
         Assert.Throws<ArgumentNullException>(() => SearchTerms.EscapeLikeValue(null!));
     }
+
+    /// <summary>
+    /// Issue #78 tester pass: <see cref="SearchTerms.Tokenise"/> is allowed to stop at five, but
+    /// <see cref="SearchTerms.HasUncheckedTokens"/> has to see past that cap to answer "did the search look at
+    /// everything this term claims to be".
+    /// </summary>
+    [Theory]
+    [InlineData("one two three four five")]
+    [InlineData("one two three four five one two")]
+    [InlineData("a one two three four five")]
+    [InlineData(null)]
+    [InlineData("")]
+    public void Five_or_fewer_real_tokens_are_not_unchecked(string? raw) =>
+        Assert.False(SearchTerms.HasUncheckedTokens(raw));
+
+    [Theory]
+    [InlineData("one two three four five six")]
+    [InlineData("li in ne en lin idiot")]
+    public void More_than_five_real_tokens_are_unchecked(string raw) =>
+        Assert.True(SearchTerms.HasUncheckedTokens(raw));
 }
 
 /// <summary>SRCH-02: the search request carries the listing filters on top of the term.</summary>

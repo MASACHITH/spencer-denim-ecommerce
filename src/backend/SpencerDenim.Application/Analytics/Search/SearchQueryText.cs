@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using SpencerDenim.Application.Catalog.Search;
 using SpencerDenim.Domain.Analytics;
+using SpencerDenim.Domain.Common;
 
 namespace SpencerDenim.Application.Analytics.Search;
 
@@ -75,19 +76,37 @@ public static partial class SearchQueryText
                 continue;
             }
 
+            // Bidi controls ("Trojan Source") and invisible formatting characters carry no meaning in a search
+            // term and are dropped outright, never turned into a space — they are zero-width (#78 tester pass).
+            // ZWJ and ZWNJ (U+200C/U+200D), which Sinhala and Tamil conjuncts need (#189 D1), are deliberately not
+            // in either set PlainText checks here.
+            if (PlainText.IsBidiControl(character) || PlainText.IsInvisibleFormatting(character))
+            {
+                continue;
+            }
+
             // C0 controls (NUL included), DEL and the C1 range: a space, so the words either side stay apart.
             kept.Append(character <= '\u001F' || character is >= '\u007F' and <= '\u009F' ? ' ' : character);
         }
 
-        var collapsed = WhiteSpaceRun().Replace(kept.ToString(), " ").Trim();
-        var term = Truncate(collapsed).ToLowerInvariant();
+        var collapsed = WhiteSpaceRun().Replace(kept.ToString(), " ").Trim().ToLowerInvariant();
+
+        // The privacy rule runs on the WHOLE normalised term, before it is cut to the stored width (#78 tester
+        // pass): an address or a phone number past the 100th character is still one, and checking only the
+        // truncated string let "<88 spaces>john.perera@example.com" through, stored as "…aaaa john.perera".
+        if (IsPersonal(collapsed))
+        {
+            return null;
+        }
+
+        var term = Truncate(collapsed);
 
         if (term.Length < SearchTerms.MinTermLength || SearchTerms.Tokenise(term).Count == 0)
         {
             return null;
         }
 
-        return IsPersonal(term) ? null : term;
+        return term;
     }
 
     /// <summary>

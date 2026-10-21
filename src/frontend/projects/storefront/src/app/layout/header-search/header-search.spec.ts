@@ -129,12 +129,21 @@ function response(cards: readonly ProductCardDto[], term: string): ProductSearch
   // with a key handler is a control that cannot be reached by keyboard, which the template rules
   // rightly refuse.
   host: { '(keydown.escape)': 'escapes.set(escapes() + 1)' },
-  template: `<sd-header-search [initialTerm]="seed()" [landmarkLabel]="landmark()" />`,
+  template: `
+    <sd-header-search
+      [initialTerm]="seed()"
+      [landmarkLabel]="landmark()"
+      (closed)="closedCount.set(closedCount() + 1)"
+    />
+  `,
 })
 class Host {
   readonly escapes = signal(0);
   readonly seed = signal('');
   readonly landmark = signal('');
+
+  /** How many times `HeaderSearch` asked to be closed (#118 tester pass). */
+  readonly closedCount = signal(0);
 }
 
 describe('HeaderSearch (SRCH-01)', () => {
@@ -544,6 +553,78 @@ describe('HeaderSearch (SRCH-01)', () => {
     fixture.detectChanges();
 
     expect(navigate).toHaveBeenCalledWith(['/search'], { queryParams: { q: 'linen' } });
+  });
+
+  // ------------------------------------------------------------------ asking to be closed (#118 tester pass)
+
+  /**
+   * `SiteHeader`'s own `NavigationEnd` tidy-up cannot close a panel for the shopper's own search run during
+   * start-up — that navigation has no `previousNavigation` either, the same shape as one the router started on
+   * its own. `HeaderSearch` closes that case itself, the same way `sd-drawer` and `sd-mini-bag` already ask
+   * their host to close them.
+   */
+  it('asks to be closed when a submitted search navigates away', async () => {
+    setUp();
+
+    type('linen');
+    await settle();
+    searchRequest().flush(response([card(1, 'Linen Shirt')], 'linen'));
+    fixture.detectChanges();
+
+    root().querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+
+    expect(navigate).toHaveBeenCalledWith(['/search'], { queryParams: { q: 'linen' } });
+    expect(fixture.componentInstance.closedCount()).toBe(1);
+  });
+
+  it('does not ask to be closed when the typed term is not searchable', () => {
+    setUp();
+    type('a');
+
+    root().querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+
+    expect(navigate).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.closedCount()).toBe(0);
+  });
+
+  it('asks to be closed when a product or category suggestion is chosen', async () => {
+    setUp();
+
+    type('linen');
+    await settle();
+    searchRequest().flush(response([card(1, 'Linen Shirt')], 'linen'));
+    fixture.detectChanges();
+    press('ArrowDown');
+    press('Enter');
+
+    expect(navigateByUrl).toHaveBeenCalledWith('/product/product-1');
+    expect(fixture.componentInstance.closedCount()).toBe(1);
+  });
+
+  it('asks to be closed when a recent search is chosen again', () => {
+    setUp(['shirts']);
+
+    press('ArrowDown');
+    press('Enter');
+
+    expect(navigate).toHaveBeenCalledWith(['/search'], { queryParams: { q: 'shirts' } });
+    expect(fixture.componentInstance.closedCount()).toBe(1);
+  });
+
+  it('does not ask to be closed on Escape or Tab, which dismiss the popup and go nowhere', async () => {
+    setUp();
+
+    type('linen');
+    await settle();
+    searchRequest().flush(response([card(1, 'Linen Shirt')], 'linen'));
+    fixture.detectChanges();
+
+    press('Escape');
+    press('Tab');
+
+    expect(navigate).not.toHaveBeenCalled();
+    expect(navigateByUrl).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.closedCount()).toBe(0);
   });
 
   it('closes the popup on Escape, keeps the caret, and does not let the keystroke travel', async () => {

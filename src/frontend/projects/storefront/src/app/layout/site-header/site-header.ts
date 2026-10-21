@@ -210,6 +210,7 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
             placeholder="Search for products"
             landmarkLabel="Search products, header panel"
             #panelSearch
+            (closed)="closeSearchPanel()"
           />
         </div>
       </div>
@@ -533,6 +534,14 @@ export class SiteHeader {
     // The router knows the answer directly: a navigation that started with no successful navigation behind
     // it has `previousNavigation === null`, whatever its id, however many redirects led to it, and
     // `lastSuccessfulNavigation` is set to it just before its NavigationEnd is emitted.
+    //
+    // **One case this still cannot reach (#118 tester pass): the shopper's own search, run during that same
+    // start-up window.** That navigation supersedes the router's pending one and so becomes the first to
+    // *succeed* — it carries no `previousNavigation` either, which is indistinguishable from the outside from a
+    // navigation the router started on its own. `HeaderSearch` closes that case explicitly instead, with
+    // `(closed)="closeSearchPanel()"` below, the same way `sd-drawer` and `sd-mini-bag` ask to be closed. The two
+    // mechanisms are additive: this subscription still closes the panel for every *other* navigation away
+    // (a link followed, the browser's Back button), including ones `HeaderSearch` knows nothing about.
     this.router.events
       .pipe(
         filter(
@@ -592,6 +601,20 @@ export class SiteHeader {
 
     this.search.set(false);
     this.focusSearchToggle();
+  }
+
+  /**
+   * Closes the search panel because the shopper's own search just navigated away — not because they dismissed it
+   * in place. #118 tester pass: `HeaderSearch` emits `(closed)` from `run()` and from a suggestion's own
+   * navigation, because a navigation the shopper starts **during start-up** supersedes the router's pending one
+   * and becomes the first to *succeed* — carrying no `previousNavigation`, exactly the shape of a navigation the
+   * NavigationEnd tidy-up below (`isNavigationAway`) was written to leave alone. That subscription still runs and
+   * still covers every ordinary search; this is the one case it cannot, closing the same signal with no focus
+   * management, unlike `closeSearch()`: the shopper is on their way to a results page, not staying on this one, so
+   * focus should land wherever that page's own management puts it rather than back on this header's toggle.
+   */
+  protected closeSearchPanel(): void {
+    this.search.set(false);
   }
 
   /**

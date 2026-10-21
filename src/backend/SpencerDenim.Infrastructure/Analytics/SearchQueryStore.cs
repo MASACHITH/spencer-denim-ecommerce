@@ -102,9 +102,26 @@ internal sealed class SearchQueryStore(AppDbContext dbContext, IProductCatalogRe
         return written;
     }
 
-    /// <summary>Whether the storefront's own search finds anything for <paramref name="term"/> right now.</summary>
+    /// <summary>
+    /// Whether the storefront's own search finds anything for <paramref name="term"/> right now — and, before
+    /// that, whether the search could even have looked at the whole of it.
+    /// <para>
+    /// <b>A term with more tokens than the search checks is never credited with "having results" (#78 tester
+    /// pass).</b> <see cref="SearchTerms.Tokenise"/> silently drops anything past
+    /// <see cref="SearchTerms.MaxTokens"/>, which is correct for SRCH-02 (doc 08 §7.6) — a shopper who pastes six
+    /// words still sees results for the first five — but wrong here: it let "li in ne en lin" (five overlapping
+    /// substrings of "linen") carry a sixth, unrelated word onto the public list, because the search that decided
+    /// "has results" never looked at that sixth word at all. <see cref="SearchTerms.HasUncheckedTokens"/> answers
+    /// first, with no query, so a term built to exploit this costs nothing more than one that is refused outright.
+    /// </para>
+    /// </summary>
     private async Task<bool> HasResultsAsync(string term, CancellationToken cancellationToken)
     {
+        if (SearchTerms.HasUncheckedTokens(term))
+        {
+            return false;
+        }
+
         var query = ProductSearchQuery.Create(term, new ProductListCriteria(PageSize: "1"), catalogOptions);
         if (!query.IsSuccess)
         {

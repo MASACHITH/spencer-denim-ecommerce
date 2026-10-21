@@ -4,8 +4,10 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { ApplicationRef, inject } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { Navigation, Router, provideRouter } from '@angular/router';
+import { By } from '@angular/platform-browser';
 
 import { SiteHeader, isNavigationAway } from './site-header';
+import { HeaderSearch } from '../header-search/header-search';
 import { AccountApi } from '../../core/account/account-api';
 import { CustomerSessionDto } from '../../core/account/account.model';
 import { CartApi } from '../../core/cart/cart-api';
@@ -471,6 +473,29 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
 
     expect(toggle?.getAttribute('aria-expanded')).toBe('true');
     expect(element.querySelector('#header-search-panel')?.hasAttribute('hidden')).toBe(false);
+  });
+
+  /**
+   * #118 tester pass. The panel's own `HeaderSearch` asks to be closed directly — `(closed)="closeSearchPanel()"`
+   * — because `isNavigationAway`'s `NavigationEnd` tidy-up cannot reach a search run during start-up (see the
+   * comment above it). This drives that output exactly as `HeaderSearch` itself does, through the real template
+   * binding, rather than calling a handler method directly.
+   */
+  it('closes the collapsed search panel when its own HeaderSearch asks to be closed, without moving focus to the toggle', async () => {
+    const toggle = element.querySelector<HTMLButtonElement>('[data-testid="search-toggle"]');
+    toggle?.focus();
+    toggle?.click();
+    await settle();
+    expect(element.querySelector('#header-search-panel')?.hasAttribute('hidden')).toBe(false);
+
+    const panelSearch = fixture.debugElement.query(By.css('#header-search-panel sd-header-search'));
+    (panelSearch.componentInstance as HeaderSearch).closed.emit();
+    await settle();
+
+    expect(element.querySelector('#header-search-panel')?.hasAttribute('hidden')).toBe(true);
+    // Unlike Escape (`closeSearch()`), the shopper is on their way to a results page, not staying on this one:
+    // focus is never yanked back to this header's own toggle button.
+    expect(document.activeElement).not.toBe(toggle);
   });
 
   it('draws no count badge while the wishlist and bag are empty', () => {

@@ -42,6 +42,7 @@ builder.Services.AddAccountRequestThrottle();
 builder.Services.AddContactEnquiryThrottle();
 builder.Services.AddOrderPlacementThrottle();
 builder.Services.AddReviewWriteThrottle();
+builder.Services.AddSearchSubmissionThrottle();
 // Output caching, with no base policy: only the sitemap feed opts in (see SitemapOutputCache for the
 // window and why it is a minute rather than matching the storefront's fifteen).
 builder.Services.AddSitemapOutputCache();

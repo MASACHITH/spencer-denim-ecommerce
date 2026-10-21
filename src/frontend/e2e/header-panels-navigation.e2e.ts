@@ -110,10 +110,10 @@ test.describe('header panels close on a real navigation away (#118 tester)', () 
     test(`a search run from the panel during start-up still closes it on the results page (${width} px)`, async ({
       page,
     }) => {
-      // KNOWN DEFECT (tester, 2026-10-21): fails on feature/78-118-search, passes on origin/main. The search
-      // is the first navigation to succeed, so `isNavigationAway` says "not away" and the panel stays open
-      // over the results page. Remove `test.fail()` once the panel is closed by the search itself.
-      test.fail();
+      // Was a defect (tester, 2026-10-21): the search is the first navigation to succeed, so `isNavigationAway`
+      // says "not away" and the panel stayed open over the results page. Fixed: `HeaderSearch.run()` now emits
+      // `closed`, which `SiteHeader` wires to `closeSearchPanel()` — no focus management, unlike Escape's own
+      // `closeSearch()`, because the shopper is on their way to the results page.
       const release = await holdRouteChunks(page);
       await page.setViewportSize({ width, height: 900 });
       await page.goto('/');

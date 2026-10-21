@@ -16,8 +16,15 @@ namespace SpencerDenim.Api.Endpoints.Analytics;
 /// <b>The beacon cannot slow or break a search</b>, for the reason the page-view beacon gives: it normalises and
 /// classifies in memory and increments a bounded in-memory count; the database is written once a minute by another
 /// thread. It answers <c>204</c> whatever happened to the term — counted, refused as personal, ignored as a bot,
-/// dropped — so the answer tells a caller nothing about what was kept. <b>No IP address is read</b>, and the request
-/// log line carries the route, never the term (which travels in the body).
+/// rate-limited, dropped — so the answer tells a caller nothing about what was kept. The request log line carries
+/// the route, never the term (which travels in the body).
+/// </para>
+/// <para>
+/// <b>No IP address reaches the database, a log line or <c>ops.AuditLogs</c>, but one is read</b> — the tester pass
+/// that found the 5-token "has results" bypass and the unbounded buffer also found that the endpoint had no rate
+/// limit at all. <see cref="SearchSubmissionThrottle"/> partitions on the caller's address exactly as
+/// <c>NewsletterSignupThrottle</c> and <c>ContactEnquiryThrottle</c> already do: the address lives only in the
+/// in-memory limiter's bucket, for as long as its one-minute window, and nowhere else.
 /// </para>
 /// </summary>
 internal static class SearchStatsEndpoints
@@ -39,8 +46,9 @@ internal static class SearchStatsEndpoints
             .WithDescription(
                 "Body: { term, automated? }. Sent by the storefront's results page once per search it shows. The term is "
                 + "normalised (lower-case, trimmed, single-spaced, 100 characters) and not counted at all when it carries "
-                + "an at-sign, seven or more digits or an order number, or when the caller is a bot. Always 204. No IP "
-                + "address, user or session is read or stored.")
+                + "an at-sign, seven or more digits or an order number, or when the caller is a bot. Rate-limited per "
+                + "address (SearchSubmissionThrottle); a refused submission counts nothing. Always 204. No IP address, "
+                + "user or session is read or stored.")
             .Produces(StatusCodes.Status204NoContent);
 
         endpoints.MapGet(PopularRoute, GetPopularAsync)
@@ -88,11 +96,15 @@ internal static class SearchStatsEndpoints
         HttpContext httpContext,
         SearchSubmissionBeacon beacon,
         ISearchQueryRecorder recorder,
+        SearchSubmissionThrottle throttle,
         IClock clock)
     {
         httpContext.Response.Headers.CacheControl = "no-store";
 
-        if (beacon.Term is { Length: > 0 and <= MaxTermCharacters } raw
+        // The rate limit (issue #78 tester pass) runs first and costs nothing when it refuses: a flood is turned
+        // away before the term is even read, exactly as a bot or a refused term already is.
+        if (throttle.TryAcquire(httpContext.Connection.RemoteIpAddress?.ToString())
+            && beacon.Term is { Length: > 0 and <= MaxTermCharacters } raw
             && SearchSubmissionClassifier.Accept(raw, httpContext.Request.Headers.UserAgent.ToString(), beacon.Automated ?? false) is { } term)
         {
             recorder.TryRecord(term, clock.UtcNow);

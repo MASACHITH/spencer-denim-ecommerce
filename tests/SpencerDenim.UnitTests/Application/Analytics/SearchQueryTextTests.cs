@@ -39,6 +39,49 @@ public sealed class SearchQueryTextTests
     public void A_term_the_search_endpoint_would_refuse_is_not_counted(string? raw) =>
         Assert.Null(SearchQueryText.Normalise(raw));
 
+    /// <summary>
+    /// Was a defect (tester, 2026-10-21): neither a bidi override nor a zero-width character was stripped from a
+    /// search term at all, so "linen‮" and "linen​" were both stored byte for byte. Dropped outright
+    /// (not turned into a space, unlike a C0 control): they carry no word boundary of their own.
+    /// </summary>
+    [Theory]
+    [InlineData("wide​leg", "wideleg")]
+    [InlineData("wide﻿leg", "wideleg")]
+    [InlineData("wi‮de leg", "wide leg")]
+    [InlineData("‎‏linen", "linen")]
+    [InlineData("⁦linen⁩", "linen")]
+    [InlineData("؜linen", "linen")]
+    public void A_bidi_control_or_an_invisible_formatting_character_is_dropped(string raw, string expected) =>
+        Assert.Equal(expected, SearchQueryText.Normalise(raw));
+
+    /// <summary>
+    /// ZWJ and ZWNJ (U+200D, U+200C) are a different family entirely: Sinhala and Tamil conjuncts need them
+    /// (#189 D1), and the same term is the one DB25 has to store for either shopper to see it offered again.
+    /// </summary>
+    [Fact]
+    public void Zwj_and_zwnj_are_kept_unlike_the_bidi_and_invisible_characters_dropped_above()
+    {
+        var sri = new string([(char)0x0DC1, (char)0x0DCA, (char)0x200D, (char)0x0DBB, (char)0x0DD3]);
+        var normalised = SearchQueryText.Normalise(sri);
+
+        Assert.Equal(sri.ToLowerInvariant(), normalised);
+        Assert.Contains((char)0x200D, normalised!);
+    }
+
+    /// <summary>
+    /// Was a defect (tester, 2026-10-21): the privacy rule ran on the <b>truncated</b> term, so padding past the
+    /// hundredth character pushed the email address clean out of the window the rule was checking. 88 characters
+    /// of padding plus an address well past the 100-character column width must still be refused whole.
+    /// </summary>
+    [Fact]
+    public void A_term_that_is_personal_only_past_the_hundred_character_cut_is_still_refused()
+    {
+        var padded = new string('a', 88) + " john.perera@example.com";
+
+        Assert.True(padded.Length > SpencerDenim.Domain.Analytics.SearchQueryDaily.QueryMaxLength);
+        Assert.Null(SearchQueryText.Normalise(padded));
+    }
+
     [Fact]
     public void An_unpaired_surrogate_is_dropped_and_a_paired_one_kept()
     {

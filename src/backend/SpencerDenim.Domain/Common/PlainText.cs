@@ -3,10 +3,11 @@ using System.Text;
 namespace SpencerDenim.Domain.Common;
 
 /// <summary>
-/// The characters that make text shown to other people display differently from what it says (issue #189, D1/D2):
-/// control characters (C0, DEL, C1), the bidirectional embeddings, overrides, isolates and marks ("Trojan
-/// Source"), the Unicode line and paragraph separators, and unpaired surrogates (which SQL Server stores as
-/// garbage). One definition, used by review text, review display names and customer names.
+/// The characters that make text shown to other people display differently from what it says (issue #189, D1/D2;
+/// extended for issue #78's search terms): control characters (C0, DEL, C1), the bidirectional embeddings,
+/// overrides, isolates and marks ("Trojan Source"), two zero-width characters with no legitimate place in ordinary
+/// text, the Unicode line and paragraph separators, and unpaired surrogates (which SQL Server stores as garbage).
+/// One definition, used by review text, review display names, customer names and search terms.
 /// </summary>
 public static class PlainText
 {
@@ -19,6 +20,12 @@ public static class PlainText
     /// <summary>U+0085 NEXT LINE, a C1 control that is also a line break.</summary>
     public const char NextLine = '\u0085';
 
+    /// <summary>U+200B ZERO WIDTH SPACE.</summary>
+    public const char ZeroWidthSpace = (char)0x200B;
+
+    /// <summary>U+FEFF ZERO WIDTH NO-BREAK SPACE — a byte-order mark, when it turns up inside a string rather than as a file's first character.</summary>
+    public const char ZeroWidthNoBreakSpace = (char)0xFEFF;
+
     /// <summary>A bidirectional formatting character: U+202A–U+202E, U+2066–U+2069, U+200E, U+200F, U+061C.</summary>
     public static bool IsBidiControl(char character) =>
         character is (>= (char)0x202A and <= (char)0x202E) or (>= (char)0x2066 and <= (char)0x2069) or (char)0x200E or (char)0x200F or (char)0x061C;
@@ -28,8 +35,19 @@ public static class PlainText
         character is NextLine or LineSeparator or ParagraphSeparator;
 
     /// <summary>
+    /// A zero-width character that is never the shape of a real word: the zero-width space and the zero-width
+    /// no-break space (issue #78 tester pass — "…aaaa john.perera" hid behind padding, and the same trick works
+    /// with an invisible character in place of a visible one). <b>Deliberately not U+200C or U+200D</b>: Tamil
+    /// needs the zero-width non-joiner and Sinhala needs the zero-width joiner for its conjuncts, and #189 D1
+    /// already pins that real names and review text with them must survive untouched.
+    /// </summary>
+    public static bool IsInvisibleFormatting(char character) =>
+        character is ZeroWidthSpace or ZeroWidthNoBreakSpace;
+
+    /// <summary>
     /// Whether <paramref name="text"/> holds anything a single-line name must not: any control character (tab and
-    /// line breaks included), a bidi control, a Unicode line break, or an unpaired surrogate.
+    /// line breaks included), a bidi control, an invisible formatting character, a Unicode line break, or an
+    /// unpaired surrogate.
     /// </summary>
     public static bool HasUnsafeForOneLine(string? text)
     {
@@ -48,7 +66,8 @@ public static class PlainText
                 continue;
             }
 
-            if (char.IsSurrogate(character) || char.IsControl(character) || IsBidiControl(character) || IsUnicodeLineBreak(character))
+            if (char.IsSurrogate(character) || char.IsControl(character) || IsBidiControl(character)
+                || IsInvisibleFormatting(character) || IsUnicodeLineBreak(character))
             {
                 return true;
             }
@@ -82,7 +101,8 @@ public static class PlainText
                 continue;
             }
 
-            if (char.IsSurrogate(character) || char.IsControl(character) || IsBidiControl(character) || IsUnicodeLineBreak(character))
+            if (char.IsSurrogate(character) || char.IsControl(character) || IsBidiControl(character)
+                || IsInvisibleFormatting(character) || IsUnicodeLineBreak(character))
             {
                 // A tab or a line break between two words still separates them; anything else simply goes.
                 if (char.IsWhiteSpace(character))

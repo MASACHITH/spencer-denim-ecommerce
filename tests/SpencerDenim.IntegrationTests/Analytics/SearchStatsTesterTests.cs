@@ -1,11 +1,14 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using SpencerDenim.Api.Http;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Analytics.Search;
 using SpencerDenim.Domain.Analytics;
@@ -46,6 +49,57 @@ public sealed class SearchStatsTesterTests(SqlServerDatabaseFixture sqlServer)
                 services.RemoveAll<IClock>();
                 services.AddSingleton<IClock>(new FixedClock(TenInColombo(today)));
             });
+
+    /// <summary>
+    /// The same host, but one <c>TestServer</c> can be many visitors: <see cref="HeaderAddressStartupFilter"/> sets
+    /// <c>Connection.RemoteIpAddress</c> from <see cref="AddressHeader"/> ahead of the whole pipeline, which is
+    /// what the rate-limit and buffer tests need to tell one address's submissions from another's — the same
+    /// mechanism <c>CheckoutPlacementThrottleTests</c> uses for the order-placement throttle.
+    /// </summary>
+    private const string AddressHeader = "X-Test-Remote-Address";
+
+    private ApiFactory FactoryWithAddresses(DateOnly today, IReadOnlyDictionary<string, string?>? configuration = null) =>
+        new(
+            sqlServer.ConnectionString,
+            additionalConfiguration: configuration,
+            configureServices: services =>
+            {
+                services.RemoveAll<IClock>();
+                services.AddSingleton<IClock>(new FixedClock(TenInColombo(today)));
+                services.AddSingleton<IStartupFilter>(new HeaderAddressStartupFilter());
+            });
+
+    private static async Task<HttpResponseMessage> SubmitFromAsync(HttpClient client, string address, string term)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/search/submissions", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new { term }),
+        };
+        request.Headers.Add(AddressHeader, address);
+
+        return await client.SendAsync(request, Token);
+    }
+
+    /// <summary>Sets <c>Connection.RemoteIpAddress</c> from a request header, ahead of the whole pipeline.</summary>
+    private sealed class HeaderAddressStartupFilter : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) =>
+            builder =>
+            {
+                builder.Use(async (context, continuation) =>
+                {
+                    if (context.Request.Headers.TryGetValue(AddressHeader, out var value)
+                        && IPAddress.TryParse(value.ToString(), out var address))
+                    {
+                        context.Connection.RemoteIpAddress = address;
+                    }
+
+                    await continuation(context);
+                });
+
+                next(builder);
+            };
+    }
 
     private async Task<DateOnly> FreshDayAsync()
     {
@@ -339,6 +393,95 @@ public sealed class SearchStatsTesterTests(SqlServerDatabaseFixture sqlServer)
         }
     }
 
+    // ================================================================== the rate limit (issue #78 tester pass)
+
+    /// <summary>
+    /// Was a defect (tester, 2026-10-21): the beacon had no rate limit at all, and 2,000 submissions from one
+    /// client in under a second all counted. <see cref="SearchSubmissionThrottle"/> now answers 204 for every one
+    /// of them (a refused submission is dropped, not reported) but only <see cref="SearchSubmissionThrottle.PermitLimit"/>
+    /// of them are counted.
+    /// </summary>
+    [Fact]
+    public async Task Submissions_past_the_rate_limit_are_silently_dropped_and_do_not_count()
+    {
+        var today = await FreshDayAsync();
+        const string address = "203.0.113.50";
+        var term = "flood " + Letters();
+
+        await using var factory = FactoryWithAddresses(today);
+        using var client = Client(factory);
+
+        var attempts = SearchSubmissionThrottle.PermitLimit * 4;
+        var responses = await Task.WhenAll(Enumerable.Range(0, attempts).Select(_ => SubmitFromAsync(client, address, term)));
+
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.NoContent, response.StatusCode));
+
+        await factory.Services.GetRequiredService<SearchQueryWriterService>().FlushAsync(Token);
+
+        var row = Assert.Single(await RowsAsync(today));
+        Assert.Equal(term, row.QueryNormalized);
+        Assert.Equal(SearchSubmissionThrottle.PermitLimit, row.Searches);
+    }
+
+    /// <summary>One address being throttled must not cost another address its own budget.</summary>
+    [Fact]
+    public async Task Two_addresses_are_throttled_independently()
+    {
+        var today = await FreshDayAsync();
+        const string flooder = "203.0.113.60";
+        const string genuine = "203.0.113.61";
+        var floodTerm = "flood " + Letters();
+        var genuineTerm = "genuine " + Letters();
+
+        await using var factory = FactoryWithAddresses(today);
+        using var client = Client(factory);
+
+        await Task.WhenAll(Enumerable.Range(0, SearchSubmissionThrottle.PermitLimit * 3)
+            .Select(_ => SubmitFromAsync(client, flooder, floodTerm)));
+        await SubmitFromAsync(client, genuine, genuineTerm);
+
+        await factory.Services.GetRequiredService<SearchQueryWriterService>().FlushAsync(Token);
+
+        var rows = await RowsAsync(today);
+        Assert.Equal(SearchSubmissionThrottle.PermitLimit, Assert.Single(rows, row => row.QueryNormalized == floodTerm).Searches);
+        Assert.Equal(1, Assert.Single(rows, row => row.QueryNormalized == genuineTerm).Searches);
+    }
+
+    /// <summary>
+    /// Re-measured after the rate limit (MEDIUM, tester pass): before it, 6,000 unique junk terms from one client
+    /// filled the whole 5,000-entry buffer and a legitimate term from another visitor was lost. The limit's window
+    /// (one minute) matches the buffer's flush interval (<see cref="SearchStatsOptions.DefaultFlushSeconds"/>), so
+    /// one address can now put at most <see cref="SearchSubmissionThrottle.PermitLimit"/> distinct terms into the
+    /// buffer before the next flush empties it again — far short of <see cref="SearchStatsOptions.MaxBufferedTerms"/>'s
+    /// default of 5,000, and nowhere near enough to crowd out anyone else's search.
+    /// </summary>
+    [Fact]
+    public async Task A_client_that_respects_the_rate_limit_cannot_fill_the_buffer_within_one_flush_window()
+    {
+        var today = await FreshDayAsync();
+        const string flooder = "203.0.113.70";
+        const string genuine = "203.0.113.71";
+        var genuineTerm = "last straw " + Letters();
+
+        await using var factory = FactoryWithAddresses(today, new Dictionary<string, string?> { ["SearchStats:MaxBufferedTerms"] = "5000" });
+        using var client = Client(factory);
+        var buffer = factory.Services.GetRequiredService<SearchQueryBuffer>();
+
+        // Every distinct term this one address could possibly get through the throttle in a single window.
+        var attempts = SearchSubmissionThrottle.PermitLimit * 3;
+        await Task.WhenAll(Enumerable.Range(0, attempts).Select(index => SubmitFromAsync(client, flooder, $"junk {Letters()} {index}")));
+
+        Assert.True(buffer.Pending <= SearchSubmissionThrottle.PermitLimit, $"the buffer held {buffer.Pending} entries from one throttled address");
+
+        // A different visitor's search still has room and is still counted — the whole point of the limit.
+        var genuineResponse = await SubmitFromAsync(client, genuine, genuineTerm);
+        Assert.Equal(HttpStatusCode.NoContent, genuineResponse.StatusCode);
+
+        await factory.Services.GetRequiredService<SearchQueryWriterService>().FlushAsync(Token);
+
+        Assert.Contains(await RowsAsync(today), row => row.QueryNormalized == genuineTerm && row.Searches == 1);
+    }
+
     // ================================================================== shutdown
 
     [Fact]
@@ -361,9 +504,16 @@ public sealed class SearchStatsTesterTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal(2, row.Searches);
     }
 
-    // ================================================================== defects found by the tester (Skip until fixed)
+    // ================================================================== defects found by the tester, now fixed
 
-    [Fact(Skip = "DEFECT (tester 2026-10-21): only the first 5 tokens are searched, so words after five tokens that match a product are never checked; one visitor puts any phrase on the public list with 5 requests.")]
+    /// <summary>
+    /// Was a defect (tester, 2026-10-21): only the first 5 tokens were searched, so a phrase of five matching
+    /// substrings plus a sixth, unrelated word reached the public list with five requests. Fixed by
+    /// <c>SearchTerms.HasUncheckedTokens</c>, which <c>SearchQueryStore.HasResultsAsync</c> checks before it ever
+    /// queries: a term with more real tokens than the search would look at is never credited with "having
+    /// results".
+    /// </summary>
+    [Fact]
     public async Task A_phrase_whose_extra_words_match_nothing_never_reaches_the_public_list()
     {
         var today = await FreshDayAsync();
@@ -382,7 +532,12 @@ public sealed class SearchStatsTesterTests(SqlServerDatabaseFixture sqlServer)
         Assert.DoesNotContain(phrase, dto!.Terms);
     }
 
-    [Fact(Skip = "DEFECT (tester 2026-10-21): the privacy rule runs after the 100-character cut, so an address cut at its at-sign is stored as its local part.")]
+    /// <summary>
+    /// Was a defect (tester, 2026-10-21): the privacy rule ran after the 100-character cut, so an address past the
+    /// cut-off was stored as its local part alone ("…aaaa john.perera"). <c>SearchQueryText.Normalise</c> now
+    /// checks <c>IsPersonal</c> on the whole normalised term before <c>Truncate</c> runs.
+    /// </summary>
+    [Fact]
     public async Task An_email_address_cut_off_by_the_hundred_character_limit_is_not_stored()
     {
         var today = await FreshDayAsync();
