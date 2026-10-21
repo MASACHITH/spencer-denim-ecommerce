@@ -175,7 +175,9 @@ public sealed class SearchStatsTests(SqlServerDatabaseFixture sqlServer)
     {
         await using var host = await StartAsync();
         using var client = host.Client();
-        var nothing = "zzqx " + Guid.NewGuid().ToString("N")[..8];
+        // Letters only (tester, 2026-10-21): eight hex characters are seven or more digits about one run in seven,
+        // and a term with seven digits is personal, never stored, and this test failed on Assert.Single.
+        var nothing = Unique("zzqx");
 
         (await SubmitAsync(client, new { term = nothing, resultCount = 99 })).Dispose();
         (await SubmitAsync(client, new { term = nothing })).Dispose();
@@ -341,10 +343,13 @@ public sealed class SearchStatsTests(SqlServerDatabaseFixture sqlServer)
         var keys = Enumerable.Range(0, Rounds).Select(round => Unique($"insert race {round:D2}")).ToArray();
         using var barrier = new Barrier(Writers);
 
-        var writers = Enumerable.Range(0, Writers).Select(_ => Task.Run(async () =>
+        // Each writer on a thread of its own and synchronous throughout (tester, 2026-10-21): sixteen writers blocking
+        // in Barrier.SignalAndWait on thread-pool threads starved an 8-core pool under load, and the 30-second barrier
+        // timed out on every run there ("A writer never reached the barrier", 4 of 4) without the upsert being at fault.
+        var writers = Enumerable.Range(0, Writers).Select(_ => Task.Factory.StartNew(() =>
         {
-            await using var connection = new SqlConnection(sqlServer.ConnectionString);
-            await connection.OpenAsync(Token);
+            using var connection = new SqlConnection(sqlServer.ConnectionString);
+            connection.Open();
 
             try
             {
@@ -356,13 +361,13 @@ public sealed class SearchStatsTests(SqlServerDatabaseFixture sqlServer)
                         throw new TimeoutException("A writer never reached the barrier.");
                     }
 
-                    await using var command = connection.CreateCommand();
+                    using var command = connection.CreateCommand();
                     command.CommandText = SearchQueryStore.UpsertSql;
                     command.Parameters.Add(new SqlParameter("@date", System.Data.SqlDbType.Date) { Value = host.Today.ToDateTime(TimeOnly.MinValue) });
                     command.Parameters.Add(new SqlParameter("@term", System.Data.SqlDbType.NVarChar, 100) { Value = key });
                     command.Parameters.Add(new SqlParameter("@n", System.Data.SqlDbType.Int) { Value = 1 });
                     command.Parameters.Add(new SqlParameter("@zero", System.Data.SqlDbType.Int) { Value = 0 });
-                    await command.ExecuteNonQueryAsync(Token);
+                    command.ExecuteNonQuery();
                 }
             }
             catch
@@ -371,7 +376,7 @@ public sealed class SearchStatsTests(SqlServerDatabaseFixture sqlServer)
                 barrier.RemoveParticipant();
                 throw;
             }
-        }, Token)).ToArray();
+        }, Token, TaskCreationOptions.LongRunning, TaskScheduler.Default)).ToArray();
 
         await Task.WhenAll(writers);
 

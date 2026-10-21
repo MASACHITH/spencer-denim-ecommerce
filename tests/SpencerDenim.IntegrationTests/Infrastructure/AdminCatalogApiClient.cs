@@ -74,6 +74,10 @@ public sealed class AdminCatalogApiClient
             new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
     }
 
+    /// <summary>A signed-in GET whose whole response the caller reads, headers included (the caller disposes it).</summary>
+    public Task<HttpResponseMessage> GetResponseAsync(string path, CancellationToken cancellationToken) =>
+        _client.GetAsync(new Uri(path, UriKind.Relative), cancellationToken);
+
     public Task<(HttpStatusCode Status, JsonElement Body)> GetAsync(string path, CancellationToken cancellationToken) =>
         SendAsync(HttpMethod.Get, path, body: null, rowVersionHeader: null, cancellationToken);
 
