@@ -111,6 +111,21 @@ describe('popular searches (#78)', () => {
       request.flush(null, { status: 204, statusText: 'No Content' });
     });
 
+    it('reports a browser driven by automation as automated, so the API does not count it', () => {
+      const http = setUp();
+      Object.defineProperty(window.navigator, 'webdriver', { value: true, configurable: true });
+
+      try {
+        TestBed.inject(SearchSubmissions).record('linen');
+
+        const request = http.expectOne(SEARCH_SUBMISSIONS_ROUTE);
+        expect(request.request.body).toEqual({ term: 'linen', automated: true });
+        request.flush(null, { status: 204, statusText: 'No Content' });
+      } finally {
+        delete (window.navigator as { webdriver?: boolean }).webdriver;
+      }
+    });
+
     it.each(['someone@example.com', '077 123 4567', 'a', '', 'a b'])(
       'never puts %p on the wire',
       (term) => {
