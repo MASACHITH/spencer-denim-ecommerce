@@ -345,6 +345,41 @@ public sealed class InternationalCheckoutTests(SqlServerDatabaseFixture sqlServe
         Assert.Equal(DeliveryMethod.InternationalCode, Assert.Single(session.DeliveryOptions).Code);
     }
 
+    /// <summary>
+    /// Attack 1 (independent-tester pass): a client that sends both a valid Sri Lankan <c>districtId</c> and
+    /// an overseas <c>countryCode</c> in the same placement body, trying to land an order that mixes the two —
+    /// exactly the shape <c>CK_Orders_Destination</c> exists to refuse. <c>ResolveDestinationAsync</c> decides
+    /// the destination from the country alone and never even reads <c>districtId</c> once the country is
+    /// overseas, so the order is placed — not refused — and written with no district at all, proving the
+    /// field cannot be smuggled in by mass assignment.
+    /// </summary>
+    [Fact]
+    public async Task A_district_sent_alongside_an_overseas_country_is_ignored_not_smuggled_in()
+    {
+        var variantId = await CheckoutVariantIdAsync();
+        await SetStockAsync(variantId, 10);
+        var (_, _, api) = await NewBagAsync(variantId);
+        var international = await DeliveryMethodIdAsync(DeliveryMethod.InternationalCode);
+        var colombo = await DistrictIdAsync("Colombo");
+
+        var (_, session) = await api.GetAsync(null, international, Token, countryCode: "IN");
+
+        var body = OverseasBody(session!, international, "IN", "110001", null);
+        body["districtId"] = colombo;
+
+        var (response, order) = await api.PlaceAsync(body, Token);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.NotNull(order);
+
+        var row = await OrderByNumberAsync(order.OrderNumber);
+        Assert.Equal("IN", row.DeliveryCountryCode);
+        Assert.Null(row.DeliveryDistrictId);
+        Assert.Null(row.DeliveryDistrictName);
+        Assert.Null(row.DeliveryZone);
+        Assert.Null(order.Delivery.DistrictName);
+    }
+
     // ------------------------------------------------------------------------------------------- helpers
 
     private async Task<(OrderConfirmationDto Order, CheckoutApiClient Api)> PlaceSriLankanAsync()

@@ -12,17 +12,33 @@ namespace SpencerDenim.IntegrationTests.Identity;
 /// applies here for the same reason: doc 08 §3.1's table is the only description of this table anybody
 /// will read, and an assertion per interesting column says nothing about a column that was forgotten.
 /// </para>
+/// <para>
+/// <b>Independent-tester pass, 2026-10-21.</b> This file's four data-bearing tests were failing on
+/// <c>feature/intl-delivery-paypal-only</c> as handed over: they still asserted the pre-overseas-delivery
+/// shape (<c>DistrictId NOT NULL</c>, no <c>CountryCode</c>/<c>Region</c>, two foreign keys, four indexes).
+/// The migration genuinely made <c>DistrictId</c> nullable and added <c>CountryCode</c>/<c>Region</c>, their
+/// index and their foreign key (owner decision 2026-10-21) — this file's namespace is
+/// <c>SpencerDenim.IntegrationTests.Identity</c>, which the developer's broad-regression filter
+/// ("Sales, Api.Admin, Api.Accounts, Api.Catalog, Content, Ops") never named, so these four never ran in that
+/// pass and the staleness went uncaught. Corrected here to the shape the migration and
+/// <see cref="CustomerAddressConfiguration"/> actually produce.
+/// </para>
 /// </summary>
 public sealed class CustomerAddressSchemaTests(SqlServerDatabaseFixture sqlServer)
     : SalesSchemaTestBase(sqlServer)
 {
-    /// <summary>Doc 08 §3.1's column list, plus the four audit columns its <b>[A]</b> tag adds.</summary>
+    /// <summary>
+    /// Doc 08 §3.1's column list, plus the four audit columns its <b>[A]</b> tag adds, and the country and
+    /// region columns owner decision 2026-10-21 adds: <c>DistrictId</c> is nullable (an overseas address has
+    /// none) and <c>CountryCode</c> is <c>NOT NULL</c> (every address names a country, Sri Lanka included).
+    /// </summary>
     private static readonly string[] ExpectedColumns =
     [
         "City|nvarchar|NOT NULL",
+        "CountryCode|char|NOT NULL",
         "CreatedAtUtc|datetime2(3)|NOT NULL",
         "CreatedByUserId|int|NULL",
-        "DistrictId|int|NOT NULL",
+        "DistrictId|int|NULL",
         "Id|int|NOT NULL",
         "IsDefault|bit|NOT NULL",
         "Label|nvarchar|NULL",
@@ -32,13 +48,16 @@ public sealed class CustomerAddressSchemaTests(SqlServerDatabaseFixture sqlServe
         "Phone|varchar|NOT NULL",
         "PostalCode|varchar|NULL",
         "RecipientName|nvarchar|NOT NULL",
+        "Region|nvarchar|NULL",
         "UpdatedAtUtc|datetime2(3)|NULL",
         "UpdatedByUserId|int|NULL",
         "UserId|int|NOT NULL",
     ];
 
+    /// <summary>The country index owner decision 2026-10-21 adds, alongside the three that predate it.</summary>
     private static readonly string[] ExpectedIndexes =
     [
+        "IX_CustomerAddresses_CountryCode (CountryCode)",
         "IX_CustomerAddresses_District (DistrictId)",
         "IX_CustomerAddresses_User (UserId, Id)",
         "PK_CustomerAddresses (Id) UNIQUE",
@@ -120,6 +139,10 @@ public sealed class CustomerAddressSchemaTests(SqlServerDatabaseFixture sqlServe
                 "Phone=20",
                 "PostalCode=10",
                 "RecipientName=240",
+
+                // Region (owner decision 2026-10-21): nvarchar(80), the overseas state or province.
+                // CountryCode is char(2) and excluded by this query's own filter, as it always was.
+                "Region=160",
             ],
             widths.Order(StringComparer.Ordinal));
     }
@@ -178,8 +201,9 @@ public sealed class CustomerAddressSchemaTests(SqlServerDatabaseFixture sqlServe
     }
 
     /// <summary>
-    /// Both foreign keys exist and neither cascades (doc 08 §1.6's default and its cascade allow-list,
-    /// which names no table in the <c>identity</c> schema).
+    /// All three foreign keys exist and none cascades (doc 08 §1.6's default and its cascade allow-list,
+    /// which names no table in the <c>identity</c> schema). The third, to <c>ref.Countries</c>, is owner
+    /// decision 2026-10-21 — every address names a country now, Sri Lanka included.
     /// </summary>
     /// <remarks>
     /// <b>A cascade from <c>Users</c> would be a PDPA hazard rather than a convenience.</b> §3.1's
@@ -188,7 +212,7 @@ public sealed class CustomerAddressSchemaTests(SqlServerDatabaseFixture sqlServe
     /// silently taking addresses with it and bypassing the audited routine.
     /// </remarks>
     [Fact]
-    public async Task Neither_foreign_key_cascades()
+    public async Task No_foreign_key_cascades()
     {
         SqlServer.SkipIfUnavailable();
 
@@ -205,10 +229,37 @@ public sealed class CustomerAddressSchemaTests(SqlServerDatabaseFixture sqlServe
 
         Assert.Equal(
             [
+                "FK_CustomerAddresses_Countries_CountryCode -> ref.Countries ON DELETE NO_ACTION",
                 "FK_CustomerAddresses_Districts_DistrictId -> ref.Districts ON DELETE NO_ACTION",
                 "FK_CustomerAddresses_Users_UserId -> identity.Users ON DELETE NO_ACTION",
             ],
             keys.Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// Owner decision 2026-10-21: <c>CK_CustomerAddresses_Destination</c> exists, naming the branch doc 08
+    /// gives it verbatim — Sri Lanka with a district, or a foreign country with none.
+    /// <c>CustomerAddressEndpointTests</c>' hand-written-row tests prove the database actually enforces it;
+    /// this proves the text on the row is the text doc 08 names, so a future edit to the constraint cannot
+    /// drift from the document without a schema test noticing.
+    /// </summary>
+    [Fact]
+    public async Task The_destination_check_constraint_matches_doc_08()
+    {
+        SqlServer.SkipIfUnavailable();
+
+        var definition = await DbContext.Database
+            .SqlQuery<string>($"""
+                SELECT definition COLLATE DATABASE_DEFAULT AS [Value]
+                FROM sys.check_constraints
+                WHERE parent_object_id = OBJECT_ID('identity.CustomerAddresses')
+                  AND name = 'CK_CustomerAddresses_Destination'
+                """)
+            .SingleAsync(Token);
+
+        Assert.Contains("[CountryCode]='LK'", definition.Replace(" ", string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
+        Assert.Contains("[DistrictId] IS NOT NULL", definition, StringComparison.Ordinal);
+        Assert.Contains("[DistrictId] IS NULL", definition, StringComparison.Ordinal);
     }
 
     /// <summary>
