@@ -1172,17 +1172,24 @@ Stock is **not** reserved in the cart. The cart row is created on the first Add 
 | IsActive | bit | N | |
 | StartsAtUtc / EndsAtUtc | datetime2(3) | Y | |
 
-#### `content.MegaMenuPromoCards` (GLB-05) [A]
+#### `content.MegaMenuPromoCards` (GLB-05) [A] [RV]
 | Column | Type | Null | Notes |
 |---|---|---|---|
 | Id | int | N | PK |
-| DepartmentId | int | N | FK Departments |
-| Title / Subtitle | nvarchar(100) / nvarchar(200) | N/Y | |
-| ImageAssetId | int | N | FK MediaAssets |
-| LinkUrl | nvarchar(500) | N | |
+| DepartmentId | int | N | FK Departments (NO ACTION) |
+| Title / Subtitle | nvarchar(100) / nvarchar(200) | N/Y | CK `LEN(Title) > 0` |
+| ButtonLabel | nvarchar(40) | N | CK `LEN > 0`. Added by #215 (the storefront had hard-coded "Shop now") |
+| ImageAssetId | int | **Y** | FK MediaAssets (NO ACTION). CK `IsActive = 0 OR ImageAssetId IS NOT NULL`: a card waits for its picture switched off (#215) |
+| LinkUrl | nvarchar(500) | N | CK `LEN > 0`. A path on this site or an http(s) address (ADM-17's link rules) |
 | SortOrder | smallint | N | |
 | IsActive | bit | N | |
-| StartsAtUtc / EndsAtUtc | datetime2(3) | Y | |
+| StartsAtUtc / EndsAtUtc | datetime2(3) | Y | CK end after start |
+- [RV] added by #215: the admin editor's concurrency token.
+- `IX_MegaMenuPromoCards_Department_SortOrder (DepartmentId, SortOrder)`, `IX_MegaMenuPromoCards_ImageAssetId`. Migration `MegaMenuPromoCards` (#215).
+- **Several per department, one drawn:** the storefront draws the first card by `SortOrder, Id` that is switched on, inside its window and has a ready public image; with none, the menu draws the department's own card ("New in …", its description and hero picture, "Shop now" to `/new-arrivals`). At most 6 per department.
+- Delivered in `GET /api/catalog/departments` as `promoCards` (only drawable cards, best first). That feed has **no server cache**, so a save or a schedule boundary shows on the next request; writes still evict the homepage cache (§7.4) as every ADM-17 write does.
+- The seeder offers each department one card in today's words, **switched off**, once (`Seed.MegaMenuCardsVersion`), never over an existing card.
+- A card's image is a `MediaUsages` row (`OwnerType = MegaMenuPromoCard`, role `Image`) written in the same transaction as the card, so the media library refuses to delete it.
 
 #### `content.ContentPages` (GLB-10) [A] [SD] [RV]
 | Column | Type | Null | Notes |
@@ -1552,6 +1559,7 @@ OUTPUT inserted.OnHand, inserted.Reserved
 - **Error 1205 (deadlock victim):** the whole unit of work is retried by the EF execution strategy, up to 3 attempts. EF Core's SQL Server retry strategy **already classifies 1205 as transient**, so no `errorNumbersToAdd` is needed (N12). Retries are safe because every step is conditional.
 - **Capture apply (N6)** follows the same order: order row, payment row, stock rows, promo.
 - **A media asset row (#191).** A sale campaign's save that puts a banner on and the media library's delete both take `WITH (UPDLOCK, READCOMMITTEDLOCK, ROWLOCK)` on the asset's `media.MediaAssets` row **first**, inside their transaction, before any other read or write. Exactly one wins: a save that got the row first commits its `MediaUsages` row and the delete then refuses (409); a delete that got it first commits the soft delete and the save then finds the asset deleted and writes nothing. Neither path takes another lock the other holds, so they cannot deadlock.
+- **Content owners of a picture (#215).** Homepage items, size guides and mega-menu cards save through one transaction (`ContentAdminStores.SaveWithUsageAsync`) that takes the same lock on every asset the row will point at, **by ascending `Id`**, and re-checks each (not deleted, ready, public, of its slot's kind, alt text on an image) before writing anything; a failed re-check writes nothing and answers 400 on that field. A mega-menu card's create, or move into another department, first takes `UPDLOCK, READCOMMITTEDLOCK, ROWLOCK` on its `catalog.Departments` row and counts the department's cards under it (the limit of 6). **Order: the department row, then asset rows by ascending id, then the writes.** The media delete takes only its one asset row, and nothing else locks a department row before an asset row, so no cycle is possible. Product media and category images use a different path and are not covered yet (#223).
 
 ### 5.4 Place order
 1. **Before the transaction:** price the cart (§6) and allocate the order number (short separate transaction).
@@ -1722,7 +1730,8 @@ OFFSET @skip ROWS FETCH NEXT 24 ROWS ONLY;
 | `Categories.Path/Depth` | ParentCategoryId | Move use case (one transaction) | None |
 | `PromoCodes.UsageCount` | Held uses on Orders | Conditional updates (§3.6) | None |
 | Order snapshots | Catalog at purchase | Never synced | n/a |
-| Homepage output (`GET /api/content/home`, §3.7) | HomeSections, HomeSectionItems, and the catalogue rows a product row draws | In-process cache. **Evicted by every ADM-17 content write** (homepage blocks and items, announcements, size guides, content pages). An entry expires at the **earlier** of 5 min and the next `StartsAtUtc`/`EndsAtUtc` still ahead among switched-on sections and items (#37), so a block appears and disappears on its schedule | **Schedule: none beyond one request in flight** (the entry is stored only until the boundary; a boundary already due is never cached). Measured end to end within 2 s. **A content edit on another API instance: ≤ 5 min** (eviction reaches only the instance that wrote; the others keep their entry until the cap or the boundary). **Product rows: ≤ 5 min** for a campaign or stock change, as the rows above. The announcement strip is not in this cache; the storefront fetches it once per page load, so a message whose window ends mid-visit stays until the next navigation that reloads the shell |
+| Homepage output (`GET /api/content/home`, §3.7) | HomeSections, HomeSectionItems, and the catalogue rows a product row draws | In-process cache. **Evicted by every ADM-17 content write** (homepage blocks and items, announcements, size guides, content pages, mega-menu cards). An entry expires at the **earlier** of 5 min and the next `StartsAtUtc`/`EndsAtUtc` still ahead among switched-on sections and items (#37), so a block appears and disappears on its schedule | **Schedule: none beyond one request in flight** (the entry is stored only until the boundary; a boundary already due is never cached). Measured end to end within 2 s. **A content edit on another API instance: ≤ 5 min** (eviction reaches only the instance that wrote; the others keep their entry until the cap or the boundary). **Product rows: ≤ 5 min** for a campaign or stock change, as the rows above. The announcement strip is not in this cache; the storefront fetches it once per page load, so a message whose window ends mid-visit stays until the next navigation that reloads the shell |
+| Mega-menu cards (`GET /api/catalog/departments` → `promoCards`, §3.7, #215) | MegaMenuPromoCards, MediaAssets | **Not cached on the server**: read with the departments on every request. The SSR render hands the tree to the browser with the page | None: a save, a removal or a schedule boundary shows on the next page request. A page already open keeps the card it was served with until it navigates with a full load |
 - **No blind nightly overwrite (N11):** `NightlyStats` writes only `SoldQty30d/Total`. Pricing and rating columns are maintained transactionally, so the job only **compares** them with a recompute and raises a `ReconciliationDrift` alert on any difference. It never overwrites a concurrent update.
 
 ### 7.5 Facet counts and caching

@@ -1,6 +1,6 @@
 /**
- * The `/api/admin/content/{home,announcements,size-guides}` half of the admin stub (#192: ADM-17,
- * GLB-03, PDP-04).
+ * The `/api/admin/content/{home,announcements,size-guides,mega-menu}` half of the admin stub (#192: ADM-17,
+ * GLB-03, PDP-04; #215: GLB-05).
  *
  * It lives beside `admin-catalog-stub.mjs`, which calls {@link handleContentRoute}, for the reason the
  * product stub gives: that file is long enough already, and these rules are worth reading on their own.
@@ -14,7 +14,9 @@
  *   allowed), wall-clock dates with no offset, end after start;
  * - a missing or stale row version is a 409 `stale_row_version`, and a write moves it — for an item,
  *   the SECTION's row version, because the section is the aggregate;
- * - 409 `items_not_supported`, `section_full`, `too_many_announcements`, `size_guide_in_use`;
+ * - 409 `items_not_supported`, `section_full`, `too_many_announcements`, `size_guide_in_use`,
+ *   `too_many_mega_menu_cards`;
+ * - a mega-menu card switched on without a picture is a 400 on `imagePublicId` (#215);
  * - `/__test__/content-permission?deny=view|write|none` makes the routes answer 403, as a role
  *   without `Content.*` would.
  */
@@ -155,6 +157,13 @@ const ITEM_FIELD_KEY = {
 };
 
 const ANNOUNCEMENT_KEYS = ['message', 'linkUrl', 'sortOrder', 'isActive', 'startsAt', 'endsAt'];
+const MEGA_MENU_CARD_KEYS = [
+  'departmentId', 'title', 'subtitle', 'buttonLabel', 'linkUrl', 'imagePublicId', 'sortOrder', 'isActive', 'startsAt',
+  'endsAt',
+];
+
+/** `MegaMenuPromoCardLimits` and `ContentFieldLimits.ButtonLabelMaxLength` (#215). */
+const MEGA_MENU = { title: 100, subtitle: 200, buttonLabel: 40, maxCardsPerDepartment: 6 };
 const SIZE_GUIDE_KEYS = ['name', 'introHtml', 'tableJson', 'measuringTipsHtml', 'imagePublicId'];
 
 const LIMITS = { maxColumns: 20, maxRows: 100, maxCells: 1000, maxCellLength: 60, maxHtmlLength: 20000 };
@@ -267,6 +276,22 @@ export function freshContentState() {
       },
     ],
     nextSizeGuideId: 3,
+    // #215: what the seeder offers a fresh database: one switched-off card per department in today's words.
+    megaMenuCards: DEPARTMENTS.map((department, index) => ({
+      id: index + 1,
+      departmentId: department.id,
+      title: `New in ${department.name}`,
+      subtitle: null,
+      buttonLabel: 'Shop now',
+      linkUrl: '/new-arrivals',
+      imagePublicId: null,
+      sortOrder: 0,
+      isActive: false,
+      startsAt: null,
+      endsAt: null,
+      rowVersion: nextRowVersion(),
+    })),
+    nextMegaMenuCardId: DEPARTMENTS.length + 1,
     deny: 'none',
   };
 }
@@ -348,6 +373,51 @@ function sectionDto(state, section) {
       };
     }),
     rowVersion: section.rowVersion,
+  };
+}
+
+/** `GET /api/admin/content/mega-menu`: every department, its cards, and which one the menu draws now. */
+function megaMenuDto(state) {
+  const cards = [...state.content.megaMenuCards].sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
+
+  return {
+    departments: DEPARTMENTS.map((department) => {
+      const own = cards.filter((card) => card.departmentId === department.id);
+      const shown = own.find(
+        (card) => isLive(card.isActive, card.startsAt, card.endsAt) && mediaRef(state, card.imagePublicId) !== null,
+      );
+
+      return {
+        id: department.id,
+        name: department.name,
+        slug: department.slug,
+        isActive: department.isActive,
+        description: department.id === 1 ? 'Everyday essentials and occasion pieces.' : null,
+        heroImage: null,
+        cards: own.map((card) => {
+          const image = mediaRef(state, card.imagePublicId);
+          return {
+            id: card.id,
+            departmentId: card.departmentId,
+            title: card.title,
+            subtitle: card.subtitle,
+            buttonLabel: card.buttonLabel,
+            linkUrl: card.linkUrl,
+            image: image && { publicId: image.publicId, url: image.url, altText: image.altText },
+            sortOrder: card.sortOrder,
+            isActive: card.isActive,
+            startsAt: card.startsAt,
+            endsAt: card.endsAt,
+            isLiveNow: isLive(card.isActive, card.startsAt, card.endsAt),
+            isShownNow: card === shown,
+            isEnded: card.isActive && card.endsAt !== null && card.endsAt.slice(0, 16) <= colomboNow(),
+            isPictureUnavailable: isLive(card.isActive, card.startsAt, card.endsAt) && mediaRef(state, card.imagePublicId) === null,
+            rowVersion: card.rowVersion,
+          };
+        }),
+      };
+    }),
+    maxCardsPerDepartment: MEGA_MENU.maxCardsPerDepartment,
   };
 }
 
@@ -533,7 +603,13 @@ export async function handleContentRoute(ctx) {
     const kind = url.searchParams.get('kind');
     const id = Number(url.searchParams.get('id'));
     const list =
-      kind === 'section' ? state.content.sections : kind === 'announcement' ? state.content.announcements : state.content.sizeGuides;
+      kind === 'section'
+        ? state.content.sections
+        : kind === 'announcement'
+          ? state.content.announcements
+          : kind === 'card'
+            ? state.content.megaMenuCards
+            : state.content.sizeGuides;
     const row = list.find((candidate) => candidate.id === id);
     if (row) {
       if (kind === 'announcement') row.version = nextRowVersion();
@@ -543,7 +619,7 @@ export async function handleContentRoute(ctx) {
     return true;
   }
 
-  if (!/^\/api\/admin\/content\/(home|announcements|size-guides)(\/|$)/.test(path)) {
+  if (!/^\/api\/admin\/content\/(home|announcements|size-guides|mega-menu)(\/|$)/.test(path)) {
     return false;
   }
 
@@ -841,6 +917,108 @@ export async function handleContentRoute(ctx) {
       version: nextRowVersion(),
     });
     json(response, method === 'POST' ? 201 : 200, { id: row.id, version: row.version });
+    return true;
+  }
+
+  // ---- mega-menu cards (#215) --------------------------------------------------------------------
+  if (path === '/api/admin/content/mega-menu' && method === 'GET') {
+    json(response, 200, megaMenuDto(state));
+    return true;
+  }
+
+  const cardMatch = path.match(/^\/api\/admin\/content\/mega-menu\/cards\/(\d+)$/);
+  if ((path === '/api/admin/content/mega-menu/cards' && method === 'POST') || (cardMatch && (method === 'PUT' || method === 'DELETE'))) {
+    let card = null;
+    if (cardMatch) {
+      card = content.megaMenuCards.find((candidate) => candidate.id === Number(cardMatch[1])) ?? null;
+      if (!card) {
+        problem(response, 404, 'Not found', 'That card is not there.', 'not_found');
+        return true;
+      }
+    }
+
+    if (method === 'DELETE') {
+      if (ifMatch(request) !== card.rowVersion) {
+        stale(problem, response);
+        return true;
+      }
+      content.megaMenuCards = content.megaMenuCards.filter((candidate) => candidate !== card);
+      noContent(response);
+      return true;
+    }
+
+    const body = await readJson();
+    if (body === null) return true;
+
+    const errors = new Errors();
+    missingKeys(body, method === 'PUT' ? [...MEGA_MENU_CARD_KEYS, 'rowVersion'] : MEGA_MENU_CARD_KEYS, errors);
+    if (errors.any) {
+      validationProblem(json, response, errors.errors);
+      return true;
+    }
+
+    if (!Number.isInteger(body.departmentId) || !DEPARTMENTS.some((department) => department.id === body.departmentId)) {
+      errors.add('departmentId', 'Choose the department whose menu shows this card.');
+    }
+    checkText(errors, 'title', body.title, MEGA_MENU.title, true);
+    checkText(errors, 'subtitle', body.subtitle, MEGA_MENU.subtitle);
+    checkText(errors, 'buttonLabel', body.buttonLabel, MEGA_MENU.buttonLabel, true);
+    if (body.linkUrl === null || (typeof body.linkUrl === 'string' && body.linkUrl.trim().length === 0)) {
+      errors.add('linkUrl', 'Say where the card goes: a page on this shop such as /new-arrivals.');
+    } else {
+      checkLink(errors, 'linkUrl', body.linkUrl, true);
+    }
+    checkInt(errors, 'sortOrder', body.sortOrder, 0, 999);
+    if (typeof body.isActive !== 'boolean') errors.add('isActive', 'Say whether the card is shown.');
+    checkSchedule(errors, body);
+    if (body.imagePublicId !== null && !mediaExists(state, body.imagePublicId)) {
+      errors.add('imagePublicId', 'That file is not in the media library. Upload it again.');
+    } else if (body.isActive === true && body.imagePublicId === null) {
+      errors.add('imagePublicId', 'A card needs an image before it can be shown. Save it switched off until you have one.');
+    }
+
+    if (errors.any) {
+      validationProblem(json, response, errors.errors);
+      return true;
+    }
+
+    if (card !== null && body.rowVersion !== card.rowVersion) {
+      stale(problem, response);
+      return true;
+    }
+
+    const moving = card === null || card.departmentId !== body.departmentId;
+    const held = content.megaMenuCards.filter((candidate) => candidate.departmentId === body.departmentId).length;
+    if (moving && held >= MEGA_MENU.maxCardsPerDepartment) {
+      problem(
+        response,
+        409,
+        'This change cannot be applied',
+        'This department already holds 6 cards. Remove one you no longer need first.',
+        'too_many_mega_menu_cards',
+      );
+      return true;
+    }
+
+    if (card === null) {
+      card = { id: content.nextMegaMenuCardId++ };
+      content.megaMenuCards.push(card);
+    }
+
+    Object.assign(card, {
+      departmentId: body.departmentId,
+      title: body.title.trim(),
+      subtitle: typeof body.subtitle === 'string' && body.subtitle.trim().length > 0 ? body.subtitle.trim() : null,
+      buttonLabel: body.buttonLabel.trim(),
+      linkUrl: body.linkUrl.trim(),
+      imagePublicId: body.imagePublicId,
+      sortOrder: body.sortOrder,
+      isActive: body.isActive,
+      startsAt: body.startsAt,
+      endsAt: body.endsAt,
+      rowVersion: nextRowVersion(),
+    });
+    json(response, method === 'POST' ? 201 : 200, { id: card.id, rowVersion: card.rowVersion });
     return true;
   }
 

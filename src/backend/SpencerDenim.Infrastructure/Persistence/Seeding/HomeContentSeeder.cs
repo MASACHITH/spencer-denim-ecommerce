@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Domain.Content;
 using SpencerDenim.Domain.Identity;
+using SpencerDenim.Domain.Media;
 using SpencerDenim.Domain.Settings;
 
 namespace SpencerDenim.Infrastructure.Persistence.Seeding;
@@ -42,6 +43,7 @@ public sealed class HomeContentSeeder(AppDbContext dbContext, IClock clock)
             + await SeedBenefitsAsync(cancellationToken)
             + await SeedArtworkItemsAsync(cancellationToken);
         counts.Announcements = await SeedAnnouncementsAsync(cancellationToken);
+        counts.MegaMenuCards = await SeedMegaMenuCardsAsync(cancellationToken);
         counts.ContentPages = await SeedContentPagesAsync(cancellationToken);
 
         return counts;
@@ -398,6 +400,116 @@ public sealed class HomeContentSeeder(AppDbContext dbContext, IClock clock)
         return added;
     }
 
+    /// <summary>
+    /// #215: one mega-menu card per department, <b>switched off</b>, in exactly the words the storefront used to
+    /// hard-code — "New in {department}", the department's description, "Shop now", <c>/new-arrivals</c> — and
+    /// the department's own picture when it has a usable one. Switched on, it reproduces today's menu; left off,
+    /// the storefront keeps drawing today's card from the department, so a fresh database looks as it did.
+    /// <para>
+    /// <b>Offered once, by its own marker</b> (<c>Seed.MegaMenuCardsVersion</c>), the #152 rule: a client who
+    /// deletes a card has it stay deleted. Never over an existing card — a department that already holds one,
+    /// on or off, is left alone. The cards, their usage rows and the marker are one transaction.
+    /// </para>
+    /// </summary>
+    private async Task<int> SeedMegaMenuCardsAsync(CancellationToken cancellationToken)
+    {
+        var marker = await dbContext.Settings
+            .FirstOrDefaultAsync(setting => setting.Key == SettingKeys.Seed.MegaMenuCardsVersion, cancellationToken);
+
+        var recorded = marker is not null
+            && int.TryParse(marker.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+                ? parsed
+                : 0;
+
+        if (recorded >= HomeContentData.MegaMenuCardSeedVersion)
+        {
+            return 0;
+        }
+
+        var departments = await dbContext.Departments
+            .AsNoTracking()
+            .OrderBy(department => department.SortOrder)
+            .ThenBy(department => department.Id)
+            .Select(department => new
+            {
+                department.Id,
+                department.Name,
+                department.Description,
+                department.HeroImageAssetId,
+                HeroUsable = department.HeroImageAsset != null
+                    && department.HeroImageAsset.MediaType == MediaAssetType.Image
+                    && department.HeroImageAsset.Status == MediaAssetStatus.Ready
+                    && department.HeroImageAsset.Visibility == MediaVisibility.Public
+                    && department.HeroImageAsset.AltText != null
+                    && department.HeroImageAsset.AltText != string.Empty,
+            })
+            .ToListAsync(cancellationToken);
+
+        var holding = (await dbContext.MegaMenuPromoCards
+                .Select(card => card.DepartmentId)
+                .Distinct()
+                .ToListAsync(cancellationToken))
+            .ToHashSet();
+
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+            var added = new List<MegaMenuPromoCard>();
+            foreach (var department in departments.Where(department => !holding.Contains(department.Id)))
+            {
+                var card = HomeContentData.MegaMenuCardFor(department.Name, department.Description);
+                card.DepartmentId = department.Id;
+                card.ImageAssetId = department.HeroUsable ? department.HeroImageAssetId : null;
+                dbContext.MegaMenuPromoCards.Add(card);
+                added.Add(card);
+            }
+
+            var value = HomeContentData.MegaMenuCardSeedVersion.ToString(CultureInfo.InvariantCulture);
+            if (marker is null)
+            {
+                dbContext.Settings.Add(new Setting
+                {
+                    Key = SettingKeys.Seed.MegaMenuCardsVersion,
+                    GroupKey = SettingKeys.Seed.Group,
+                    ValueType = SettingValueType.Int,
+                    Value = value,
+                    RequiredPermission = Permissions.Settings.Security,
+                    Description =
+                        "The highest mega-menu card seed version applied to this database (#215). Written by the "
+                        + "seeder; not editable.",
+                });
+            }
+            else
+            {
+                marker.Value = value;
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            // Doc 08 §3.3: the card's picture is a use of it, so the media library refuses to delete it.
+            var utcNow = clock.UtcNow.UtcDateTime;
+            foreach (var card in added.Where(card => card.ImageAssetId is not null))
+            {
+                dbContext.MediaUsages.Add(new MediaUsage
+                {
+                    MediaAssetId = card.ImageAssetId!.Value,
+                    OwnerType = MediaUsageOwnerTypes.MegaMenuPromoCard,
+                    OwnerId = card.Id.ToString(CultureInfo.InvariantCulture),
+                    UsageRole = MediaUsageRoles.Image,
+                    CreatedAtUtc = utcNow,
+                });
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            return added.Count;
+        });
+    }
+
     /// <summary>Puts the seeded words back over words the importer itself retracted. See the caller.</summary>
     private static void Retract(HomeSectionItem item, HomeContentData.ArtworkItemSeed seed)
     {
@@ -443,6 +555,9 @@ public sealed class HomeContentSeedCounts
     public int SectionItems { get; set; }
 
     public int Announcements { get; set; }
+
+    /// <summary><c>content.MegaMenuPromoCards</c> offered, switched off, one per department (#215).</summary>
+    public int MegaMenuCards { get; set; }
 
     /// <summary>
     /// <c>content.ContentPages</c> shells created because the system key had none (GLB-10). Bodies are

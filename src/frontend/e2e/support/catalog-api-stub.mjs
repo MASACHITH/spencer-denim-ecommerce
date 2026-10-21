@@ -1632,6 +1632,100 @@ const ANNOUNCEMENT_STATES = {
 
 let announcementsState = 'default';
 
+/**
+ * The mega-menu cards the departments feed carries (#215), switched by `/__test__/mega-menu-cards?state=…` on the
+ * mega-menu pair only. `none` sends the tree exactly as before — no `promoCards` key at all, the shape of an API
+ * from before #215 — so every other spec meets the menu it always has.
+ *
+ * - `card`     — Women gets an admin card with an internal, filtered link; Men and Kids keep the fallback.
+ * - `empty`    — every department sends `promoCards: []`, what a fresh database answers (its seeded cards are off).
+ * - `external` — Women's card points at an http(s) address.
+ * - `hostile`  — Women's first card carries markup in every text field and a `javascript:` link (so the menu must
+ *                skip it), and the second carries markup and a good link (so the menu must draw it as text).
+ * - `long`     — Women's card carries the longest heading, line and button the API allows.
+ */
+const MEGA_MENU_CARD_STATES = {
+  card: {
+    women: [
+      megaMenuCard(901, {
+        title: 'Linen days',
+        subtitle: 'Breathable pieces for the heat.',
+        buttonLabel: 'Shop linen',
+        linkUrl: '/women/dresses?material=linen',
+        imageAlt: 'A model in a linen dress',
+      }),
+    ],
+  },
+  external: {
+    women: [megaMenuCard(902, { title: 'Follow the edit', buttonLabel: 'See it on Instagram', linkUrl: 'https://instagram.com/colombowardrobe' })],
+  },
+  hostile: {
+    women: [
+      megaMenuCard(903, { title: 'Bad link', linkUrl: 'javascript:window.__xss=9' }),
+      megaMenuCard(904, {
+        title: '<img src=x onerror="window.__xss=1">Linen <b>days</b>',
+        subtitle: '</span><script>window.__xss=2</script>',
+        buttonLabel: '{{constructor.constructor("window.__xss=3")()}}',
+        linkUrl: '/women/dresses',
+        imageAlt: '"><svg onload=window.__xss=4>',
+      }),
+    ],
+  },
+  long: {
+    women: [
+      megaMenuCard(905, {
+        title: 'L'.repeat(100),
+        subtitle: 'Breathable linen pieces '.repeat(9).slice(0, 200),
+        buttonLabel: 'B'.repeat(40),
+        linkUrl: '/new-arrivals',
+      }),
+    ],
+  },
+};
+
+let megaMenuCardsState = 'none';
+
+/** When the switch was last turned, so `closing` can end a few seconds after it (#215 tester: window re-check). */
+let megaMenuCardsSwitchedAt = Date.now();
+
+/** One card as `MegaMenuPromoCardDto` sends it, with a real rendition ladder the stub serves. */
+function megaMenuCard(seed, overrides) {
+  const id = publicId(seed);
+  return {
+    id: seed,
+    title: 'Card',
+    subtitle: null,
+    buttonLabel: 'Shop now',
+    linkUrl: '/new-arrivals',
+    imageUrl: rendition(id, 'card'),
+    imageSrcSet: `${rendition(id, 'card')} 600w, ${rendition(id, 'large')} 1200w`,
+    imageAlt: 'A card picture',
+    ...overrides,
+  };
+}
+
+/** The departments body with this switch's cards on it; untouched for `none`. */
+function withMegaMenuCards(body) {
+  if (megaMenuCardsState === 'none' || !Array.isArray(body)) {
+    return body;
+  }
+
+  // `closing`: Women's card ends four seconds after the switch, so a test can watch an open page drop it.
+  const cards =
+    megaMenuCardsState === 'closing'
+      ? {
+          women: [
+            megaMenuCard(906, {
+              title: 'Closing soon',
+              startsAtUtc: new Date(megaMenuCardsSwitchedAt - 60_000).toISOString(),
+              endsAtUtc: new Date(megaMenuCardsSwitchedAt + 4_000).toISOString(),
+            }),
+          ],
+        }
+      : (MEGA_MENU_CARD_STATES[megaMenuCardsState] ?? {});
+  return body.map((department) => ({ ...department, promoCards: cards[department.slug] ?? [] }));
+}
+
 /** A slow answer, so a test can prove the menu does not hold the page open waiting for it. */
 const DELAY_MS = Number(process.env.E2E_API_DELAY_MS ?? 0);
 
@@ -3748,6 +3842,15 @@ const server = createServer((request, response) => {
     return;
   }
 
+  if (url.pathname === '/__test__/mega-menu-cards') {
+    const state = url.searchParams.get('state') ?? 'none';
+    megaMenuCardsState =
+      state === 'empty' || state === 'closing' || Object.hasOwn(MEGA_MENU_CARD_STATES, state) ? state : 'none';
+    megaMenuCardsSwitchedAt = Date.now();
+    response.end(JSON.stringify({ state: megaMenuCardsState }));
+    return;
+  }
+
   if (url.pathname === '/__test__/departments-fault') {
     departmentsFault = url.searchParams.get('mode') ?? 'none';
     response.end(JSON.stringify({ fault: departmentsFault }));
@@ -3822,7 +3925,7 @@ const server = createServer((request, response) => {
       // The storefront cancels at its own timeout, so by now the socket is usually gone. Writing
       // to it would raise an error nobody is listening for and take the stub down mid-run.
       if (!response.writableEnded && !response.destroyed) {
-        response.end(JSON.stringify(body));
+        response.end(JSON.stringify(withMegaMenuCards(body)));
       }
     }, delay).unref();
     return;

@@ -135,6 +135,20 @@ export const brandingURL = `http://localhost:${BRANDING_PORT}`;
 export const brandingApiURL = `http://localhost:${BRANDING_API_PORT}`;
 
 /**
+ * The mega-menu pair (#215). Its stub's `/__test__/mega-menu-cards?state=…` switch puts admin cards on the
+ * departments feed the SSR server reads, so the spec can measure the server-rendered HTML — the only place
+ * escaping is proved — as well as the browser. A pair of its own for the reason the branding pair gives: a
+ * switch on a stub every other spec shares changes the header under them.
+ */
+const MEGAMENU_PORT = Number(process.env['E2E_MEGAMENU_PORT'] ?? 4438);
+const MEGAMENU_API_PORT = Number(process.env['E2E_MEGAMENU_API_PORT'] ?? 4439);
+
+export const megaMenuURL = `http://localhost:${MEGAMENU_PORT}`;
+
+/** Exported so a test can turn the switch, and send the browser's own calls to the same stub. */
+export const megaMenuApiURL = `http://localhost:${MEGAMENU_API_PORT}`;
+
+/**
  * The listing that exists live and not in `core/navigation/navigation.data.ts`.
  *
  * Every other listing URL is in both trees, so only this one can tell "the catalogue does not have
@@ -346,6 +360,25 @@ export default defineConfig({
         PORT: String(BRANDING_PORT),
         API_INTERNAL_URL: brandingApiURL,
         E2E_MEDIA_PASSTHROUGH_URL: brandingApiURL,
+      },
+      reuseExistingServer: false,
+      timeout: 120_000,
+    },
+    {
+      // The mega-menu pair (#215). Not reused, and the readiness probe resets the switch, as the pairs above.
+      command: 'node e2e/support/catalog-api-stub.mjs',
+      url: `${megaMenuApiURL}/__test__/mega-menu-cards?state=none`,
+      env: { E2E_API_PORT: String(MEGAMENU_API_PORT) },
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+    {
+      command: 'npm run serve:ssr:storefront',
+      url: `${megaMenuURL}/healthz`,
+      env: {
+        PORT: String(MEGAMENU_PORT),
+        API_INTERNAL_URL: megaMenuApiURL,
+        E2E_MEDIA_PASSTHROUGH_URL: megaMenuApiURL,
       },
       reuseExistingServer: false,
       timeout: 120_000,

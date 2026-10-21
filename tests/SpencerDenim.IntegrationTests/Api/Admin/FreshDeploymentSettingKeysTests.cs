@@ -73,6 +73,7 @@ public sealed class FreshDeploymentSettingKeysTests(SqlServerDatabaseFixture sql
             .Where(key => !expected.Contains(key, StringComparer.OrdinalIgnoreCase))
             .Where(key => !string.Equals(key, SettingKeys.Seed.Version, StringComparison.OrdinalIgnoreCase))
             .Where(key => !string.Equals(key, SettingKeys.Seed.HomeContentVersion, StringComparison.OrdinalIgnoreCase))
+            .Where(key => !string.Equals(key, SettingKeys.Seed.MegaMenuCardsVersion, StringComparison.OrdinalIgnoreCase))
             .OrderBy(key => key, StringComparer.Ordinal)
             .ToList();
 
@@ -136,6 +137,7 @@ public sealed class FreshDeploymentSettingKeysTests(SqlServerDatabaseFixture sql
             .Select(definition => definition.Key)
             .Append(SettingKeys.Seed.Version)
             .Append(SettingKeys.Seed.HomeContentVersion)
+            .Append(SettingKeys.Seed.MegaMenuCardsVersion)
             .OrderBy(key => key, StringComparer.Ordinal)
             .ToList();
 

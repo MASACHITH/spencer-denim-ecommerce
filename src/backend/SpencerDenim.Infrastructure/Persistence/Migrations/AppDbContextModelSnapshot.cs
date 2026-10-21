@@ -1499,6 +1499,7 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         .HasColumnType("datetime2(3)");
 
                     b.Property<DateTime?>("UpdatedAtUtc")
+                        .IsConcurrencyToken()
                         .HasColumnType("datetime2(3)");
 
                     b.Property<int?>("UpdatedByUserId")
@@ -1836,6 +1837,92 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.ToTable("HomeSectionItems", "content", t =>
                         {
                             t.HasCheckConstraint("CK_HomeSectionItems_VideoFallback", "[VideoAssetId] IS NULL OR [ImageAssetId] IS NOT NULL OR [MobileImageAssetId] IS NOT NULL");
+                        });
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Content.MegaMenuPromoCard", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ButtonLabel")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("DepartmentId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("EndsAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("ImageAssetId")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("LinkUrl")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<short>("SortOrder")
+                        .HasColumnType("smallint");
+
+                    b.Property<DateTime?>("StartsAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<string>("Subtitle")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UpdatedByUserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ImageAssetId")
+                        .HasDatabaseName("IX_MegaMenuPromoCards_ImageAssetId");
+
+                    b.HasIndex("DepartmentId", "SortOrder")
+                        .HasDatabaseName("IX_MegaMenuPromoCards_Department_SortOrder");
+
+                    b.ToTable("MegaMenuPromoCards", "content", t =>
+                        {
+                            t.HasCheckConstraint("CK_MegaMenuPromoCards_ActiveImage", "[IsActive] = 0 OR [ImageAssetId] IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_MegaMenuPromoCards_ButtonLabel", "LEN([ButtonLabel]) > 0");
+
+                            t.HasCheckConstraint("CK_MegaMenuPromoCards_LinkUrl", "LEN([LinkUrl]) > 0");
+
+                            t.HasCheckConstraint("CK_MegaMenuPromoCards_Schedule", "[StartsAtUtc] IS NULL OR [EndsAtUtc] IS NULL OR [EndsAtUtc] > [StartsAtUtc]");
+
+                            t.HasCheckConstraint("CK_MegaMenuPromoCards_Title", "LEN([Title]) > 0");
                         });
                 });
 
@@ -4720,6 +4807,24 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.Navigation("Product");
 
                     b.Navigation("VideoAsset");
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Content.MegaMenuPromoCard", b =>
+                {
+                    b.HasOne("SpencerDenim.Domain.Catalog.Department", "Department")
+                        .WithMany()
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("SpencerDenim.Domain.Media.MediaAsset", "ImageAsset")
+                        .WithMany()
+                        .HasForeignKey("ImageAssetId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.Navigation("Department");
+
+                    b.Navigation("ImageAsset");
                 });
 
             modelBuilder.Entity("SpencerDenim.Domain.Identity.CustomerAddress", b =>

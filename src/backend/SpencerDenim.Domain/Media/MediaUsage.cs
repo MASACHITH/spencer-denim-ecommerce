@@ -67,6 +67,14 @@ public static class MediaUsageOwnerTypes
     public const string HomeSectionItem = "HomeSectionItem";
 
     /// <summary>
+    /// A department's mega-menu card (<c>content.MegaMenuPromoCards.ImageAssetId</c>, GLB-05, #215), one of doc
+    /// 08 §3.3's owner types. The column has a real foreign key, but the media library's delete is a soft
+    /// delete, so this row is what refuses deleting the picture a menu is showing. Rewritten in the same
+    /// transaction as the card's save, and removed with the card.
+    /// </summary>
+    public const string MegaMenuPromoCard = "MegaMenuPromoCard";
+
+    /// <summary>
     /// An <c>ops.Settings</c> row whose <c>ValueType</c> is <c>MediaAssetRef</c> (doc 08 §3.3, §3.8;
     /// ADM-22). <see cref="MediaUsage.OwnerId"/> is the setting <b>key</b> rather than a number — the
     /// one owner type whose id is not an integer, which is why the library's label lookup has to handle

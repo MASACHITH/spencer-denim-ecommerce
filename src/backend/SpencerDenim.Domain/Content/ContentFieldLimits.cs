@@ -35,3 +35,19 @@ public static class ContentFieldLimits
     /// </summary>
     public const short MaxSortOrder = 999;
 }
+
+/// <summary>The column widths of <c>content.MegaMenuPromoCards</c> (doc 08 §3.7, #215).</summary>
+public static class MegaMenuPromoCardLimits
+{
+    /// <summary><c>Title</c>: <c>nvarchar(100)</c>, doc 08's own width.</summary>
+    public const int TitleMaxLength = 100;
+
+    /// <summary><c>Subtitle</c>: <c>nvarchar(200)</c>, doc 08's own width.</summary>
+    public const int SubtitleMaxLength = 200;
+
+    /// <summary>
+    /// The most cards one department may hold, switched on or not. One is drawn at a time; the rest wait their
+    /// turn by schedule or position, and a queue longer than this is one nobody is managing.
+    /// </summary>
+    public const int MaxCardsPerDepartment = 6;
+}

@@ -1,19 +1,21 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Catalog.Abstractions;
 using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Domain.Media;
+using SpencerDenim.Infrastructure.Content;
 using SpencerDenim.Infrastructure.Persistence;
 
 namespace SpencerDenim.Infrastructure.Catalog;
 
 /// <summary>
-/// Reads the navigation tree (GLB-05, DEPT-01) in two queries — departments, then every active
-/// category — and assembles the hierarchy in memory. Doc 08 §3.2 sizes the tree at about 200 rows,
+/// Reads the navigation tree (GLB-05, DEPT-01) in three queries — departments, every active category, and the
+/// mega-menu cards that may be drawn now (#215) — and assembles the hierarchy in memory. Doc 08 §3.2 sizes the tree at about 200 rows,
 /// so fetching it whole beats a recursive query or one round trip per level.
 /// </summary>
-internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<CatalogOptions> options)
+internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<CatalogOptions> options, IClock clock)
     : IDepartmentCatalogReader
 {
     private readonly CatalogOptions _options = options.Value;
@@ -67,6 +69,33 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
                 category.AgeGroup != null ? category.AgeGroup.Slug : null))
             .ToListAsync(cancellationToken);
 
+        // The cards a shopper may see right now (#215), read live: this feed has no server cache, so a card
+        // saved, switched off or past its end is on the very next request. A handful of rows at most.
+        var utcNow = clock.UtcNow.UtcDateTime;
+        var cards = await dbContext.MegaMenuPromoCards
+            .AsNoTracking()
+            .Where(MegaMenuCardVisibility.DrawableAt(utcNow))
+            .OrderBy(card => card.SortOrder)
+            .ThenBy(card => card.Id)
+            .Select(card => new CardRow(
+                card.Id,
+                card.DepartmentId,
+                card.Title,
+                card.Subtitle,
+                card.ButtonLabel,
+                card.LinkUrl,
+                new MediaRef(
+                    card.ImageAsset!.StorageKey,
+                    card.ImageAsset.PublicId,
+                    card.ImageAsset.RenditionSetVersion,
+                    card.ImageAsset.Width),
+                card.ImageAsset.AltText,
+                card.StartsAtUtc,
+                card.EndsAtUtc))
+            .ToListAsync(cancellationToken);
+
+        var cardsByDepartment = cards.ToLookup(card => card.DepartmentId);
+
         var childrenByParent = categories
             .Where(category => category.ParentCategoryId is not null)
             .GroupBy(category => category.ParentCategoryId!.Value)
@@ -95,6 +124,9 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
                 categories
                     .Where(category => category.DepartmentId == department.Id && category.ParentCategoryId is null)
                     .Select(category => BuildNode(category, childrenByParent, _options.MediaBaseUrl))
+                    .ToList(),
+                cardsByDepartment[department.Id]
+                    .Select(card => BuildCard(card, _options.MediaBaseUrl))
                     .ToList()))
             .ToList()
             .AsReadOnly();
@@ -130,6 +162,42 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
             category.AgeGroupSlug,
             children);
     }
+
+    /// <summary>
+    /// A card's picture takes the sizes a category tile does: it fills the menu's last column, about 260 px wide.
+    /// </summary>
+    private static MegaMenuPromoCardDto BuildCard(CardRow card, string mediaBaseUrl)
+    {
+        var image = MediaUrlBuilder.ToImageSources(mediaBaseUrl, card.Image, MediaRenditions.Card, MediaRenditions.Large);
+
+        return new MegaMenuPromoCardDto(
+            card.Id,
+            card.Title,
+            card.Subtitle,
+            card.ButtonLabel,
+            card.LinkUrl,
+            image.Url,
+            image.SrcSet,
+            card.AltText,
+            AsUtc(card.StartsAtUtc),
+            AsUtc(card.EndsAtUtc));
+    }
+
+    /// <summary>The column is UTC by convention; marking it so makes the JSON carry its <c>Z</c>.</summary>
+    private static DateTime? AsUtc(DateTime? value) =>
+        value is { } instant ? DateTime.SpecifyKind(instant, DateTimeKind.Utc) : null;
+
+    private sealed record CardRow(
+        int Id,
+        int DepartmentId,
+        string Title,
+        string? Subtitle,
+        string ButtonLabel,
+        string LinkUrl,
+        MediaRef Image,
+        string? AltText,
+        DateTime? StartsAtUtc,
+        DateTime? EndsAtUtc);
 
     private sealed record DepartmentRow(
         int Id,

@@ -32,6 +32,7 @@ using SpencerDenim.Application.Content.Contracts;
 using SpencerDenim.Application.Content.Admin;
 using SpencerDenim.Application.Content.Admin.Announcements;
 using SpencerDenim.Application.Content.Admin.Home;
+using SpencerDenim.Application.Content.Admin.MegaMenu;
 using SpencerDenim.Application.Content.Admin.SizeGuides;
 using SpencerDenim.Application.Marketing.Promotions;
 using SpencerDenim.Application.Content.Admin.Contracts;
@@ -299,6 +300,15 @@ public static class DependencyInjection
             provider => provider.GetRequiredService<SizeGuideWriteHandlers>());
         services.AddScoped<ICommandHandler<DeleteSizeGuideCommand, ContentWriteResult>>(
             provider => provider.GetRequiredService<SizeGuideWriteHandlers>());
+
+        // Mega-menu cards (ADM-17, GLB-05; #215).
+        services.AddScoped<MegaMenuCardWriteHandlers>();
+        services.AddScoped<ICommandHandler<CreateMegaMenuCardCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<MegaMenuCardWriteHandlers>());
+        services.AddScoped<ICommandHandler<UpdateMegaMenuCardCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<MegaMenuCardWriteHandlers>());
+        services.AddScoped<ICommandHandler<DeleteMegaMenuCardCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<MegaMenuCardWriteHandlers>());
 
         // The admin promo-code screen (ADM-13, W3-05). Three writes in one class because they share every
         // rule; registered once per interface so each endpoint asks for the one command it sends.

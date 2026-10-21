@@ -165,6 +165,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     public DbSet<AnnouncementMessage> AnnouncementMessages => Set<AnnouncementMessage>();
 
+    /// <summary><c>content.MegaMenuPromoCards</c> (doc 08 §3.7, GLB-05). Created by #215's migration.</summary>
+    public DbSet<MegaMenuPromoCard> MegaMenuPromoCards => Set<MegaMenuPromoCard>();
+
     /// <summary><c>content.ContentPages</c> (doc 08 §3.7, GLB-10). Created by W2-11's migration.</summary>
     public DbSet<ContentPage> ContentPages => Set<ContentPage>();
 
