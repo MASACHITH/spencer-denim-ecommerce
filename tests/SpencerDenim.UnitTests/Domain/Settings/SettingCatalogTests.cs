@@ -68,16 +68,17 @@ public sealed class SettingCatalogTests
     }
 
     /// <summary>
-    /// The one secret this build seeds is PayPal's client secret (W4-01). Said as a test rather than left
-    /// implicit, because the <see cref="SettingValueType.Secret"/> machinery has few users — so the day the
-    /// next one is added, this test goes red and whoever adds it has to confirm the protector, the audit
-    /// redaction and the read models are all in place rather than discovering them later.
+    /// The secrets this build seeds are PayPal's client secret (W4-01) and the mail password (ADM-22, 2026-10-21).
+    /// Said as a test rather than left implicit, because the <see cref="SettingValueType.Secret"/> machinery has few
+    /// users — so the day the next one is added, this test goes red and whoever adds it has to confirm the protector,
+    /// the audit redaction and the read models are all in place rather than discovering them later. For the mail
+    /// password they are: <c>UpdateSmtpSettingsCommandHandlerTests</c> and <c>AdminSmtpSettingsEndpointTests</c>.
     /// </summary>
     [Fact]
-    public void The_only_secret_this_build_seeds_is_PayPals_client_secret()
+    public void The_only_secrets_this_build_seeds_are_PayPals_client_secret_and_the_mail_password()
     {
         Assert.Equal(
-            [SettingKeys.PayPal.ClientSecret],
+            [SettingKeys.PayPal.ClientSecret, SettingKeys.Smtp.Password],
             SettingCatalog.All.Where(definition => definition.IsSecret).Select(definition => definition.Key));
     }
 
@@ -190,6 +191,13 @@ public sealed class SettingCatalogTests
             SettingKeys.Traffic.RawRetentionDays,
             SettingKeys.Traffic.BotRetentionDays,
             SettingKeys.Reviews.RequireApproval,
+            SettingKeys.Smtp.Host,
+            SettingKeys.Smtp.Port,
+            SettingKeys.Smtp.Username,
+            SettingKeys.Smtp.Password,
+            SettingKeys.Smtp.FromAddress,
+            SettingKeys.Smtp.FromName,
+            SettingKeys.Smtp.UseStartTls,
         ];
 
         Assert.Equal(expected.Order(StringComparer.Ordinal), SettingCatalog.All.Select(d => d.Key).Order(StringComparer.Ordinal));
@@ -353,7 +361,9 @@ public sealed class SettingCatalogTests
     {
         // `Store` appears once although W3-04 added four more keys to it further down the list: Groups is
         // distinct, and that is what the "once each" in the name is about.
-        Assert.Equal(["Store", "Contact", "Social", "Bank", "Orders", "Payments.PayPal", "Traffic", "Reviews"], SettingCatalog.Groups);
+        Assert.Equal(
+            ["Store", "Contact", "Social", "Bank", "Orders", "Payments.PayPal", "Traffic", "Reviews", "Email.Smtp"],
+            SettingCatalog.Groups);
     }
 
     [Fact]
@@ -412,19 +422,32 @@ public sealed class SettingCatalogTests
             ],
             SettingCatalog.KeysIn(SettingKeys.PayPal.Group));
 
+        // The mail account (2026-10-21), in the order the form shows it.
+        Assert.Equal(
+            [
+                SettingKeys.Smtp.Host,
+                SettingKeys.Smtp.Port,
+                SettingKeys.Smtp.Username,
+                SettingKeys.Smtp.Password,
+                SettingKeys.Smtp.FromAddress,
+                SettingKeys.Smtp.FromName,
+                SettingKeys.Smtp.UseStartTls,
+            ],
+            SettingCatalog.KeysIn(SettingKeys.Smtp.Group));
+
         // A group nobody has defined is an empty list, not an exception: the read model iterates groups.
-        // `Bank`, then `Payments.PayPal`, used to be this example and are real groups now, so the next unbuilt
-        // one takes their place (doc 08 §3.8's `Email.Smtp`).
-        Assert.Empty(SettingCatalog.KeysIn("Email.Smtp"));
+        // `Bank`, `Payments.PayPal` and `Email.Smtp` used to be this example and are real groups now, so the next
+        // unbuilt one takes their place (doc 08 §3.8's `Security`).
+        Assert.Empty(SettingCatalog.KeysIn("Security"));
     }
 
     [Fact]
     public void Find_answers_null_for_a_key_this_build_does_not_know()
     {
-        // `Bank.AccountNumber`, then `Payments.PayPal.ClientId`, used to be the example of a key this build
-        // does not know. W3-03 and W4-01 added them, so an unbuilt group takes their place: doc 08 §3.8's
-        // `Email.Smtp.Host`.
-        Assert.Null(SettingCatalog.Find("Email.Smtp.Host"));
+        // `Bank.AccountNumber`, `Payments.PayPal.ClientId` and `Email.Smtp.Host` used to be the example of a key
+        // this build does not know. W3-03, W4-01 and ADM-22 (2026-10-21) added them, so an unbuilt group takes their
+        // place: doc 08 §3.8's `Security.StaffLockoutMaxFailures`.
+        Assert.Null(SettingCatalog.Find("Security.StaffLockoutMaxFailures"));
         Assert.Null(SettingCatalog.Find(null));
         Assert.Null(SettingCatalog.Find("Store.Logo"));
     }

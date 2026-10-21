@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Application.Ops.Email.Abstractions;
 
 namespace SpencerDenim.IntegrationTests.Infrastructure;
@@ -33,13 +34,13 @@ public sealed class ApiFactory(
         "Server=127.0.0.1,1;Database=SpencerDenim_Unreachable;User Id=unused;Password=unused;Connect Timeout=2;TrustServerCertificate=True";
 
     /// <summary>
-    /// The transport every test host gets: not configured, and unable to send if it were.
+    /// The transport every test host gets: unable to send. Whether there is an account at all is decided by the
+    /// account reader (the blanked configuration below plus the seeded, empty <c>Email.Smtp.Host</c> row), not by
+    /// this class.
     /// </summary>
     private sealed class NoMailTransport : IEmailTransport
     {
-        public bool IsConfigured => false;
-
-        public Task SendAsync(OutboundEmail email, CancellationToken cancellationToken) =>
+        public Task SendAsync(OutboundEmail email, SmtpSettings account, CancellationToken cancellationToken) =>
             throw new InvalidOperationException(
                 "A test asked the API host to send an email. No test may reach a mail server or a real "
                 + "address: drive IEmailOutboxStore directly with a fake transport instead.");
@@ -127,10 +128,11 @@ public sealed class ApiFactory(
             }
         });
 
-        // The second reason (see the blanked keys above): a transport with no socket in it. It reports
-        // itself unconfigured, so `SendEmails` leaves the queue alone exactly as it does in production
-        // today, and it throws if anything ever calls it — so a future test that accidentally configured
-        // a host would fail loudly here rather than posting a message to somebody's inbox.
+        // The second reason (see the blanked keys above): a transport with no socket in it. With no account
+        // configured `SendEmails` leaves the ordinary queue alone exactly as it does in production, and this
+        // throws if anything ever calls it — so a future test that accidentally configured a host (in
+        // configuration or in the Email.Smtp rows) would fail loudly here rather than posting a message to
+        // somebody's inbox. Tests that save an account run in the OutboxWipingTests collection and clear it.
         builder.ConfigureTestServices(services =>
             services.AddSingleton<IEmailTransport, NoMailTransport>());
 

@@ -752,7 +752,7 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
         await using var transaction = await dbContext.Database.BeginTransactionAsync(Token);
 
         var refusal = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => store.ClaimAsync(20, Now, Now.AddMinutes(5), Token));
+            () => store.ClaimAsync(20, Now, Now.AddMinutes(5), overridesOnly: false, Token));
 
         Assert.Contains("does not support user-initiated transactions", refusal.Message, StringComparison.Ordinal);
     }
@@ -791,7 +791,7 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
         using var scope = SqlServer.CreateScope();
 
         return await scope.ServiceProvider.GetRequiredService<IEmailOutboxStore>()
-            .ClaimAsync(batchSize, at, at.AddMinutes(5), Token);
+            .ClaimAsync(batchSize, at, at.AddMinutes(5), overridesOnly: false, Token);
     }
 
     private async Task<bool> MarkSentAsync(EmailOutboxClaim claim, DateTime? nowUtc = null)

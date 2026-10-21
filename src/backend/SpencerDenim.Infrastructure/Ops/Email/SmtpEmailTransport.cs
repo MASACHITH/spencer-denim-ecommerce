@@ -31,26 +31,18 @@ namespace SpencerDenim.Infrastructure.Ops.Email;
 /// send mail to a real address.
 /// </para>
 /// </remarks>
-internal sealed class SmtpEmailTransport(EmailOptions options) : IEmailTransport
+internal sealed class SmtpEmailTransport : IEmailTransport
 {
-    public bool IsConfigured => options.Smtp.IsConfigured;
-
-    public async Task SendAsync(OutboundEmail email, CancellationToken cancellationToken)
+    public async Task SendAsync(OutboundEmail email, SmtpSettings account, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(email);
+        ArgumentNullException.ThrowIfNull(account);
 
-        var smtp = options.Smtp;
-
-        if (!smtp.IsConfigured)
-        {
-            // Not reachable through SendEmails, which checks IsConfigured before it claims anything. It
-            // is an exception rather than a silent return because the alternative — answering "sent" to a
-            // caller that would then mark the row Sent — is the single worst outcome available here: the
-            // queue would empty and no customer would get anything.
-            throw new InvalidOperationException(
-                "SMTP is not configured, so no email can be sent. Set Email__Smtp__Host and "
-                + "Email__Smtp__FromAddress (doc 08 §3.8's Email.Smtp group).");
-        }
+        // The account is the caller's: the effective one SendEmails read this sweep, the previous one carried on an
+        // N2 override row, or the one typed on the test form. There is no "not configured" branch here any more —
+        // SmtpSettings cannot be built without a server and a sender, and whether there is an account at all is
+        // asked by SendEmails before it claims anything.
+        var smtp = account;
 
         if (string.IsNullOrWhiteSpace(email.BodyHtml) && string.IsNullOrWhiteSpace(email.BodyText))
         {
@@ -66,8 +58,8 @@ internal sealed class SmtpEmailTransport(EmailOptions options) : IEmailTransport
         using var message = new MailMessage
         {
             From = smtp.FromName is { Length: > 0 } fromName
-                ? new MailAddress(smtp.FromAddress!, fromName, Encoding.UTF8)
-                : new MailAddress(smtp.FromAddress!),
+                ? new MailAddress(smtp.FromAddress, fromName, Encoding.UTF8)
+                : new MailAddress(smtp.FromAddress),
 
             Subject = email.Subject,
             SubjectEncoding = Encoding.UTF8,
@@ -91,7 +83,7 @@ internal sealed class SmtpEmailTransport(EmailOptions options) : IEmailTransport
             message.AlternateViews.Add(view);
         }
 
-        using var client = new SmtpClient(smtp.Host!, smtp.Port)
+        using var client = new SmtpClient(smtp.Host, smtp.Port)
         {
             EnableSsl = smtp.UseStartTls,
             DeliveryMethod = SmtpDeliveryMethod.Network,

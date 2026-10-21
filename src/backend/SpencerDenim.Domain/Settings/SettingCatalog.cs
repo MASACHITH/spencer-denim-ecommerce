@@ -329,6 +329,11 @@ public static class SettingCatalog
             + "approves it. When it is off, reviews appear on the product page as soon as they are written. A "
             + "review staff have hidden stays hidden either way.",
             SeedValue: SettingKeys.Reviews.RequireApprovalDefault ? "true" : "false"),
+
+        // Group Email.Smtp (doc 08 §3.8; ADM-22, 2026-10-21): the shop's mail account, Settings.Security
+        // (GrantsAll only). Seeded with the port and STARTTLS only; the rows win over Email__Smtp__* once they
+        // make a complete, valid account (SmtpSettingsResolver).
+        .. SmtpSettingDefinitions.All,
     ];
 
     /// <summary>
@@ -399,6 +404,10 @@ public static class SettingCatalog
 
         // The review approval switch (issue #189): one form, one permission (Settings.Edit).
         [SettingKeys.Reviews.Group],
+
+        // The mail account: one form, one permission (Settings.Security), and a cross-field rule (a server needs
+        // a port and a sender; a password never travels unencrypted) that only holds under one token.
+        [SettingKeys.Smtp.Group],
     ];
 
     /// <summary>

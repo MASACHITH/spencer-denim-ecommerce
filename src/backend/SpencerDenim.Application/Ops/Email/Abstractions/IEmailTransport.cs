@@ -28,19 +28,17 @@ public sealed record OutboundEmail(
 public interface IEmailTransport
 {
     /// <summary>
-    /// Whether this host has enough configuration to attempt a send
-    /// (<c>SmtpOptions.IsConfigured</c>).
-    /// <para>
-    /// <b>Checked before a sweep claims anything, not caught as an exception after it.</b> An
-    /// unconfigured shop must leave its queue exactly as it found it: not Failed, not Dead, not retried
-    /// four hours apart against a host that does not exist, and above all not Sent.
-    /// </para>
+    /// Hands one message to the mail server of <paramref name="account"/>. Throws on any failure — the caller
+    /// records the message on the outbox row and applies the backoff, or (for the test send) turns it into a safe
+    /// sentence.
     /// </summary>
-    bool IsConfigured { get; }
-
-    /// <summary>
-    /// Hands one message to the mail server. Throws on any failure — the caller records the message on
-    /// the outbox row and applies the backoff.
-    /// </summary>
-    Task SendAsync(OutboundEmail email, CancellationToken cancellationToken);
+    /// <remarks>
+    /// <b>The account is a parameter, not something the transport holds</b> (2026-10-21). Until then the transport was
+    /// a singleton over <c>Email__Smtp__*</c> bound once at start-up, which made the account impossible to change
+    /// without a restart and impossible to vary per message. Now <c>SendEmails</c> reads the effective account each
+    /// sweep (<see cref="ISmtpSettingsReader"/>) and passes it in — or passes the <i>previous</i> account carried on
+    /// a row's <c>TransportOverrideProtected</c>, which is how doc 08 §3.8 N2's dual send reaches the old server.
+    /// Whether there is an account at all is the reader's question, asked before a sweep claims anything.
+    /// </remarks>
+    Task SendAsync(OutboundEmail email, SmtpSettings account, CancellationToken cancellationToken);
 }

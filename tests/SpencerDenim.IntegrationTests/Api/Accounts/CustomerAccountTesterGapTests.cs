@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using SpencerDenim.Application.Accounts.Abstractions;
 using SpencerDenim.Application.Accounts.Contracts;
+using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Application.Ops.Email.Abstractions;
 using SpencerDenim.Domain.Ops;
 using SpencerDenim.Domain.Sales;
@@ -180,6 +181,10 @@ public sealed class CustomerAccountTesterGapTests(SqlServerDatabaseFixture sqlSe
         {
             services.RemoveAll<IEmailTransport>();
             services.AddScoped<IEmailTransport>(_ => transport);
+
+            // An account for the sweep to send through (2026-10-21: the reader decides, not the transport).
+            services.RemoveAll<ISmtpSettingsReader>();
+            services.AddScoped<ISmtpSettingsReader>(_ => new FixedSmtpSettingsReader(FixedSmtpSettingsReader.TestAccount));
         });
 
         using var client = CreateClient(factory);
@@ -282,9 +287,7 @@ public sealed class CustomerAccountTesterGapTests(SqlServerDatabaseFixture sqlSe
     {
         public List<OutboundEmail> Sent { get; } = [];
 
-        public bool IsConfigured => true;
-
-        public Task SendAsync(OutboundEmail email, CancellationToken cancellationToken)
+        public Task SendAsync(OutboundEmail email, SmtpSettings account, CancellationToken cancellationToken)
         {
             Sent.Add(email);
             return Task.CompletedTask;

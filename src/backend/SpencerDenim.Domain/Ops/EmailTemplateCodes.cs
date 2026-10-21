@@ -5,11 +5,11 @@ namespace SpencerDenim.Domain.Ops;
 /// constraint</b> — doc 08 lists the codes in the column's notes and pins nothing in the database, so a
 /// template added by a later task is a new constant here and not a migration.
 /// <para>
-/// <b>Ten codes are declared: the six order emails and W3-01's four account emails.</b> Doc 08 lists
-/// sixteen, of which nine are declared here — <see cref="OrderCancelled"/> is the tenth and is <i>not</i>
-/// one of doc 08's — so the seven below are the rest of doc 08's list. They belong to tasks that are not
-/// built: <c>StaffEmailChanged</c> and <c>StaffInvite</c> and <c>BreakGlassUsed</c> are P14's,
-/// <c>SensitiveSettingsChanged</c> needs the dual-send of doc 08 §3.8 N2, and <c>PaymentException</c>,
+/// <b>Eleven codes are declared: the six order emails, W3-01's four account emails and
+/// <see cref="SensitiveSettingsChanged"/> (ADM-22, 2026-10-21, with doc 08 §3.8 N2's dual send).</b> Doc 08 lists
+/// sixteen, of which ten are declared here — <see cref="OrderCancelled"/> is the eleventh and is <i>not</i>
+/// one of doc 08's — so the six below are the rest of doc 08's list. They belong to tasks that are not
+/// built: <c>StaffEmailChanged</c> and <c>StaffInvite</c> and <c>BreakGlassUsed</c> are P14's, and <c>PaymentException</c>,
 /// <c>CaptureRecoveryFailed</c> and <c>ReconciliationDrift</c> are PayPal's and the nightly jobs'. A
 /// constant with no composer and no caller would read as a template this build can send.
 /// </para>
@@ -93,6 +93,18 @@ public static class EmailTemplateCodes
     /// </para>
     /// </summary>
     public const string AccountExists = "AccountExists";
+
+    /// <summary>
+    /// Doc 08 §3.8 DB2/N2: a payment, mail or security setting was changed. Sent to every active Super Admin, naming
+    /// the keys, the staff user, the time and the IP address — never a value.
+    /// <para>
+    /// <b>For a mail-account change it is queued twice per recipient</b>: once through the new account, and once
+    /// through the previous one, carried as ciphertext in <see cref="EmailOutboxMessage.TransportOverrideProtected"/>.
+    /// A hijacked change therefore cannot silence its own warning. <b>No UI or API cancels or deletes it</b> (doc 08
+    /// §3.8); it can only be retried.
+    /// </para>
+    /// </summary>
+    public const string SensitiveSettingsChanged = "SensitiveSettingsChanged";
 
     /// <summary><c>varchar(50)</c>, doc 08 §3.8.</summary>
     public const int MaxLength = 50;

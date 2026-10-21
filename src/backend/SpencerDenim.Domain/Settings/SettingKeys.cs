@@ -6,16 +6,17 @@ namespace SpencerDenim.Domain.Settings;
 /// <para>
 /// <b>What is deliberately absent, and why that is not an oversight.</b> Doc 08 §3.8's "Groups" table
 /// has fifteen rows — counted from the table; "sixteen" is §3.1's module list, which is a different
-/// thing — and names 59 keys, of which this build seeds 36 (issue #193 added <c>Social.YouTubeUrl</c> and the
-/// two <c>Traffic.*</c> retention periods; issue #189 <c>Reviews.RequireApproval</c>). <see cref="DeferredSettingKeys"/>
-/// is the per-key record of the other 23 and is machine-checked against the document (<c>SettingKeySpecificationTests</c>); the paragraphs below
+/// thing — and names 59 keys, of which this build seeds 43 (issue #193 added <c>Social.YouTubeUrl</c> and the
+/// two <c>Traffic.*</c> retention periods; issue #189 <c>Reviews.RequireApproval</c>; ADM-22's 2026-10-21 work the
+/// seven <c>Email.Smtp.*</c> keys). <see cref="DeferredSettingKeys"/>
+/// is the per-key record of the other 16 and is machine-checked against the document (<c>SettingKeySpecificationTests</c>); the paragraphs below
 /// are the summary.
 /// <c>Bank.*</c> is now here (W3-03, PAY-01): it is the one group doc 11 P7's preconditions make a
 /// prerequisite of taking money at all. <c>Payments.PayPal.*</c> is here since W4-01 (see
-/// <c>SettingKeys.PayPal</c>); <c>Social.YouTubeUrl</c> and <c>Traffic.*</c> since issue #193.
-/// <c>Email.Smtp.*</c>, <c>Security.*</c> and <c>Privacy.RetainInvoiceBillTo</c> are <c>Settings.Security</c>
-/// and deferred for their own reasons: SMTP needs doc 08 §3.8 N2's <i>dual</i> send (the only part of N2 missing —
-/// the single-send <c>SensitiveSettingsChangedAlert</c> exists), the lockout figures are read once at start-up
+/// <c>SettingKeys.PayPal</c>); <c>Social.YouTubeUrl</c> and <c>Traffic.*</c> since issue #193; <c>Email.Smtp.*</c>
+/// since 2026-10-21, when doc 08 §3.8 N2's dual send was built (see <c>SettingKeys.Smtp</c>).
+/// <c>Security.*</c> and <c>Privacy.RetainInvoiceBillTo</c> are <c>Settings.Security</c>
+/// and deferred for their own reasons: the lockout figures are read once at start-up
 /// rather than per attempt, and no anonymisation path exists to honour the privacy key;
 /// <c>Delivery</c>, the couriers and the delivery methods need <c>sales.DeliveryMethods</c> and friends,
 /// which are tables #53 creates. A key seeded here would be a key a screen offers and nothing honours —

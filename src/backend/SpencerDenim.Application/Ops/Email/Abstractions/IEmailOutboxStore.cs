@@ -15,6 +15,11 @@ namespace SpencerDenim.Application.Ops.Email.Abstractions;
 /// code, the order number and the outbox row ID", and a log line that named only the row id would leave
 /// an operator to go and look the order up.
 /// </param>
+/// <param name="TransportOverrideProtected">
+/// The previous mail account as ciphertext (doc 08 §3.8 N2), on the old-account copy of a
+/// <c>SensitiveSettingsChanged</c> alert only; null on every other row. The sweep sends such a row through that
+/// account instead of the current one.
+/// </param>
 public sealed record EmailOutboxClaim(
     long Id,
     string TemplateCode,
@@ -25,7 +30,8 @@ public sealed record EmailOutboxClaim(
     string? BodyText,
     short AttemptCount,
     short MaxAttempts,
-    string? RelatedEntityId);
+    string? RelatedEntityId,
+    string? TransportOverrideProtected = null);
 
 /// <summary>
 /// The five statements <c>SendEmails</c> runs against <c>ops.EmailOutbox</c> (doc 08 §3.8).
@@ -96,10 +102,16 @@ public interface IEmailOutboxStore
     /// <paramref name="batchSize"/> due messages, marks them <c>Sending</c> under a lease and returns
     /// them.
     /// </summary>
+    /// <param name="overridesOnly">
+    /// True to claim only rows that carry their own account in <c>TransportOverrideProtected</c> — what the sweep
+    /// asks for when no current account is configured (doc 08 §3.8 N2). A hijacker who <i>clears</i> the mail
+    /// settings leaves the shop with no account, and the previous-account copy of the alert must still go out.
+    /// </param>
     Task<IReadOnlyList<EmailOutboxClaim>> ClaimAsync(
         int batchSize,
         DateTime nowUtc,
         DateTime leaseUntilUtc,
+        bool overridesOnly,
         CancellationToken cancellationToken);
 
     /// <summary>

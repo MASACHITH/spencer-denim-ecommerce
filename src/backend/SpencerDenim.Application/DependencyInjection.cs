@@ -595,6 +595,16 @@ public static class DependencyInjection
             ICommandHandler<UpdatePayPalSettingsCommand, SettingsWriteResult>,
             UpdatePayPalSettingsCommandHandler>();
 
+        // The mail account (doc 08 §3.8 Email.Smtp, Settings.Security), its test send, and doc 08 §3.8 DB2/N2's
+        // banner-plus-email for a sensitive change (2026-10-21).
+        services.AddScoped<ISensitiveSettingsChangeNotifier, SensitiveSettingsChangeNotifier>();
+        services.AddScoped<
+            ICommandHandler<UpdateSmtpSettingsCommand, SettingsWriteResult>,
+            UpdateSmtpSettingsCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<SendSmtpTestEmailCommand, SmtpTestResult>,
+            SendSmtpTestEmailCommandHandler>();
+
         return services;
     }
 }

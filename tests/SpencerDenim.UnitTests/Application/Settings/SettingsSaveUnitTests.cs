@@ -51,6 +51,7 @@ public sealed class SettingsSaveUnitTests
                 new[] { SettingKeys.PayPal.Group },
                 new[] { SettingKeys.Traffic.Group },
                 new[] { SettingKeys.Reviews.Group },
+                new[] { SettingKeys.Smtp.Group },
             ],
             SettingCatalog.SaveUnits);
     }
@@ -183,7 +184,8 @@ public sealed class SettingsSaveUnitTests
 
         // `Bank` used to be the undeclared example and now has a unit of its own; `Store` was the
         // fall-through example and W3-04 paired it with `Orders`; `Payments.PayPal` was the next and W4-01
-        // built it. An unbuilt group takes their place (doc 08 §3.8's `Email.Smtp`).
-        Assert.Empty(SettingCatalog.KeysInSaveUnitFor("Email.Smtp"));
+        // built it; `Email.Smtp` arrived on 2026-10-21. An unbuilt group takes their place (doc 08 §3.8's
+        // `Security`).
+        Assert.Empty(SettingCatalog.KeysInSaveUnitFor("Security"));
     }
 }

@@ -43,7 +43,9 @@ public sealed class SendEmailsServiceTests
 
         await SweepAsync(store, transport);
 
-        Assert.Equal(0, store.ClaimCalls);
+        // The only claim is doc 08 §3.8 N2's: rows that carry their own previous account. Nothing ordinary.
+        Assert.Equal(1, store.ClaimCalls);
+        Assert.True(store.LastOverridesOnly);
         Assert.Equal(0, store.ReleaseCalls);
         Assert.Empty(transport.Sent);
         Assert.Empty(store.Sent);
@@ -63,7 +65,7 @@ public sealed class SendEmailsServiceTests
         await SweepAsync(store, new FakeTransport { IsConfigured = false });
 
         Assert.Equal(1, store.CountDueCalls);
-        Assert.Equal(0, store.ClaimCalls);
+        Assert.True(store.LastOverridesOnly);
     }
 
     /// <summary>
@@ -226,38 +228,33 @@ public sealed class SendEmailsServiceTests
     [Fact]
     public async Task A_message_with_no_body_is_refused_rather_than_sent_blank()
     {
-        var transport = new SmtpEmailTransport(new EmailOptions
-        {
-            Smtp = new SmtpOptions { Host = "localhost", FromAddress = "shop@example.com" },
-        });
+        var transport = new SmtpEmailTransport();
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             transport.SendAsync(
                 new OutboundEmail("buyer@example.com", null, "Subject", null, null),
+                Account,
                 Token));
 
         Assert.Contains("no body", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
-    /// And an unconfigured transport throws rather than reporting success, even though the job never
-    /// calls it in that state.
+    /// There is no "unconfigured transport" any more (2026-10-21): an account cannot even be built without a server
+    /// and a sender, and configuration that lacks either yields no account at all.
     /// </summary>
     /// <remarks>
-    /// Defence in depth with a named worst case: a transport that returned quietly would have its caller
-    /// mark the row <c>Sent</c>, which empties the queue and tells nobody.
+    /// The worst case the old test named still holds by construction: the transport can only ever be handed an
+    /// account that names a server, so it cannot answer "sent" for a host that does not exist.
     /// </remarks>
     [Fact]
-    public async Task An_unconfigured_transport_refuses_rather_than_pretending()
+    public void An_account_needs_a_server_and_a_sender_and_unconfigured_options_yield_none()
     {
-        var transport = new SmtpEmailTransport(new EmailOptions());
-
-        Assert.False(transport.IsConfigured);
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            transport.SendAsync(
-                new OutboundEmail("buyer@example.com", null, "Subject", "<p>Hi</p>", "Hi"),
-                Token));
+        Assert.Throws<ArgumentException>(() => new SmtpSettings(" ", 587, null, null, "shop@example.com", null, true));
+        Assert.Throws<ArgumentException>(() => new SmtpSettings("smtp.example.com", 587, null, null, "", null, true));
+        Assert.Null(SmtpSettings.FromOptions(new SmtpOptions()));
+        Assert.Null(SmtpSettings.FromOptions(new SmtpOptions { Host = "smtp.example.com" }));
+        Assert.NotNull(SmtpSettings.FromOptions(new SmtpOptions { Host = "smtp.example.com", FromAddress = "a@b.lk" }));
     }
 
     /// <summary>
@@ -299,6 +296,14 @@ public sealed class SendEmailsServiceTests
         services.AddSingleton(store);
         services.AddSingleton(transport);
         services.AddSingleton(alerts ?? new FakeAlerts());
+
+        // The account comes from the reader now (2026-10-21). A FakeTransport marked unconfigured stands for a host
+        // with no account at all, which is how these tests have always said it.
+        var configured = transport is not FakeTransport { IsConfigured: false };
+        services.AddSingleton<ISmtpSettingsReader>(new FakeAccounts(configured
+            ? new EffectiveSmtpSettings(Account, SmtpSettingsSource.Configuration)
+            : EffectiveSmtpSettings.None));
+        services.AddSingleton<ISmtpOverrideProtector>(new FakeOverrides());
 
         await using var provider = services.BuildServiceProvider();
 
@@ -577,6 +582,7 @@ public sealed class SendEmailsServiceTests
         Assert.Empty(alerts.Raised);
         Assert.Equal(0, store.KillCalls);
         Assert.Equal(0, store.ReleaseCalls);
+        Assert.True(store.LastOverridesOnly);
     }
 
     /// <summary>A claim shaped like the ones the real statement returns.</summary>
@@ -598,6 +604,10 @@ public sealed class SendEmailsServiceTests
     /// </summary>
     private sealed class FakeTransport : IEmailTransport
     {
+        /// <summary>
+        /// Not a property of the transport any more: <see cref="SweepAsync(IEmailOutboxStore, IEmailTransport, IDeadEmailAlerts?, ILogger{SendEmailsService}?)"/>
+        /// reads it to decide whether the fake account reader answers with an account or with none.
+        /// </summary>
         public bool IsConfigured { get; init; } = true;
 
         public Exception? Throw { get; init; }
@@ -606,8 +616,13 @@ public sealed class SendEmailsServiceTests
 
         public List<OutboundEmail> Sent { get; } = [];
 
-        public Task SendAsync(OutboundEmail email, CancellationToken cancellationToken)
+        /// <summary>The account each message was handed, in order.</summary>
+        public List<SmtpSettings> Accounts { get; } = [];
+
+        public Task SendAsync(OutboundEmail email, SmtpSettings account, CancellationToken cancellationToken)
         {
+            Accounts.Add(account);
+
             if (Throw is { } always)
             {
                 throw always;
@@ -705,14 +720,19 @@ public sealed class SendEmailsServiceTests
         /// <summary>The arguments of the last claim, so a test can assert the batch and the lease.</summary>
         public (int BatchSize, DateTime NowUtc, DateTime LeaseUntilUtc)? LastClaim { get; private set; }
 
+        /// <summary>Whether the last claim asked only for rows carrying their own account (doc 08 §3.8 N2).</summary>
+        public bool? LastOverridesOnly { get; private set; }
+
         public Task<IReadOnlyList<EmailOutboxClaim>> ClaimAsync(
             int batchSize,
             DateTime nowUtc,
             DateTime leaseUntilUtc,
+            bool overridesOnly,
             CancellationToken cancellationToken)
         {
             ClaimCalls++;
             LastClaim = (batchSize, nowUtc, leaseUntilUtc);
+            LastOverridesOnly = overridesOnly;
             Calls.Add("claim");
 
             if (ThrowOnClaim is { } exception)
@@ -720,7 +740,10 @@ public sealed class SendEmailsServiceTests
                 throw exception;
             }
 
-            return Task.FromResult<IReadOnlyList<EmailOutboxClaim>>(Queue.Take(batchSize).ToList());
+            return Task.FromResult<IReadOnlyList<EmailOutboxClaim>>(
+                Queue.Where(claim => !overridesOnly || claim.TransportOverrideProtected is not null)
+                    .Take(batchSize)
+                    .ToList());
         }
 
         public Task<bool> MarkSentAsync(
@@ -744,6 +767,36 @@ public sealed class SendEmailsServiceTests
                 EmailBackoff.DelayAfter(claim.AttemptCount, claim.MaxAttempts) is null
                     ? EmailFailureOutcome.Dead
                     : EmailFailureOutcome.Retrying);
+        }
+    }
+
+    /// <summary>The current account every configured sweep in this class reads.</summary>
+    private static readonly SmtpSettings Account =
+        new("smtp.current.example", 587, "current-user", "current-password", "shop@example.com", null, true);
+
+    /// <summary>The previous account a carried (N2) row decrypts to.</summary>
+    private static readonly SmtpSettings PreviousAccount =
+        new("smtp.previous.example", 2525, "old-user", "old-password", "old@example.com", null, true);
+
+    /// <summary>A fixed answer from the account reader.</summary>
+    private sealed class FakeAccounts(EffectiveSmtpSettings effective) : ISmtpSettingsReader
+    {
+        public Task<EffectiveSmtpSettings> ReadEffectiveAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(effective);
+
+        public Task<string?> ReadStoredPasswordAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<string?>(null);
+    }
+
+    /// <summary>"previous" unprotects to <see cref="PreviousAccount"/>; anything else is unreadable.</summary>
+    private sealed class FakeOverrides : ISmtpOverrideProtector
+    {
+        public string Protect(SmtpSettings settings) => "previous";
+
+        public bool TryUnprotect(string? protectedValue, out SmtpSettings? settings)
+        {
+            settings = protectedValue == "previous" ? PreviousAccount : null;
+            return settings is not null;
         }
     }
 }
