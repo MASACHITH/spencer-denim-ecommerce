@@ -50,7 +50,7 @@ test('the fees are in the server-rendered HTML, drawn from the rate feed', async
   const html = await (await request.get(PRODUCT)).text();
 
   expect(html).toContain('Within Sri Lanka');
-  expect(html).toContain('Rs. 400, free over Rs. 10,000, 1–2 working days');
+  expect(html).toContain('Rs. 400, free on orders of Rs. 10,000 or more after discounts, 1–2 working days');
   expect(html).toContain('Gampaha and Kalutara');
   expect(html).toContain('Rs. 950, 1 working day');
   expect(html).toContain('We also deliver worldwide');
@@ -146,7 +146,7 @@ test('a fee changed in the rate table is the fee the page shows', async ({ page 
   await openBoth(page);
 
   const standard = page.locator('[data-testid="pdp-delivery"] [data-testid="delivery-method-STANDARD"]');
-  await expect(standard).toContainText('Rs. 375, free over Rs. 8,000, 1–2 working days');
+  await expect(standard).toContainText('Rs. 375, free on orders of Rs. 8,000 or more after discounts, 1–2 working days');
   await expect(standard).not.toContainText('Rs. 400');
 });
 
@@ -182,15 +182,12 @@ test('no link is offered to a Shipping or Returns page that is not published', a
   await expect(page.locator('[data-testid="pdp-returns-link"]')).toHaveCount(0);
 });
 
-// Tester (#33): the admin may save any markup the server's allow-list keeps — headings, tables, images with a width
-// attribute, long links — and the panel must still never scroll sideways.
+// Tester (#33): the admin may save any markup the server's snippet allow-list keeps — headings, tables, long words and
+// links — and the panel must still never scroll sideways.
 for (const width of BREAKPOINTS) {
   test(`allow-listed wide markup in the delivery text does not scroll sideways at ${width}px`, async ({ page }) => {
-    // KNOWN DEFECT (tester, #33): an <img> with a large width attribute (both allow-listed by HtmlSanitiser) widens
-    // the product page's column: 322 px of sideways scroll at 320, 258 at 768, 130 at 1024, 38 at 1440. Removing the
-    // image alone removes the overflow; the table, heading and long link are fine. Expected to fail until the
-    // panel caps images (or the sanitiser drops img/width from these texts); remove this line with the fix.
-    test.fail(width <= 1440, 'Known #33 defect: an allow-listed wide image in the delivery text scrolls sideways');
+    // Fixed in the #33 rework: the snippet profile keeps no <img> and no width/height, and the panel caps media and
+    // scrolls a wide table inside itself.
 
     await page.setViewportSize({ width, height: 900 });
     await panelState(page, 'wide');

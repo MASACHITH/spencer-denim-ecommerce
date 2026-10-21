@@ -112,3 +112,42 @@ Product page panel (both disclosures open), Shipping page with live fees, Return
 - Switching bank transfer off / PayPal-only checkout: not this branch.
 - The storefront **footer still says "Delivery island-wide."** (shell copy, not part of #33's scope) — worth changing with the worldwide work.
 - MEMORY.md / TASKS.md / client-progress not updated on this branch (coordinator's step after the tester pass).
+
+## Fixes from the independent tester (2026-10-21, round 2)
+
+Starting from the tester's commit `a483805` (48 new integration tests, a 20-vector XSS battery, concurrent-editor and seeding-edge tests, further mutant kills — all left as they were). New head: **see commit hash below**.
+
+**Medium defects**
+1. **Wide image overflow — fixed both sides, and the tester's `test.fail` removed.**
+   - **Narrower allow-list for just these two texts.** `IHtmlSanitiser` gained `SanitiseSnippet`, used only by the panel's read and the editor's save: it keeps everything `Sanitise` keeps except `img`, `figure`, `figcaption` and the `src`/`alt`/`width`/`height` attributes — so no picture and nothing sized can reach the panel at all. The page profile (content pages, size guides) is unchanged.
+   - **CSS for defence in depth**, in case a row is ever written round the handler: `.dr__text img/video/iframe { max-width: 100%; height: auto }`, `table { display: block; overflow-x: auto }`, and `.dr__text *  { max-width: 100% }`, plus `min-width: 0` on the host and the flex/grid column it sits in.
+   - The tester's `delivery-returns.e2e.ts` test (wide markup at every width) now asserts **no** overflow instead of `test.fail`; the stub's `wide` fixture no longer serves a sized `<img>` (the server would strip it) — it keeps a long unbroken word, a table and a long link, which still exercise the CSS.
+2. **Pickup test scoped to its own marker.** `Pickup_appears_only_when_the_method_is_enabled_and_an_active_location_exists` now asserts the panel does **not** contain the test's own named location, rather than that the whole `pickupPoints` array is empty — so a `SalesSchemaTestBase` fixture left in the shared database no longer fails it.
+3. **Delivery time wording unified on "from dispatch".** The panel's fixed estimate line now reads "Usually delivered in X–Y working days after dispatch…"; the two `Content.Pdp*` seed texts, the Shipping page and the Returns page already said "from dispatch" / "after dispatch" and are unchanged. Nothing in the panel, the texts or the pages now says "after payment is confirmed".
+4. **Merge order.** Noted here: this branch must not go live before `feature/intl-delivery`, because the seeded wording promises worldwide delivery that branch has not built yet. No code change.
+
+**Low items**
+- **Admin hint and the two setting descriptions** now name exactly what `SanitiseSnippet` keeps: "paragraphs, line breaks, headings, lists, bold, italic, underline, strikethrough, sub and superscript, quotes, rules, links and tables. Pictures, sizes and anything else are removed."
+- **Duplicate zone labels fixed.** When two zones each hold more than 3 districts, each is labelled by its first two district names and a count ("Gampaha, Kalutara and 2 other districts") instead of both reading "Rest of Sri Lanka"; `DeliveryZoneDto` gained `Districts` (and the storefront model matched) so this is possible and so the next item can use it. The `@for` in `DeliveryRates` now tracks by `line.zone`, never by the label.
+- **"Free" wording.** A rate with `fee = 0` **or** `freeAboveAmount = 0` now prints only "Free" (no amount). Otherwise: "{fee}, free on orders of {threshold} or more after discounts, {days}" — matching `OrderPricing`'s own `>=` against the post-promo subtotal (doc 08 §6 step 10), and naming that it is after discounts.
+- **Shopper's district highlighted after hydration.** `DeliveryRates` now injects `DeliveryDistrictService`, waits for `afterNextRender` (so the SSR HTML and the first browser paint are identical and the page stays cacheable), and marks the row whose zone contains the header's chosen district with a left rule and a "your district, {name}" note (`data-testid="delivery-your-district"`). Matching is by district name against the zone's `Districts` list from the API, case-insensitively.
+- **Contact link.** All three hard-coded `href="/contact"` links in `PolicyPageContent` are gone; the copy now says "Contact us through the Contact page, linked at the foot of every page" with no anchor — true whether or not Contact is published, since it never claims a link exists. (The product-page texts never linked to Contact.)
+- **Shipping page fee list moved.** `PolicyPageContent.ShippingBody` now carries a `{{delivery fees}}` marker paragraph (`PolicyPageContent.DeliveryFeesMarker`) inside "Delivery within Sri Lanka", right after the two intro paragraphs. `ContentPage` splits the body at that marker (`splitAtFeeMarker`, unit-tested) and draws `<sd-shipping-rates>` there, inline (`<h3>`, not `<h2>`) so it nests correctly under the section heading; with no marker — an owner who rewrote the page without it — the list falls back to after the whole body, as before.
+- **Wording consistency.**
+  - The panel text and the Returns page now list the same five categories: innerwear and lingerie, swimwear, socks and hosiery, pierced jewellery, sale items (pierced jewellery and hosiery were missing from the panel's short text; both are present on both now — tested).
+  - "Damaged, faulty or wrong" is the phrase everywhere; "Final sale" is gone (the storefront shows no such marker), replaced by "sale items".
+  - The 48-hour rule is now scoped to damage in transit and the wrong item; a fault "found later" / "noticed later" is to be reported "as soon as you notice it" instead, in the panel text, the Shipping page and the Returns page.
+  - "We will email you when it is done" → "we contact you to confirm it"; "ready to collect" → "we will contact you about collecting your order" — no email system exists yet.
+  - The footer's "Delivery island-wide" line is left for the intl branch, as asked.
+- **Trivia.**
+  - `ProductPageInfoValues` and its sibling types moved to the end of `admin-settings.model.ts`, after `TrafficValues`'s own block, so `TrafficValues` keeps the doc comment directly above it.
+  - The admin stub now escapes a bare `&` to `&amp;` in text, the same as the real serialiser, before handing a saved value back.
+
+### Tests after the fixes
+- **Unit (xUnit)**: 3,996 passed, 0 failed (+8: two zone-label tests, a final-sale/48-hour/dispatch wording test, a fee-marker-placement test, a snippet-profile test, plus the pickup-scoping change above).
+- **Integration (SQL Server, LocalDB), filtered** (`Delivery|Content|Settings|Seed|Courier|Checkout|Order`, `TEST_SQL_CONNECTION` on LocalDB, after waiting for no other `testhost` for the required window): **1,049 passed, 0 failed, 1 skipped** (unrelated, pre-existing skip), 40 m 12 s.
+- **Release build**: `SpencerDenim.sln` 0 errors, 0 warnings.
+- **Vitest**: storefront **2,161** passed (was 2,149; +12 new, incl. the fee-marker split, the free-rate wording, the district highlight x2, the duplicate-label key test, the vetting test for `districts`), admin 868, shared 24 — all passing. `ng lint`: all three projects clean.
+- **Build sizes**: storefront initial **450.14 kB** (prior round 450.01 kB, main 449.83 kB; +0.31 kB overall — the district-highlight signal and the wider zone model). Admin initial unchanged at 316.22 kB.
+- **Playwright**, ports 6650–6673 (6665–6669 skipped, Chrome-unsafe), requested files run together: `delivery-returns.e2e.ts`, `product-page.e2e.ts`, `content-pages.e2e.ts`, `admin-settings.e2e.ts` → **174 passed, 1 failed** (`product-page.e2e.ts` "a refused add leaves focus on the button that was pressed"). That one is a resource-contention flake, not a regression: it fails intermittently (2 of 3 repeats) only when run alongside the other three spec files under one worker, and **passes 77/77** when `product-page.e2e.ts` runs alone — matching the config's own documented note that these specs compete for CPU with the sixteen servers the suite starts. `delivery-returns.e2e.ts` alone is green.
+- **Mutation testing**: unaffected by this round (no mutant target's behaviour changed in a way a prior mutant exercises); the 36/38-killed, 2-equivalent result from the first pass stands.

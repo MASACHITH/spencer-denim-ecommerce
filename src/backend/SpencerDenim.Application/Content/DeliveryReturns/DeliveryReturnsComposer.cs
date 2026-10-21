@@ -1,3 +1,4 @@
+using System.Globalization;
 using SpencerDenim.Application.Content.Contracts;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Domain.Sales;
@@ -66,12 +67,18 @@ public static class DeliveryReturnsComposer
             .OrderBy(group => group.Key)
             .ToList();
 
+        var largeZones = groups.Count(group => group.Count() > MaxNamedDistricts);
+
         return groups
-            .Select(group => new DeliveryZoneDto(
-                group.Key,
-                Label(
-                    group.Select(district => district.Name).Order(StringComparer.OrdinalIgnoreCase).ToList(),
-                    otherZones: groups.Count > 1)))
+            .Select(group =>
+            {
+                var names = group.Select(district => district.Name).Order(StringComparer.OrdinalIgnoreCase).ToList();
+
+                return new DeliveryZoneDto(
+                    group.Key,
+                    Label(names, otherZones: groups.Count > 1, anotherLargeZone: largeZones > 1),
+                    names);
+            })
             .ToList();
     }
 
@@ -79,9 +86,24 @@ public static class DeliveryReturnsComposer
     /// A zone's label: its districts by name when there are <see cref="MaxNamedDistricts"/> or fewer, otherwise
     /// the rest of the island (or the whole island, when no other zone has a district).
     /// </summary>
-    public static string Label(IReadOnlyList<string> districtNames, bool otherZones)
+    /// <param name="districtNames">The zone's district names, in alphabetical order.</param>
+    /// <param name="otherZones">Whether any other zone holds a district.</param>
+    /// <param name="anotherLargeZone">
+    /// Whether another zone is also too large to name. Two zones cannot both be "Rest of Sri Lanka" — a shopper could
+    /// not tell them apart, and the storefront keys its rows on the label's zone — so each is then named by its first
+    /// two districts and a count ("Ampara, Anuradhapura and 9 other districts"). Districts belong to one zone, so
+    /// the first two names differ and the labels are unique.
+    /// </param>
+    public static string Label(IReadOnlyList<string> districtNames, bool otherZones, bool anotherLargeZone = false)
     {
         ArgumentNullException.ThrowIfNull(districtNames);
+
+        if (districtNames.Count > MaxNamedDistricts && anotherLargeZone)
+        {
+            return string.Create(
+                CultureInfo.InvariantCulture,
+                $"{districtNames[0]}, {districtNames[1]} and {districtNames.Count - 2} other districts");
+        }
 
         if (districtNames.Count > MaxNamedDistricts || districtNames.Count == 0)
         {

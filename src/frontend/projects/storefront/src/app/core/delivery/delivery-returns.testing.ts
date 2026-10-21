@@ -4,9 +4,9 @@ import { DeliveryReturnsDto } from './delivery-returns.model';
 export const PANEL: DeliveryReturnsDto = {
   estimate: { daysMin: 1, daysMax: 5 },
   zones: [
-    { zone: 'Colombo', label: 'Colombo' },
-    { zone: 'Western', label: 'Gampaha and Kalutara' },
-    { zone: 'IslandWide', label: 'Rest of Sri Lanka' },
+    { zone: 'Colombo', label: 'Colombo', districts: ['Colombo'] },
+    { zone: 'Western', label: 'Gampaha and Kalutara', districts: ['Gampaha', 'Kalutara'] },
+    { zone: 'IslandWide', label: 'Rest of Sri Lanka', districts: ['Galle', 'Jaffna', 'Kandy', 'Matara'] },
   ],
   methods: [
     {

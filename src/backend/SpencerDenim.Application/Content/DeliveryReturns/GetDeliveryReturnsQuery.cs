@@ -68,7 +68,7 @@ public sealed class GetDeliveryReturnsQueryHandler(
     /// </summary>
     private string Clean(string? html)
     {
-        var cleaned = sanitiser.Sanitise(html);
+        var cleaned = sanitiser.SanitiseSnippet(html);
 
         return cleaned.WasRejected ? string.Empty : cleaned.Html;
     }

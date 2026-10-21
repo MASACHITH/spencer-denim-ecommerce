@@ -9,8 +9,13 @@ export type DeliveryZoneName = 'Colombo' | 'Western' | 'IslandWide';
 
 export interface DeliveryZoneDto {
   readonly zone: DeliveryZoneName;
-  /** "Colombo", "Gampaha and Kalutara", "Rest of Sri Lanka": built by the API from the districts. */
+  /** "Colombo", "Gampaha and Kalutara", "Rest of Sri Lanka": built by the API from the districts. Unique. */
   readonly label: string;
+  /**
+   * The active districts in the zone. Not drawn: used only in the browser, after hydration, to mark the zone of
+   * the district chosen in the header, so the server-rendered HTML stays the same for every visitor.
+   */
+  readonly districts: readonly string[];
 }
 
 export interface DeliveryRateDto {

@@ -2533,9 +2533,17 @@ let saleBannerState = 'none';
 const DELIVERY_RETURNS_DEFAULT = {
   estimate: { daysMin: 1, daysMax: 5 },
   zones: [
-    { zone: 'Colombo', label: 'Colombo' },
-    { zone: 'Western', label: 'Gampaha and Kalutara' },
-    { zone: 'IslandWide', label: 'Rest of Sri Lanka' },
+    { zone: 'Colombo', label: 'Colombo', districts: ['Colombo'] },
+    { zone: 'Western', label: 'Gampaha and Kalutara', districts: ['Gampaha', 'Kalutara'] },
+    {
+      zone: 'IslandWide',
+      label: 'Rest of Sri Lanka',
+      districts: [
+        'Ampara', 'Anuradhapura', 'Badulla', 'Batticaloa', 'Galle', 'Hambantota', 'Jaffna', 'Kandy', 'Kegalle',
+        'Kilinochchi', 'Kurunegala', 'Mannar', 'Matale', 'Matara', 'Monaragala', 'Mullaitivu', 'Nuwara Eliya',
+        'Polonnaruwa', 'Puttalam', 'Ratnapura', 'Trincomalee', 'Vavuniya',
+      ],
+    },
   ],
   methods: [
     {
@@ -2560,19 +2568,21 @@ const DELIVERY_RETURNS_DEFAULT = {
   ],
   pickupPoints: [],
   deliveryInfoHtml:
-    '<ul><li>Within Sri Lanka we deliver to every district by courier. The fee for your district is shown at '
-    + 'checkout, before you pay.</li><li>We also deliver worldwide with a tracked international service, usually '
-    + 'in 5 to 15 working days. The fee for your country is shown at checkout.</li><li>Delivery times are in '
-    + 'working days, counted from dispatch once your payment is confirmed. Customs duties and taxes on overseas '
-    + 'orders are paid by the customer.</li><li>Pay securely online at checkout. Cash on delivery is not '
-    + 'available.</li></ul>',
+    '<ul><li>Within Sri Lanka we deliver to every district by courier. The fee for your district is shown'
+    + ' at checkout, before you pay.</li><li>We also deliver worldwide with a tracked international service'
+    + ', usually in 5 to 15 working days after dispatch. The fee for your country is shown at checkout.</li'
+    + '><li>We dispatch once your payment is confirmed, and delivery times count working days from dispatch'
+    + '. Customs duties and taxes on overseas orders are paid by the customer.</li><li>Pay securely online '
+    + 'at checkout. Cash on delivery is not available.</li></ul>',
   returnsInfoHtml:
-    '<ul><li>Changed your mind? Return or exchange within 14 days of delivery.</li><li>Items must be unworn and '
-    + 'unwashed, with all their tags still attached.</li><li>Innerwear, swimwear, socks and sale items are final '
-    + 'sale and cannot be returned.</li><li>Refunds go back to your original payment method within 7 working days '
-    + 'of your return reaching us and passing our check.</li><li>Return postage is yours to pay, from Sri Lanka or '
-    + 'overseas, unless the item is faulty.</li><li>Damaged, faulty or wrong item? Tell us within 48 hours of '
-    + 'delivery, with photos, and we will put it right at our cost.</li></ul>',
+    '<ul><li>Changed your mind? Return or exchange within 14 days of delivery.</li><li>Items must be unwo'
+    + 'rn and unwashed, with all their tags still attached.</li><li>Innerwear and lingerie, swimwear, socks'
+    + ' and hosiery, pierced jewellery and sale items cannot be returned.</li><li>Refunds go back to your o'
+    + 'riginal payment method within 7 working days of your return reaching us and passing our check.</li><'
+    + 'li>Return postage is yours to pay, from Sri Lanka or overseas, unless the item is damaged, faulty or'
+    + ' wrong.</li><li>Damaged in transit or the wrong item? Tell us within 48 hours of delivery, with phot'
+    + 'os. Found a fault later? Tell us as soon as you notice it. Either way we will put it right at our co'
+    + 'st.</li></ul>',
 };
 
 function deliveryReturnsFor(state) {
@@ -2615,7 +2625,10 @@ function deliveryReturnsFor(state) {
         '<h2>Overseas delivery</h2>'
         + '<table><thead><tr><th>Region</th><th>Courier</th><th>Working days</th><th>Tracked</th><th>Signature</th><th>Insurance</th></tr></thead>'
         + '<tbody><tr><td>SouthAsiaAndMiddleEast</td><td>InternationalExpressService</td><td>5-15</td><td>Yes</td><td>Required</td><td>Included</td></tr></tbody></table>'
-        + '<p><img src="https://example.test/banner.png" alt="Banner" width="2400" height="300"></p>'
+        // No <img width="2400"> any more (#33 fix): the API cleans these texts with the snippet profile on save and
+        // on read, which keeps no picture and no width, so a stub that served one would be more permissive than
+        // the API. The panel's CSS still caps media, for defence in depth.
+        + '<p><b>Wide words:</b> Supercalifragilisticexpialidocious-and-then-some-more-without-any-spaces-at-all</p>'
         + '<p><a href="https://example.test/a-very-long-tracking-address-with-no-spaces-at-all-0123456789-abcdefghij">https://example.test/a-very-long-tracking-address-with-no-spaces-at-all-0123456789-abcdefghij</a></p>',
     };
   }
@@ -2730,8 +2743,8 @@ const CONTENT_PAGE_BODIES = {
   shipping: {
     bodyHtml:
       '<p>We deliver to every district in Sri Lanka and to customers overseas. Here is how it works.</p>'
-      + '<h2>Delivery within Sri Lanka</h2><p>We deliver island-wide through trusted local couriers. Checkout shows '
-      + 'the exact fee for your district before you pay.</p>'
+      + '<h2>Delivery within Sri Lanka</h2><p>We deliver to every district through trusted local couriers. Checkout '
+      + 'shows the exact fee for your district before you pay.</p><p>{{delivery fees}}</p>'
       + '<h2>Delivery worldwide</h2><p>We also ship overseas with a tracked international service. The delivery fee '
       + 'for your country is shown at checkout before you pay.</p>',
     seoTitle: null,

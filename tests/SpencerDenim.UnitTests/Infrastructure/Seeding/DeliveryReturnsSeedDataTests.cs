@@ -27,7 +27,10 @@ public sealed partial class DeliveryReturnsSeedDataTests
     [MemberData(nameof(SeededHtml))]
     public void Seeded_copy_is_exactly_what_the_sanitiser_would_store(string name, string html)
     {
-        var cleaned = new HtmlSanitiser().Sanitise(html);
+        // The product-page texts are cleaned with the narrower snippet profile; the pages with the page profile.
+        var cleaned = name.StartsWith("Pdp", StringComparison.Ordinal)
+            ? new HtmlSanitiser().SanitiseSnippet(html)
+            : new HtmlSanitiser().Sanitise(html);
 
         Assert.False(cleaned.WasRejected, name);
         Assert.Empty(cleaned.Removed);
@@ -53,7 +56,12 @@ public sealed partial class DeliveryReturnsSeedDataTests
         // and none says cash on delivery is offered.
         Assert.DoesNotContain("by bank transfer", html, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("island-wide only", html, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("{{", html, StringComparison.Ordinal);
+        // The one marker allowed: where the Shipping page draws its live fee list.
+        Assert.DoesNotContain("{{", html.Replace(PolicyPageContent.DeliveryFeesMarker, string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
+        Assert.DoesNotContain("href=\"/contact\"", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("Final sale", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("email you when", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ready to collect", html, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("[default", html, StringComparison.Ordinal);
         Assert.False(string.IsNullOrWhiteSpace(name));
     }
@@ -69,6 +77,58 @@ public sealed partial class DeliveryReturnsSeedDataTests
         Assert.Contains("worldwide", ContentSettingDefinitions.DeliveryInfoSeed, StringComparison.Ordinal);
         Assert.Contains("overseas", PolicyPageContent.ShippingBody, StringComparison.Ordinal);
         Assert.Contains("Cash on delivery is not available", PolicyPageContent.ShippingBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_panel_and_the_returns_page_name_the_same_final_sale_items_and_soften_the_48_hour_rule()
+    {
+        foreach (var item in new[] { "lingerie", "swimwear", "socks", "hosiery", "pierced jewellery", "sale items" })
+        {
+            Assert.Contains(item, ContentSettingDefinitions.ReturnsInfoSeed, StringComparison.Ordinal);
+            Assert.Contains(item, PolicyPageContent.ReturnsBody, StringComparison.Ordinal);
+        }
+
+        foreach (var html in new[] { ContentSettingDefinitions.ReturnsInfoSeed, PolicyPageContent.ReturnsBody })
+        {
+            Assert.Contains("damaged, faulty or wrong", html, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("as soon as you notice", html, StringComparison.Ordinal);
+            Assert.Contains("48 hours", html, StringComparison.Ordinal);
+        }
+
+        // Every delivery time is counted from dispatch, in the texts and on the page.
+        Assert.Contains("from dispatch", ContentSettingDefinitions.DeliveryInfoSeed, StringComparison.Ordinal);
+        Assert.Contains("from dispatch", PolicyPageContent.ShippingBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_shipping_page_marks_where_the_fee_list_goes_under_delivery_within_sri_lanka()
+    {
+        var body = PolicyPageContent.ShippingBody;
+        var section = body.IndexOf("<h2>Delivery within Sri Lanka</h2>", StringComparison.Ordinal);
+        var marker = body.IndexOf("<p>" + PolicyPageContent.DeliveryFeesMarker + "</p>", StringComparison.Ordinal);
+        var next = body.IndexOf("<h2>", section + 1, StringComparison.Ordinal);
+
+        Assert.InRange(marker, section + 1, next - 1);
+    }
+
+    [Fact]
+    public void The_snippet_profile_keeps_no_picture_and_no_size()
+    {
+        var cleaned = new HtmlSanitiser().SanitiseSnippet(
+            "<p>Hi</p><img src=\"/a.webp\" alt=\"A\" width=\"2400\"><table width=\"2400\"><tr><td height=\"900\">x</td></tr></table>"
+            + "<figure><figcaption>c</figcaption></figure><a href=\"/shipping\" title=\"t\">s</a>");
+
+        Assert.DoesNotContain("<img", cleaned.Html, StringComparison.Ordinal);
+        Assert.DoesNotContain("width", cleaned.Html, StringComparison.Ordinal);
+        Assert.DoesNotContain("height", cleaned.Html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<figure", cleaned.Html, StringComparison.Ordinal);
+        Assert.Contains("<table>", cleaned.Html, StringComparison.Ordinal);
+        Assert.Contains("<a href=\"/shipping\" title=\"t\">s</a>", cleaned.Html, StringComparison.Ordinal);
+        Assert.Contains("<img>", cleaned.Removed);
+        Assert.Contains("width", cleaned.Removed);
+
+        // The page profile is unchanged: a content page may still carry a sized picture.
+        Assert.Contains("width=\"2400\"", new HtmlSanitiser().Sanitise("<img src=\"/a.webp\" alt=\"A\" width=\"2400\">").Html, StringComparison.Ordinal);
     }
 
     [Fact]

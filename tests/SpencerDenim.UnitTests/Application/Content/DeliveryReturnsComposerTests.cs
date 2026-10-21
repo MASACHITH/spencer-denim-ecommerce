@@ -123,6 +123,29 @@ public sealed class DeliveryReturnsComposerTests
         Assert.Equal(DeliveryReturnsComposer.WholeIslandLabel, Assert.Single(zones).Label);
     }
 
+    private static readonly string[] WesternNames = ["Gampaha", "Kalutara", "Kegalle", "Kurunegala"];
+
+    private static readonly string[] OuterNames = ["Ampara", "Badulla", "Galle", "Jaffna", "Kandy"];
+
+    [Fact]
+    public void Two_zones_too_large_to_name_get_two_different_labels_and_carry_their_districts()
+    {
+        var districts = new List<CheckoutDistrict>
+        {
+            new(1, "Colombo", DeliveryZone.Colombo),
+        };
+        districts.AddRange(WesternNames.Select((name, i) => new CheckoutDistrict(10 + i, name, DeliveryZone.Western)));
+        districts.AddRange(OuterNames.Select((name, i) => new CheckoutDistrict(20 + i, name, DeliveryZone.IslandWide)));
+
+        var zones = DeliveryReturnsComposer.Zones(districts);
+
+        Assert.Equal(
+            ["Colombo", "Gampaha, Kalutara and 2 other districts", "Ampara, Badulla and 3 other districts"],
+            zones.Select(zone => zone.Label));
+        Assert.Equal(zones.Count, zones.Select(zone => zone.Label).Distinct().Count());
+        Assert.Equal(["Gampaha", "Kalutara", "Kegalle", "Kurunegala"], zones[1].Districts);
+    }
+
     [Fact]
     public void Districts_are_named_in_alphabetical_order_whatever_order_they_arrive_in()
     {

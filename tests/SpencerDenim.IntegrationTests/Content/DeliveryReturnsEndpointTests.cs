@@ -104,9 +104,13 @@ public sealed class DeliveryReturnsEndpointTests(SqlServerDatabaseFixture sqlSer
 
         try
         {
-            // Enabled, but no location: still none.
+            // Enabled, but this test's location does not exist yet: it is not offered. Scoped to the marker, because the
+            // shared database may hold other classes' active locations (SalesSchemaTestBase leaves "Shop …" rows),
+            // which an enabled method rightly offers; the no-location-at-all case is DeliveryReturnsComposerTests'.
             await SetPickupEnabledAsync(factory, true);
-            Assert.Empty((await GetPanelAsync(client)).GetProperty("pickupPoints").EnumerateArray());
+            Assert.DoesNotContain(
+                (await GetPanelAsync(client)).GetProperty("pickupPoints").EnumerateArray(),
+                candidate => candidate.GetProperty("name").GetString() == marker);
 
             // A location: offered, priced by the pickup rate for its district's zone.
             var locationId = await AddLocationAsync(factory, marker);

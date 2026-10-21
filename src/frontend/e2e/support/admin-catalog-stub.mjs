@@ -1362,19 +1362,21 @@ const SEEDED_SETTINGS = {
 
   // Issue #33: the product page texts, seeded with ContentSettingDefinitions' wording (copied here verbatim).
   'Content.PdpDeliveryInfoHtml':
-    '<ul><li>Within Sri Lanka we deliver to every district by courier. The fee for your district is shown at '
-    + 'checkout, before you pay.</li><li>We also deliver worldwide with a tracked international service, usually '
-    + 'in 5 to 15 working days. The fee for your country is shown at checkout.</li><li>Delivery times are in '
-    + 'working days, counted from dispatch once your payment is confirmed. Customs duties and taxes on overseas '
-    + 'orders are paid by the customer.</li><li>Pay securely online at checkout. Cash on delivery is not '
-    + 'available.</li></ul>',
+    '<ul><li>Within Sri Lanka we deliver to every district by courier. The fee for your district is shown'
+    + ' at checkout, before you pay.</li><li>We also deliver worldwide with a tracked international service'
+    + ', usually in 5 to 15 working days after dispatch. The fee for your country is shown at checkout.</li'
+    + '><li>We dispatch once your payment is confirmed, and delivery times count working days from dispatch'
+    + '. Customs duties and taxes on overseas orders are paid by the customer.</li><li>Pay securely online '
+    + 'at checkout. Cash on delivery is not available.</li></ul>',
   'Content.PdpReturnsInfoHtml':
-    '<ul><li>Changed your mind? Return or exchange within 14 days of delivery.</li><li>Items must be unworn and '
-    + 'unwashed, with all their tags still attached.</li><li>Innerwear, swimwear, socks and sale items are final '
-    + 'sale and cannot be returned.</li><li>Refunds go back to your original payment method within 7 working days '
-    + 'of your return reaching us and passing our check.</li><li>Return postage is yours to pay, from Sri Lanka or '
-    + 'overseas, unless the item is faulty.</li><li>Damaged, faulty or wrong item? Tell us within 48 hours of '
-    + 'delivery, with photos, and we will put it right at our cost.</li></ul>',
+    '<ul><li>Changed your mind? Return or exchange within 14 days of delivery.</li><li>Items must be unwo'
+    + 'rn and unwashed, with all their tags still attached.</li><li>Innerwear and lingerie, swimwear, socks'
+    + ' and hosiery, pierced jewellery and sale items cannot be returned.</li><li>Refunds go back to your o'
+    + 'riginal payment method within 7 working days of your return reaching us and passing our check.</li><'
+    + 'li>Return postage is yours to pay, from Sri Lanka or overseas, unless the item is damaged, faulty or'
+    + ' wrong.</li><li>Damaged in transit or the wrong item? Tell us within 48 hours of delivery, with phot'
+    + 'os. Found a fault later? Tell us as soon as you notice it. Either way we will put it right at our co'
+    + 'st.</li></ul>',
 };
 
 /** Issue #33: `SettingKeys.Content.PdpInfoMaxLength`, the most cleaned markup either text may hold. */
@@ -1386,10 +1388,13 @@ const PDP_INFO_FIELDS = {
   returnsInfoHtml: 'Content.PdpReturnsInfoHtml',
 };
 
-/** `HtmlSanitiser.AllowedTags`, so the stub keeps nothing the server would remove. */
+/**
+ * `HtmlSanitiser.SnippetAllowedTags` (#33: the page profile without img, figure and figcaption), so the stub keeps
+ * nothing the server would remove from these two texts.
+ */
 const ALLOWED_TAGS = new Set([
   'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'sub', 'sup', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'dl', 'dt', 'dd',
-  'blockquote', 'hr', 'a', 'img', 'figure', 'figcaption', 'table', 'caption', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
+  'blockquote', 'hr', 'a', 'table', 'caption', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
 ]);
 
 /** Elements whose contents are code rather than copy, removed with what is inside them. */
@@ -1443,6 +1448,10 @@ function sanitiseHtml(raw) {
 
     return `<${tag}${kept}>`;
   });
+
+  // The server's serialiser writes a bare ampersand in text as &amp;; so does the stub, so a saved "A & B" reads back
+  // exactly as production stores it. An existing entity is left as it is.
+  html = html.replace(/&(?!(?:[a-zA-Z][a-zA-Z0-9]*|#[0-9]+|#x[0-9a-fA-F]+);)/g, '&amp;');
 
   const text = html.trim();
   const rendersNothing = text.replace(/<[^>]+>/g, '').trim().length === 0;

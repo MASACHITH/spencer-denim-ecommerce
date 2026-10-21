@@ -94,7 +94,7 @@ public sealed class UpdateProductPageInfoCommandHandler(
                 continue;
             }
 
-            var cleaned = sanitiser.Sanitise(raw);
+            var cleaned = sanitiser.SanitiseSnippet(raw);
 
             if (cleaned.Rejection is { } refusal)
             {

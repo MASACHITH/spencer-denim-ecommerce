@@ -31,6 +31,13 @@ public static class PolicyPageContent
     /// <summary>The copy version this build ships, recorded in <c>Seed.PolicyPagesVersion</c>.</summary>
     public const int SeedVersion = 1;
 
+    /// <summary>
+    /// A paragraph holding only this text marks where the storefront draws the live Sri Lankan fee list on the
+    /// Shipping page (under "Delivery within Sri Lanka"). The owner can move or delete the line; without it the
+    /// list is drawn after the copy. It never reaches a shopper as text: the storefront replaces it.
+    /// </summary>
+    public const string DeliveryFeesMarker = "{{delivery fees}}";
+
     /// <summary>The Shipping &amp; Delivery page.</summary>
     public const string ShippingBody =
         "<p>We deliver to every district in Sri Lanka and to customers overseas. Here is how it works.</p>"
@@ -40,11 +47,11 @@ public static class PolicyPageContent
         + "<p>If an order is still waiting for payment when the deadline in your order email passes, it is "
         + "cancelled automatically and the items go back on sale.</p>"
         + "<h2>Delivery within Sri Lanka</h2>"
-        + "<p>We deliver island-wide through trusted local couriers. The fee and the expected delivery time "
-        + "depend on your district. The current fees, free-delivery amounts and delivery times for each area are "
-        + "shown on every product page, and checkout shows the exact fee for your district before you pay.</p>"
+        + "<p>We deliver to every district through trusted local couriers. The fee and the expected delivery time "
+        + "depend on your district; checkout shows the exact fee for your district before you pay.</p>"
         + "<p>Delivery times are counted in working days from dispatch and are our best estimate. Remote areas, "
         + "bad weather and public holidays can add a day or two.</p>"
+        + "<p>" + DeliveryFeesMarker + "</p>"
         + "<h2>Delivery worldwide</h2>"
         + "<p>We also ship overseas with a tracked international service. The delivery fee for your country is "
         + "shown at checkout before you pay. Delivery usually takes between 5 and 15 working days after dispatch, "
@@ -54,8 +61,8 @@ public static class PolicyPageContent
         + "parcel arrives.</p>"
         + "<h2>Store pickup</h2>"
         + "<p>When store pickup is available, it appears as a delivery option at checkout with the store's "
-        + "address and opening hours. We will let you know when your order is ready to collect; please bring "
-        + "your order number.</p>"
+        + "address and opening hours. We will contact you about collecting your order; please bring your order "
+        + "number.</p>"
         + "<h2>Tracking your parcel</h2>"
         + "<p>When your order leaves us, we email you the courier's name and your tracking number. You can also "
         + "find them on your order page. Where the courier offers online tracking, the number links straight to "
@@ -69,12 +76,13 @@ public static class PolicyPageContent
         + "couriers usually call before they deliver. If a parcel comes back to us after failed delivery "
         + "attempts, we will contact you to arrange delivery again, and a second delivery fee may apply.</p>"
         + "<p>Before you accept a parcel, check that it has not been opened or damaged. If it has, tell the "
-        + "courier and let us know within 48 hours (see Returns and exchanges).</p>"
+        + "courier and let us know within 48 hours of delivery (see Returns and exchanges).</p>"
         + "<h2>Wrong address?</h2>"
         + "<p>Contact us as soon as possible. We can change the delivery address until the order has been "
         + "dispatched.</p>"
         + "<h2>Questions</h2>"
-        + "<p>Get in touch through our <a href=\"/contact\">Contact page</a> and we will be glad to help.</p>";
+        + "<p>Contact us through the Contact page, linked at the foot of every page, and we will be glad to "
+        + "help.</p>";
 
     /// <summary>The Returns &amp; Exchanges page.</summary>
     public const string ReturnsBody =
@@ -84,8 +92,8 @@ public static class PolicyPageContent
         + "<li>Return or exchange within <strong>14 days</strong> of delivery.</li>"
         + "<li>Items must be unworn and unwashed, with all their tags still attached.</li>"
         + "<li>Refunds go back to your original payment method.</li>"
-        + "<li>Damaged, faulty or wrong item? Tell us within <strong>48 hours</strong> of delivery and we will "
-        + "put it right at our cost.</li>"
+        + "<li>Damaged in transit or the wrong item? Tell us within <strong>48 hours</strong> of delivery. A "
+        + "fault found later? Tell us as soon as you notice it. Either way we put it right at our cost.</li>"
         + "</ul>"
         + "<h2>What can be returned</h2>"
         + "<p>Most clothing, footwear and bags can be returned if they are:</p>"
@@ -103,7 +111,7 @@ public static class PolicyPageContent
         + "<li>swimwear;</li>"
         + "<li>socks and hosiery;</li>"
         + "<li>pierced jewellery;</li>"
-        + "<li>items marked Sale or Final sale.</li>"
+        + "<li>sale items.</li>"
         + "</ul>"
         + "<p>This does not apply if the item arrived damaged, faulty or wrong; see below.</p>"
         + "<h2>Exchanges, including a different size</h2>"
@@ -114,8 +122,8 @@ public static class PolicyPageContent
         + "exchange, the replacement is sent at the standard delivery fee for your address.</p>"
         + "<h2>How to return or exchange</h2>"
         + "<ol>"
-        + "<li>Contact us within 14 days of delivery through our <a href=\"/contact\">Contact page</a>, with "
-        + "your order number, the item, and whether you would like an exchange or a refund.</li>"
+        + "<li>Contact us within 14 days of delivery through the Contact page, linked at the foot of every page, "
+        + "with your order number, the item, and whether you would like an exchange or a refund.</li>"
         + "<li>We will reply with the return address and instructions. Please do not send anything back before "
         + "we confirm.</li>"
         + "<li>Pack the item securely and send it with a tracked service of your choice. Keep the receipt or "
@@ -132,21 +140,23 @@ public static class PolicyPageContent
         + "the original delivery or on the return, are the customer's responsibility and are not refunded.</p>"
         + "<h2>Refunds</h2>"
         + "<p>Once your return reaches us and passes our check, we refund you to your original payment method "
-        + "within 7 working days and email you when it is done. Your bank or payment provider may take a few more "
+        + "within 7 working days and contact you to confirm it. Your bank or payment provider may take a few more "
         + "days to show it.</p>"
         + "<ul>"
         + "<li>You get back the price you paid for the item.</li>"
         + "<li>The original delivery fee is refunded only when the item was damaged, faulty or wrong.</li>"
         + "</ul>"
         + "<h2>Damaged, faulty or wrong items</h2>"
-        + "<p>We are sorry if this happens. Please tell us within 48 hours of delivery and send your order number "
-        + "with clear photos of the item, its tags and the parcel. We will send a replacement or give you a full "
-        + "refund including delivery, and cover the cost of getting the item back.</p>"
+        + "<p>We are sorry if this happens. If an item arrives damaged in transit, or is not what you ordered, "
+        + "please tell us within 48 hours of delivery. If you find a fault later, tell us as soon as you notice "
+        + "it. Send your order number with clear photos of the item, its tags and the parcel. We will send a "
+        + "replacement or give you a full refund including delivery, and cover the cost of getting the item "
+        + "back.</p>"
         + "<h2>Cancelling an order</h2>"
         + "<p>You can cancel any time before we dispatch your order. If you have already paid, we refund you in "
         + "full to your original payment method.</p>"
         + "<h2>Questions</h2>"
-        + "<p>Get in touch through our <a href=\"/contact\">Contact page</a>. We are happy to help.</p>";
+        + "<p>Contact us through the Contact page, linked at the foot of every page. We are happy to help.</p>";
 
     /// <summary>
     /// What each page may hold and still count as untouched, by system key: empty, or exactly an earlier seed's

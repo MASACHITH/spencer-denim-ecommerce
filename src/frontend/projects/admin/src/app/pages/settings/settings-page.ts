@@ -631,9 +631,10 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
             <h2 class="adm-panel__title" id="pdp-texts-title">Product page: delivery and returns</h2>
             <p class="adm-panel__hint">
               Shown on every product page, under the delivery fees, with links to the Shipping and Returns pages.
-              The fees and delivery days are drawn from the delivery rates, so do not type them here. Paragraphs,
-              lists, bold and links are kept; anything else is removed when you save. Leave a box empty to show
-              no text.
+              The fees and delivery days are drawn from the delivery rates, so do not type them here. Kept when you
+              save: paragraphs, line breaks, headings, lists, bold, italic, underline, strikethrough, sub and
+              superscript, quotes, rules, links and tables. Pictures, sizes and anything else are removed. Leave a
+              box empty to show no text.
             </p>
 
             <form class="adm-fields" (ngSubmit)="saveProductPage()" novalidate>

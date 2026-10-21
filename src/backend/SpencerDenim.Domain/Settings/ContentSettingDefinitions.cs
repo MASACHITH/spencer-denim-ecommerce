@@ -36,10 +36,10 @@ public static class ContentSettingDefinitions
         "<ul>"
         + "<li>Within Sri Lanka we deliver to every district by courier. The fee for your district is shown at "
         + "checkout, before you pay.</li>"
-        + "<li>We also deliver worldwide with a tracked international service, usually in 5 to 15 working days. "
-        + "The fee for your country is shown at checkout.</li>"
-        + "<li>Delivery times are in working days, counted from dispatch once your payment is confirmed. Customs "
-        + "duties and taxes on overseas orders are paid by the customer.</li>"
+        + "<li>We also deliver worldwide with a tracked international service, usually in 5 to 15 working days "
+        + "after dispatch. The fee for your country is shown at checkout.</li>"
+        + "<li>We dispatch once your payment is confirmed, and delivery times count working days from dispatch. "
+        + "Customs duties and taxes on overseas orders are paid by the customer.</li>"
         + "<li>Pay securely online at checkout. Cash on delivery is not available.</li>"
         + "</ul>";
 
@@ -48,12 +48,14 @@ public static class ContentSettingDefinitions
         "<ul>"
         + "<li>Changed your mind? Return or exchange within 14 days of delivery.</li>"
         + "<li>Items must be unworn and unwashed, with all their tags still attached.</li>"
-        + "<li>Innerwear, swimwear, socks and sale items are final sale and cannot be returned.</li>"
+        + "<li>Innerwear and lingerie, swimwear, socks and hosiery, pierced jewellery and sale items cannot be "
+        + "returned.</li>"
         + "<li>Refunds go back to your original payment method within 7 working days of your return reaching "
         + "us and passing our check.</li>"
-        + "<li>Return postage is yours to pay, from Sri Lanka or overseas, unless the item is faulty.</li>"
-        + "<li>Damaged, faulty or wrong item? Tell us within 48 hours of delivery, with photos, and we will "
-        + "put it right at our cost.</li>"
+        + "<li>Return postage is yours to pay, from Sri Lanka or overseas, unless the item is damaged, faulty or "
+        + "wrong.</li>"
+        + "<li>Damaged in transit or the wrong item? Tell us within 48 hours of delivery, with photos. Found a "
+        + "fault later? Tell us as soon as you notice it. Either way we will put it right at our cost.</li>"
         + "</ul>";
 
     /// <summary>Both definitions, in the order the settings screen shows them: delivery, then returns.</summary>
@@ -65,9 +67,9 @@ public static class ContentSettingDefinitions
             SettingValueType.TextHtml,
             Permissions.Settings.Edit,
             "Product page delivery text",
-            "A few lines shown under the delivery fees on every product page, with a link to the Shipping page. "
-            + "Fees and delivery days are shown from the delivery rates, so do not type them here. Paragraphs, "
-            + "lists, bold and links are kept; anything else is removed.",
+            "A few lines under the delivery fees on every product page; fees and days come from the rates. "
+            + "Kept: paragraphs, line breaks, headings, lists, bold, italic, underline, strikethrough, sub and "
+            + "superscript, quotes, rules, links and tables. Pictures, sizes and anything else are removed.",
             SeedValue: DeliveryInfoSeed),
 
         new(
@@ -76,9 +78,9 @@ public static class ContentSettingDefinitions
             SettingValueType.TextHtml,
             Permissions.Settings.Edit,
             "Product page returns text",
-            "A few lines about returns and exchanges shown on every product page, with a link to the Returns "
-            + "page. Keep it short and in line with the Returns page. Paragraphs, lists, bold and links are "
-            + "kept; anything else is removed.",
+            "A few lines on returns shown on every product page; keep them in line with the Returns page. "
+            + "Kept: paragraphs, line breaks, headings, lists, bold, italic, underline, strikethrough, sub and "
+            + "superscript, quotes, rules, links and tables. Pictures, sizes and anything else are removed.",
             SeedValue: ReturnsInfoSeed),
     ];
 }

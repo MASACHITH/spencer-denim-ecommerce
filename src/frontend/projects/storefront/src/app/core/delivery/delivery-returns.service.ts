@@ -83,7 +83,15 @@ export function toDeliveryReturns(payload: unknown): DeliveryReturnsDto | null {
   const zones = (body['zones'] as unknown[]).flatMap((row): DeliveryZoneDto[] => {
     const zone = row as Record<string, unknown> | null;
     return zone && isZone(zone['zone']) && isText(zone['label'])
-      ? [{ zone: zone['zone'], label: zone['label'].trim() }]
+      ? [
+          {
+            zone: zone['zone'],
+            label: zone['label'].trim(),
+            districts: Array.isArray(zone['districts'])
+              ? (zone['districts'] as unknown[]).filter(isText).map((name) => name.trim())
+              : [],
+          },
+        ]
       : [];
   });
 

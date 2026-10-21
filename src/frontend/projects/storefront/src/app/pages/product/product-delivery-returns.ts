@@ -43,8 +43,8 @@ import { DeliveryReturnsService } from '../../core/delivery/delivery-returns.ser
               <p class="dr__heading" id="pdp-delivery-lk">Within Sri Lanka</p>
               @if (estimate(); as days) {
                 <p class="dr__estimate" data-testid="pdp-delivery-estimate">
-                  Delivered in {{ days }} after your payment is confirmed, depending on your district and the
-                  delivery method.
+                  Usually delivered in {{ days }} after dispatch, depending on your district and the delivery
+                  method.
                 </p>
               }
               <sd-delivery-rates [info]="panel" idPrefix="pdp-rates" />
@@ -84,6 +84,7 @@ import { DeliveryReturnsService } from '../../core/delivery/delivery-returns.ser
   styles: `
     :host {
       display: block;
+      min-width: 0;
     }
     .dr__block {
       border-bottom: 1px solid var(--color-border);
@@ -100,6 +101,7 @@ import { DeliveryReturnsService } from '../../core/delivery/delivery-returns.ser
       cursor: pointer;
     }
     .dr__body {
+      min-width: 0;
       padding-bottom: var(--space-2);
       max-width: 62ch;
       color: var(--color-text-muted);
@@ -138,6 +140,20 @@ import { DeliveryReturnsService } from '../../core/delivery/delivery-returns.ser
     :host ::ng-deep .dr__text strong {
       font-weight: var(--weight-medium);
       color: var(--color-text);
+    }
+    /* The server's snippet profile keeps no picture and no width (#33), but a row written round it could carry
+       one: nothing in the text may be wider than the column, and a table scrolls itself rather than the page. */
+    :host ::ng-deep .dr__text :is(img, video, iframe) {
+      max-width: 100%;
+      height: auto;
+    }
+    :host ::ng-deep .dr__text table {
+      display: block;
+      max-width: 100%;
+      overflow-x: auto;
+    }
+    :host ::ng-deep .dr__text * {
+      max-width: 100%;
     }
     .dr__more {
       margin: var(--space-1) 0 0;

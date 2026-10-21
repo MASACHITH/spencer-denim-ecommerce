@@ -1,3 +1,4 @@
+import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { Observable, of } from 'rxjs';
@@ -7,6 +8,7 @@ import { ContentPageService } from '../../core/content/content-page.service';
 import { ContentPageLink } from '../../core/content/content-page.model';
 import { DeliveryReturnsDto } from '../../core/delivery/delivery-returns.model';
 import { DeliveryReturnsService } from '../../core/delivery/delivery-returns.service';
+import { DeliveryDistrictService } from '../../core/delivery/delivery-district.service';
 import { PANEL } from '../../core/delivery/delivery-returns.testing';
 
 /**
@@ -18,11 +20,19 @@ describe('ProductDeliveryReturns (#33)', () => {
   let fixture: ComponentFixture<ProductDeliveryReturns>;
   let element: HTMLElement;
 
-  function render(panel: DeliveryReturnsDto | null, published: readonly ContentPageLink[] = []): void {
+  function render(
+    panel: DeliveryReturnsDto | null,
+    published: readonly ContentPageLink[] = [],
+    chosenDistrict: string | null = null,
+  ): void {
     TestBed.configureTestingModule({
       imports: [ProductDeliveryReturns],
       providers: [
         provideRouter([]),
+        {
+          provide: DeliveryDistrictService,
+          useValue: { chosen: signal(chosenDistrict ? { id: 1, code: 'x', name: chosenDistrict, deliveryZone: 3 } : null) },
+        },
         { provide: DeliveryReturnsService, useValue: { load: (): Observable<DeliveryReturnsDto | null> => of(panel) } },
         {
           provide: ContentPageService,
@@ -50,15 +60,15 @@ describe('ProductDeliveryReturns (#33)', () => {
     const summaries = [...element.querySelectorAll('summary')].map((summary) => summary.textContent?.trim());
     expect(summaries).toEqual(['Delivery', 'Returns and exchanges']);
 
-    expect(text('[data-testid="pdp-delivery-estimate"]')).toContain('1–5 working days');
+    expect(text('[data-testid="pdp-delivery-estimate"]')).toContain('Usually delivered in 1–5 working days after dispatch');
 
     const standard = text('[data-testid="delivery-method-STANDARD"]');
     expect(standard).toContain('Standard delivery');
     expect(standard).toContain('Colombo');
-    expect(standard).toContain('Rs. 400, free over Rs. 10,000, 1–2 working days');
+    expect(standard).toContain('Rs. 400, free on orders of Rs. 10,000 or more after discounts, 1–2 working days');
     expect(standard).toContain('Gampaha and Kalutara');
     expect(standard).toContain('Rest of Sri Lanka');
-    expect(standard).toContain('Rs. 600, free over Rs. 15,000, 3–5 working days');
+    expect(standard).toContain('Rs. 600, free on orders of Rs. 15,000 or more after discounts, 3–5 working days');
 
     const express = text('[data-testid="delivery-method-EXPRESS"]');
     expect(express).toContain('Express delivery');
@@ -160,7 +170,7 @@ describe('ProductDeliveryReturns (#33)', () => {
     });
 
     expect(text('[data-testid="delivery-method-STANDARD"]')).toContain('Free, 1–2 working days');
-    expect(text('[data-testid="delivery-method-STANDARD"]')).not.toContain('free over');
+    expect(text('[data-testid="delivery-method-STANDARD"]')).not.toContain('free on orders');
   });
 
   // Tester (#33): a rate for a zone the feed did not label (no active district) is not drawn with an empty name.
@@ -170,5 +180,42 @@ describe('ProductDeliveryReturns (#33)', () => {
     const rows = [...element.querySelectorAll('[data-testid="delivery-method-STANDARD"] dt')].map((dt) => dt.textContent?.trim());
     expect(rows).toEqual(['Colombo', 'Gampaha and Kalutara']);
     expect(text('[data-testid="delivery-method-STANDARD"]')).not.toContain('Rs. 600');
+  });
+
+  it('says "Free" with no free-delivery amount when the threshold is nought', () => {
+    render({
+      ...PANEL,
+      methods: [{ ...PANEL.methods[0], rates: [{ zone: 'Colombo', fee: 400, freeAboveAmount: 0, daysMin: 1, daysMax: 2 }] }],
+    });
+
+    expect(text('[data-testid="delivery-method-STANDARD"]')).toContain('Free, 1–2 working days');
+    expect(text('[data-testid="delivery-method-STANDARD"]')).not.toContain('Rs. 400');
+  });
+
+  it('marks the zone of the district chosen in the header, once the page is live, and only that one', async () => {
+    render(PANEL, [], 'Kandy');
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const marked = [...element.querySelectorAll('.rates__row--yours dt')].map((dt) => dt.textContent?.replace(/\s+/g, ' ').trim());
+    expect(marked).toEqual(['Rest of Sri Lanka your district, Kandy']);
+    expect(element.querySelectorAll('[data-testid="delivery-your-district"]')).toHaveLength(1);
+  });
+
+  it('marks nothing when no district has been chosen', async () => {
+    render(PANEL);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(element.querySelector('.rates__row--yours')).toBeNull();
+  });
+
+  it('keys each rate line on its zone, so two equal labels would still be two rows', () => {
+    render({
+      ...PANEL,
+      zones: PANEL.zones.map((zone) => ({ ...zone, label: 'Same' })),
+    });
+
+    expect(element.querySelectorAll('[data-testid="delivery-method-STANDARD"] dt')).toHaveLength(3);
   });
 });

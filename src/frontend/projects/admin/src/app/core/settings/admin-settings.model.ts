@@ -191,23 +191,6 @@ export interface PayPalValues {
  *
  * Whole days as typed digits, as the API reads them: raw 30–365, bots 7–90 and never more than raw.
  */
-/**
- * The product page's two texts (issue #33), as HTML. Holding **only the keys the server sent**, the bank group's
- * rule, so a caller who did not receive the group sends nothing for it.
- */
-export interface ProductPageInfoValues {
-  readonly deliveryInfoHtml?: string | null;
-  readonly returnsInfoHtml?: string | null;
-}
-
-/** What a product-page text save answers: what the sanitiser removed, empty when nothing was. */
-export interface ProductPageInfoSaveResponse {
-  readonly removed: readonly string[];
-}
-
-/** The most cleaned markup either text may hold: `SettingKeys.Content.PdpInfoMaxLength` on the server. */
-export const PRODUCT_PAGE_INFO_MAX_LENGTH = 4_000;
-
 export interface TrafficValues {
   readonly rawRetentionDays?: string | null;
   readonly botRetentionDays?: string | null;

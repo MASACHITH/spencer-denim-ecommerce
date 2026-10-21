@@ -128,7 +128,7 @@ describe('toDeliveryReturns', () => {
 
     expect(vetted).toEqual({
       estimate: null,
-      zones: [{ zone: 'Colombo', label: 'Colombo' }],
+      zones: [{ zone: 'Colombo', label: 'Colombo', districts: [] }],
       methods: [
         {
           code: 'STANDARD',
@@ -141,6 +141,15 @@ describe('toDeliveryReturns', () => {
       deliveryInfoHtml: '',
       returnsInfoHtml: '',
     });
+  });
+
+  it('keeps the district names of a zone, trimmed, and drops any that are not text', () => {
+    const vetted = toDeliveryReturns({
+      zones: [{ zone: 'Western', label: 'Gampaha and Kalutara', districts: [' Gampaha ', 7, '', 'Kalutara'] }],
+      methods: [],
+    });
+
+    expect(vetted?.zones).toEqual([{ zone: 'Western', label: 'Gampaha and Kalutara', districts: ['Gampaha', 'Kalutara'] }]);
   });
 
   it('keeps a well-formed panel as it is', () => {

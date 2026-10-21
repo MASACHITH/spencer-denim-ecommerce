@@ -50,7 +50,11 @@ public sealed record DeliveryEstimateDto(int DaysMin, int DaysMax);
 /// otherwise "Rest of Sri Lanka". Built from <c>ref.Districts</c>, so moving a district between zones relabels
 /// the panel with no code change.
 /// </param>
-public sealed record DeliveryZoneDto(DeliveryZone Zone, string Label);
+/// <param name="Districts">
+/// The active districts in the zone, alphabetically. Not drawn; the storefront uses it after hydration to mark the
+/// zone of the district a shopper picked in the header, so the server-rendered HTML stays the same for everyone.
+/// </param>
+public sealed record DeliveryZoneDto(DeliveryZone Zone, string Label, IReadOnlyList<string> Districts);
 
 /// <summary>One address delivery method and what it costs in each zone that offers it.</summary>
 public sealed record DeliveryMethodInfoDto(

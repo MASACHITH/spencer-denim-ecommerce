@@ -984,7 +984,7 @@ test.describe('the Shipping and Returns pages and the product page links (#33)',
     await expect(page.getByRole('heading', { level: 2, name: 'Delivery worldwide' })).toBeVisible();
     const rates = page.getByRole('region', { name: 'Current delivery fees in Sri Lanka' });
     await expect(rates).toBeVisible();
-    await expect(rates).toContainText('Rs. 400, free over Rs. 10,000, 1–2 working days');
+    await expect(rates).toContainText('Rs. 400, free on orders of Rs. 10,000 or more after discounts, 1–2 working days');
     await expect(rates).toContainText('Rest of Sri Lanka');
     await expect(rates).toContainText('for your country if you are ordering from overseas');
   });
