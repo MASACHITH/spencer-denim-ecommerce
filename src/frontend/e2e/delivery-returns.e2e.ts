@@ -19,7 +19,7 @@ const PRODUCT = '/product/test-product-1';
 
 const BREAKPOINTS = [320, 375, 390, 768, 1024, 1280, 1440, 1920] as const;
 
-async function panelState(page: Page, state: 'default' | 'pickup' | 'changed' | 'hostile' | 'fail'): Promise<void> {
+async function panelState(page: Page, state: 'default' | 'pickup' | 'changed' | 'hostile' | 'fail' | 'wide'): Promise<void> {
   const response = await page.request.get(`${apiURL}/__test__/delivery-returns?state=${state}`);
   expect(response.ok(), 'the delivery-returns switch did not answer').toBe(true);
 }
@@ -180,4 +180,49 @@ test('no link is offered to a Shipping or Returns page that is not published', a
 
   await expect(page.locator('[data-testid="pdp-shipping-link"]')).toHaveCount(0);
   await expect(page.locator('[data-testid="pdp-returns-link"]')).toHaveCount(0);
+});
+
+// Tester (#33): the admin may save any markup the server's allow-list keeps — headings, tables, images with a width
+// attribute, long links — and the panel must still never scroll sideways.
+for (const width of BREAKPOINTS) {
+  test(`allow-listed wide markup in the delivery text does not scroll sideways at ${width}px`, async ({ page }) => {
+    // KNOWN DEFECT (tester, #33): an <img> with a large width attribute (both allow-listed by HtmlSanitiser) widens
+    // the product page's column: 322 px of sideways scroll at 320, 258 at 768, 130 at 1024, 38 at 1440. Removing the
+    // image alone removes the overflow; the table, heading and long link are fine. Expected to fail until the
+    // panel caps images (or the sanitiser drops img/width from these texts); remove this line with the fix.
+    test.fail(width <= 1440, 'Known #33 defect: an allow-listed wide image in the delivery text scrolls sideways');
+
+    await page.setViewportSize({ width, height: 900 });
+    await panelState(page, 'wide');
+    await useStubApi(page);
+    await page.route('https://example.test/**', (route) => route.fulfill({ status: 404, body: '' }));
+    await page.goto(PRODUCT);
+    await openBoth(page);
+
+    await expect(page.locator('[data-testid="pdp-delivery-text"] table')).toHaveCount(1);
+
+    // Name what sticks out, so a failure says which element to fix.
+    const offenders = await page.locator('[data-testid="pdp-delivery-text"] *').evaluateAll((nodes, limit) =>
+      nodes
+        .filter((node) => node.getBoundingClientRect().right > limit)
+        .map((node) => `${node.tagName.toLowerCase()} right=${Math.round(node.getBoundingClientRect().right)}`),
+      width,
+    );
+    expect(offenders).toEqual([]);
+    expect(await horizontalOverflow(page)).toBe(0);
+
+    const right = await page.locator('[data-testid="pdp-delivery-text"]').evaluate((element) =>
+      Math.max(...[element, ...Array.from(element.querySelectorAll('*'))].map((node) => node.getBoundingClientRect().right)),
+    );
+    expect(right).toBeLessThanOrEqual(width);
+  });
+}
+
+test('a hostile text is not in the server-rendered HTML either', async ({ request, page }) => {
+  await panelState(page, 'hostile');
+  const html = await (await request.get(PRODUCT)).text();
+
+  expect(html).toContain('Fast.');
+  expect(html).not.toMatch(/<script>window\.__pdpXss/);
+  expect(html).not.toMatch(/<img[^>]*onerror/i);
 });

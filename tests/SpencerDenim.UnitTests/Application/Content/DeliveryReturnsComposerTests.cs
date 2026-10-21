@@ -105,6 +105,24 @@ public sealed class DeliveryReturnsComposerTests
         Assert.Equal(expected, DeliveryReturnsComposer.Label(names, otherZones));
     }
 
+    /// <summary>
+    /// Tester (#33): a shop whose only zone holds every district is "All of Sri Lanka", not "the rest" of nothing.
+    /// Kills the mutant that reads <c>otherZones</c> as true when the zone is alone.
+    /// </summary>
+    [Fact]
+    public void The_only_zone_with_districts_is_labelled_as_the_whole_island()
+    {
+        var zones = DeliveryReturnsComposer.Zones(
+        [
+            new(4, "Kandy", DeliveryZone.IslandWide),
+            new(5, "Matale", DeliveryZone.IslandWide),
+            new(6, "Galle", DeliveryZone.IslandWide),
+            new(7, "Jaffna", DeliveryZone.IslandWide),
+        ]);
+
+        Assert.Equal(DeliveryReturnsComposer.WholeIslandLabel, Assert.Single(zones).Label);
+    }
+
     [Fact]
     public void Districts_are_named_in_alphabetical_order_whatever_order_they_arrive_in()
     {
@@ -131,6 +149,29 @@ public sealed class DeliveryReturnsComposerTests
         var panel = DeliveryReturnsComposer.Compose(SeededDistricts, rates, [Location(DeliveryZone.Colombo)], "", "");
 
         Assert.Equal((1, 5), (panel.Estimate!.DaysMin, panel.Estimate.DaysMax));
+    }
+
+    /// <summary>
+    /// Tester (#33): the lower bound is the smallest <i>minimum</i>, not the smallest maximum. Every seeded rate
+    /// has a range here, so the two differ. Kills the mutant <c>Min(rate => rate.DaysMax)</c>.
+    /// </summary>
+    [Fact]
+    public void The_estimate_lower_bound_is_the_smallest_minimum_when_no_rate_is_a_single_day()
+    {
+        var rates = new Dictionary<DeliveryZone, IReadOnlyList<CheckoutDeliveryMethod>>
+        {
+            [DeliveryZone.Colombo] = [Standard(new CheckoutZoneRate(true, 400m, null, 2, 4))],
+            [DeliveryZone.Western] = [Standard(new CheckoutZoneRate(true, 450m, null, 3, 6))],
+        };
+
+        var panel = DeliveryReturnsComposer.Compose(
+            [new(1, "Colombo", DeliveryZone.Colombo), new(2, "Gampaha", DeliveryZone.Western)],
+            rates,
+            [],
+            "",
+            "");
+
+        Assert.Equal((2, 6), (panel.Estimate!.DaysMin, panel.Estimate.DaysMax));
     }
 
     [Fact]

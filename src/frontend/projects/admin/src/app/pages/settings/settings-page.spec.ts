@@ -1608,6 +1608,57 @@ describe('SettingsPage (ADM-22)', () => {
       expect(element.querySelector('[data-testid="error-returnsInfoHtml"]')!.textContent).toContain('Too long.');
       expect(field('returnsInfoHtml').getAttribute('aria-invalid')).toBe('true');
     });
+
+    // Tester (#33): what is typed while the post-save re-read is in flight is not overwritten by it.
+    it('keeps a text typed while the re-read after a save is still in flight', async () => {
+      await open(payloadWithTexts('<p>Old.</p>', '<p>14 days.</p>'));
+
+      (element.querySelector('[data-testid="save-pdp-texts"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+      writeTo(AdminSettingsApi.productPageInfoUrl).flush({ removed: [] });
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      const returns = field('returnsInfoHtml') as unknown as HTMLTextAreaElement;
+      returns.value = '<p>Typed during the re-read.</p>';
+      returns.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(payloadWithTexts('<p>Old.</p>', '<p>14 days.</p>'));
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect((field('returnsInfoHtml') as unknown as HTMLTextAreaElement).value).toBe('<p>Typed during the re-read.</p>');
+    });
+
+    // Tester (#33): an earlier save's "markup was removed" notice must not sit beside a later save that failed.
+    it('clears the removed-markup notice when the next save fails', async () => {
+      await open(payloadWithTexts('<p>Old.</p>', '<p>14 days.</p>'));
+
+      (element.querySelector('[data-testid="save-pdp-texts"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+      writeTo(AdminSettingsApi.productPageInfoUrl).flush({ removed: ['<script>'] });
+      fixture.detectChanges();
+      await fixture.whenStable();
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(payloadWithTexts('<p>Old.</p>', '<p>14 days.</p>'));
+      fixture.detectChanges();
+      await fixture.whenStable();
+      expect(element.querySelector('[data-testid="pdp-removed"]')).not.toBeNull();
+
+      (element.querySelector('[data-testid="save-pdp-texts"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+      writeTo(AdminSettingsApi.productPageInfoUrl).flush(
+        { title: 'One or more fields are invalid.', status: 400, errors: { returnsInfoHtml: ['Too long.'] } },
+        { status: 400, statusText: 'Bad Request' },
+      );
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(element.querySelector('[data-testid="pdp-removed"]')).toBeNull();
+    });
   });
 
   describe('toTrafficForm', () => {

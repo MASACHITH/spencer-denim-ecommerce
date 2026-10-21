@@ -144,4 +144,31 @@ describe('ProductDeliveryReturns (#33)', () => {
     expect(element.querySelector('[data-testid="pdp-delivery-lk"]')).toBeNull();
     expect(element.querySelector('[data-testid="pdp-delivery-text"]')).not.toBeNull();
   });
+
+  // Tester (#33): a free method says "Free" and nothing about a threshold, even when the rate carries one.
+  it('says only "Free" for a free rate that also carries a free-delivery amount', () => {
+    render({
+      ...PANEL,
+      methods: [
+        {
+          code: 'STANDARD',
+          name: 'Standard delivery',
+          description: null,
+          rates: [{ zone: 'Colombo', fee: 0, freeAboveAmount: 5000, daysMin: 1, daysMax: 2 }],
+        },
+      ],
+    });
+
+    expect(text('[data-testid="delivery-method-STANDARD"]')).toContain('Free, 1–2 working days');
+    expect(text('[data-testid="delivery-method-STANDARD"]')).not.toContain('free over');
+  });
+
+  // Tester (#33): a rate for a zone the feed did not label (no active district) is not drawn with an empty name.
+  it('draws no line for a rate whose zone has no label', () => {
+    render({ ...PANEL, zones: PANEL.zones.filter((zone) => zone.zone !== 'IslandWide') });
+
+    const rows = [...element.querySelectorAll('[data-testid="delivery-method-STANDARD"] dt')].map((dt) => dt.textContent?.trim());
+    expect(rows).toEqual(['Colombo', 'Gampaha and Kalutara']);
+    expect(text('[data-testid="delivery-method-STANDARD"]')).not.toContain('Rs. 600');
+  });
 });

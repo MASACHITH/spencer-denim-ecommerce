@@ -2605,6 +2605,21 @@ function deliveryReturnsFor(state) {
     };
   }
 
+  // Tester (#33): markup the real sanitiser keeps (HtmlSanitiser.AllowedTags/Attributes) but the admin hint does not
+  // mention: a heading, a wide table, an image with a large width attribute and a long unbroken link. The panel
+  // must still fit a 320 px screen.
+  if (state === 'wide') {
+    return {
+      ...DELIVERY_RETURNS_DEFAULT,
+      deliveryInfoHtml:
+        '<h2>Overseas delivery</h2>'
+        + '<table><thead><tr><th>Region</th><th>Courier</th><th>Working days</th><th>Tracked</th><th>Signature</th><th>Insurance</th></tr></thead>'
+        + '<tbody><tr><td>SouthAsiaAndMiddleEast</td><td>InternationalExpressService</td><td>5-15</td><td>Yes</td><td>Required</td><td>Included</td></tr></tbody></table>'
+        + '<p><img src="https://example.test/banner.png" alt="Banner" width="2400" height="300"></p>'
+        + '<p><a href="https://example.test/a-very-long-tracking-address-with-no-spaces-at-all-0123456789-abcdefghij">https://example.test/a-very-long-tracking-address-with-no-spaces-at-all-0123456789-abcdefghij</a></p>',
+    };
+  }
+
   return DELIVERY_RETURNS_DEFAULT;
 }
 

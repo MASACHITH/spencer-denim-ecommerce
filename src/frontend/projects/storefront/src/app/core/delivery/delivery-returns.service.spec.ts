@@ -81,6 +81,18 @@ describe('DeliveryReturnsService (#33)', () => {
   });
 });
 
+// Tester (#33): a handover that crossed the process boundary in the wrong shape is "no panel", never a throw.
+describe('DeliveryReturnsService handover (#33, tester)', () => {
+  it('is null, not an error, when the handed-over panel has no zones', async () => {
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting(), { provide: PLATFORM_ID, useValue: 'browser' }],
+    });
+    TestBed.inject(TransferState).set(makeStateKey<unknown>('content:delivery-returns'), { methods: [] });
+
+    expect(await firstValueFrom(TestBed.inject(DeliveryReturnsService).load())).toBeNull();
+  });
+});
+
 describe('toDeliveryReturns', () => {
   it('refuses a payload that is not the panel', () => {
     expect(toDeliveryReturns(null)).toBeNull();

@@ -254,6 +254,44 @@ public sealed class UpdateProductPageInfoCommandHandlerTests
         Assert.IsType<SettingsWriteResult.Conflict>(result);
     }
 
+    /// <summary>
+    /// Tester (#33): doc 08 §3.8 DB2 — the permission is read <b>per row</b>, so a row whose permission was raised
+    /// refuses the save even when it is the second of the two keys. Kills the mutant that checks the first only.
+    /// </summary>
+    [Fact]
+    public async Task Every_requested_row_is_permission_checked_not_only_the_first()
+    {
+        var store = new FakeSettingsStore();
+        store.Rows[SettingKeys.Content.PdpReturnsInfoHtml].RequiredPermission = Permissions.Settings.Security;
+        var audit = new RecordingAuditLog();
+
+        var result = await Handler(store, audit, [Permissions.Settings.Edit]).HandleAsync(
+            Command(store, (Delivery, "<p>d</p>"), (Returns, "<p>r</p>")),
+            Token);
+
+        var forbidden = Assert.IsType<SettingsWriteResult.Forbidden>(result);
+        Assert.Equal([SettingKeys.Content.PdpReturnsInfoHtml], forbidden.Keys);
+        Assert.Equal(0, store.Saves);
+        Assert.Empty(audit.Rows);
+    }
+
+    /// <summary>
+    /// Tester (#33): the screen shows the removed list as one sentence, so the same removal in both texts is named
+    /// once. Kills the mutant that drops the <c>Distinct</c>.
+    /// </summary>
+    [Fact]
+    public async Task The_same_removal_in_both_texts_is_reported_once()
+    {
+        var store = new FakeSettingsStore();
+
+        var result = await Handler(store).HandleAsync(
+            Command(store, (Delivery, "<p>d</p><script>a()</script>"), (Returns, "<p>r</p><script>b()</script>")),
+            Token);
+
+        var succeeded = Assert.IsType<SettingsWriteResult.Succeeded>(result);
+        Assert.Equal(1, succeeded.Removed!.Count(item => item == "<script>"));
+    }
+
     [Fact]
     public void The_fields_the_endpoint_reads_are_the_two_the_form_sends()
     {
