@@ -304,9 +304,17 @@ public sealed class AdminSmtpSettingsEndpointTests(SqlServerDatabaseFixture sqlS
             await EnqueueOrdinaryAsync(world, "waiting@shop.test");
             await SweepAsync(world);
 
-            var sent = Assert.Single(world.Sink.Sent);
-            Assert.Equal(await EmailOfAsync(world, superAdmin), sent.Email.ToEmail);
+            // Every active Super Admin in the shared database is warned (others may exist), each through account A,
+            // and nothing ordinary went out.
+            var mine = await EmailOfAsync(world, superAdmin);
+            var sent = Assert.Single(world.Sink.Sent, message => message.Email.ToEmail == mine);
             Assert.Equal("smtp.account-a.test", sent.Account.Host);
+            Assert.All(world.Sink.Sent, message =>
+            {
+                Assert.Equal("smtp.account-a.test", message.Account.Host);
+                Assert.Contains("previous mail account", message.Email.Subject, StringComparison.Ordinal);
+            });
+            Assert.DoesNotContain(world.Sink.Sent, message => message.Email.ToEmail == "waiting@shop.test");
 
             await using var scope = world.Factory.Services.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();

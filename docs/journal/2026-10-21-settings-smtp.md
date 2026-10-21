@@ -90,7 +90,35 @@ and `SD_SMTP_*` is described as the fallback.
 
 ## 3. Tests
 
-See the report figures in §5 (filled in at the end of the session).
+| Suite | Result |
+|---|---|
+| Release build | **0 warnings, 0 errors** |
+| Unit (whole assembly) | **3,991 / 3,991** (main 3,914 after Part 1; new `SmtpSettingsTests` 73 incl. theories, sweep N2 tests 4) |
+| Integration, filtered, LocalDB | new `AdminSmtpSettingsEndpointTests` **12 / 12**; regression filter `~Settings\|~Email\|~Outbox\|~Alert\|~Seed\|~CustomerAccountTesterGap\|~PooledIsolation\|~BankDetails\|~AdminOrderEndpoint\|~Branding` **493 / 495** — the 2 failures were my own test assumptions (other active Super Admins in the shared DB also get the warning; `Every_seeded_key_arrives…` now excludes the Settings.Security keys no role can read); both fixed, re-run `~AdminSmtpSettingsEndpointTests\|~AdminSettingsEndpointTests` **86 / 86**. Part 1 (fork): 319 / 319 |
+| Vitest admin | **870 / 870** (+9 `email-account-panel.spec.ts`) |
+| `ng lint admin` | clean |
+| Builds | admin initial 316.22 kB; storefront initial 449.83 kB (unchanged code) |
+| Playwright `admin-settings.e2e.ts`, retries 0, admin stub only on port 6551 | **44 / 44** (9 new: shown/absent, save + reload + write-only password, field and cross-field refusals, test send ok/refused, 8 breakpoints, axe). Part 1: admin-orders 39/39, alerts+bank+settings 89/89 |
+
+Every integration run waited for a quiet testhost; other agents' testhosts never went quiet for 60 s, so each run
+started after the 20-minute cap **with overlap**, as briefed.
+
+Prettier: `settings-page.ts`, `admin-settings.model.ts` and `admin-settings.e2e.ts` already failed `prettier --check` on
+`main`; only the new files were formatted, to keep the diff to the change.
+
+## 3a. Mutation testing
+
+- **Unit — 25 run, 25 killed** (one, "banner not raised", first died at compile and was re-run as a behavioural
+  mutant, killed). Two survived the first round and were killed after adding cases: the test-send failure message
+  passing the server's text through on an unmapped status (added a 421 case), and the send-from address accepting a
+  display name with no space (added `Shop<…>` cases). Covered: permission (save, test send), secret (plaintext store,
+  blank clears, `ToString`, server reply in two branches), dual send (previous copy dropped / wrong account / read after
+  the change / banner / sweep ignores carried account / unreadable falls back / no override claim when unconfigured),
+  precedence (config beats rows, unreadable password used, user name without TLS, unsaved switch off), rules (host with
+  port, display-name address, control characters), cross-field port, concurrency, test recipient.
+- **Integration — 5 run, 5 killed:** route guarded by `Settings.Edit`; override-only predicate dropped from the claim;
+  a password row not flagged secret read as one; the read model returns the secret; reader uses configuration only.
+- **E2E stub — 2 run, 2 killed:** host check removed; cross-field rule removed.
 
 ## 4. Owner decisions (safe choice taken)
 1. **Settings not marked Done on the client tracker**: delivery fees have no admin screen, and CLAUDE.md marks Done only
