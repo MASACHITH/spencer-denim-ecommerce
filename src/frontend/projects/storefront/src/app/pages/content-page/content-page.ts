@@ -13,6 +13,7 @@ import { toSignal } from '@angular/core/rxjs-interop';
 import { catchError, map, of, switchMap } from 'rxjs';
 
 import { ContactPanel } from './contact-panel';
+import { ShippingRates } from './shipping-rates';
 import { CONTENT_PAGE_KEYS, ContentPageDto } from '../../core/content/content-page.model';
 import { ContentPageService } from '../../core/content/content-page.service';
 import { PageMeta } from '../../core/platform/page-metadata';
@@ -52,7 +53,7 @@ type State =
  */
 @Component({
   selector: 'sd-content-page',
-  imports: [RouterLink, ContactPanel],
+  imports: [RouterLink, ContactPanel, ShippingRates],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @switch (state().kind) {
@@ -83,6 +84,11 @@ type State =
 
           @if (isContact()) {
             <sd-contact-panel />
+          }
+
+          @if (isShipping()) {
+            <!-- #33: the live fees, from the zone rates, under the owner's words. -->
+            <sd-shipping-rates />
           }
         </article>
       }
@@ -195,6 +201,10 @@ export class ContentPage {
 
   protected readonly isContact = computed(
     () => this.page()?.systemKey === CONTENT_PAGE_KEYS.contact,
+  );
+
+  protected readonly isShipping = computed(
+    () => this.page()?.systemKey === CONTENT_PAGE_KEYS.shipping,
   );
 
   /** The Contact page's address, for the "get in touch" link on an empty page. Null when unpublished. */

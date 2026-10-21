@@ -11,6 +11,7 @@ import { RouterTestingHarness } from '@angular/router/testing';
 
 import { routes } from '../../app.routes';
 import { ProductPage } from './product-page';
+import { ProductDeliveryReturns } from './product-delivery-returns';
 import { ProductReviews } from './product-reviews';
 import {
   ColourSwatchDto,
@@ -188,8 +189,18 @@ class ReviewsStub {
   readonly slug = input.required<string>();
 }
 
+/**
+ * The delivery and returns panel (PDP-05, #33) stood in for, for the same reason: it has its own spec
+ * (`product-delivery-returns.spec.ts`) and its own request.
+ */
+@Component({ selector: 'sd-product-delivery-returns', template: '<p data-testid="delivery-returns-stub"></p>' })
+class DeliveryReturnsStub {}
+
 function stubReviews(): void {
-  TestBed.overrideComponent(ProductPage, { remove: { imports: [ProductReviews] }, add: { imports: [ReviewsStub] } });
+  TestBed.overrideComponent(ProductPage, {
+    remove: { imports: [ProductReviews, ProductDeliveryReturns] },
+    add: { imports: [ReviewsStub, DeliveryReturnsStub] },
+  });
 }
 
 describe('ProductPage (PDP-01..07)', () => {

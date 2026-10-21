@@ -4,7 +4,15 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { AdminSettingsApi } from '../../core/settings/admin-settings-api';
 import { AdminSettings, SETTING_KEYS } from '../../core/settings/admin-settings.model';
-import { SettingsPage, formatStamp, toForm, toPayPalForm, toRequireApproval, toTrafficForm } from './settings-page';
+import {
+  SettingsPage,
+  formatStamp,
+  toForm,
+  toPayPalForm,
+  toProductPageForm,
+  toRequireApproval,
+  toTrafficForm,
+} from './settings-page';
 
 /**
  * ADM-22 and GLB-02: the settings screen.
@@ -1500,6 +1508,105 @@ describe('SettingsPage (ADM-22)', () => {
       await fixture.whenStable();
 
       expect(element.querySelector('[data-testid="announcement"]')!.textContent).toContain('appear as soon as they are written');
+    });
+  });
+
+  describe('product page texts (issue #33)', () => {
+    function payloadWithTexts(delivery: string | null, returns: string | null): AdminSettings {
+      const base = payload();
+      const row = (key: string, value: string | null) => ({
+        key,
+        valueType: 'TextHtml' as const,
+        value,
+        isSecret: false,
+        hasValue: value !== null,
+        requiredPermission: 'Settings.Edit',
+        description: `What ${key} is for.`,
+        updatedAtUtc: null,
+      });
+
+      return {
+        ...base,
+        groups: [
+          ...base.groups,
+          {
+            groupKey: 'Content',
+            rowVersion: 'content-rv-1',
+            settings: [row(SETTING_KEYS.pdpDeliveryInfoHtml, delivery), row(SETTING_KEYS.pdpReturnsInfoHtml, returns)],
+          },
+        ],
+      };
+    }
+
+    it('is absent for a caller who does not receive the Content group', async () => {
+      await open(payload());
+
+      expect(element.querySelector('[data-testid="pdp-texts-panel"]')).toBeNull();
+    });
+
+    it('reads only the keys the payload carries', () => {
+      expect(toProductPageForm(payload())).toEqual({});
+      expect(toProductPageForm(payloadWithTexts('<p>D</p>', null))).toEqual({ deliveryInfoHtml: '<p>D</p>', returnsInfoHtml: null });
+    });
+
+    it('shows both texts as the server sent them in labelled boxes', async () => {
+      await open(payloadWithTexts('<ul><li>Island-wide.</li></ul>', '<p>14 days.</p>'));
+
+      const delivery = field('deliveryInfoHtml') as unknown as HTMLTextAreaElement;
+      await fixture.whenStable();
+      expect(delivery.value).toBe('<ul><li>Island-wide.</li></ul>');
+      expect(element.querySelector('label[for="pdp-deliveryInfoHtml"]')!.textContent).toContain('Delivery text');
+      expect(element.querySelector('label[for="pdp-returnsInfoHtml"]')!.textContent).toContain('Returns text');
+      expect(delivery.getAttribute('aria-describedby')).toBe('pdp-hint-deliveryInfoHtml');
+    });
+
+    it('sends both texts with the Content token, says what the sanitiser removed, then re-reads', async () => {
+      await open(payloadWithTexts('<p>Old.</p>', '<p>14 days.</p>'));
+
+      const delivery = field('deliveryInfoHtml') as unknown as HTMLTextAreaElement;
+      delivery.value = '<p>New.</p><script>x()</script>';
+      delivery.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      (element.querySelector('[data-testid="save-pdp-texts"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      const saved = writeTo(AdminSettingsApi.productPageInfoUrl);
+      expect(saved.request.method).toBe('PUT');
+      expect(saved.request.body).toEqual({
+        deliveryInfoHtml: '<p>New.</p><script>x()</script>',
+        returnsInfoHtml: '<p>14 days.</p>',
+        rowVersion: 'content-rv-1',
+      });
+
+      saved.flush({ removed: ['<script>'] });
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(payloadWithTexts('<p>New.</p>', '<p>14 days.</p>'));
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(element.querySelector('[data-testid="pdp-removed"]')!.textContent).toContain('<script>');
+      expect(element.querySelector('[data-testid="announcement"]')!.textContent).toContain('Some markup was removed');
+    });
+
+    it('puts a 400 on the box it names', async () => {
+      await open(payloadWithTexts('<p>Old.</p>', '<p>14 days.</p>'));
+
+      (element.querySelector('[data-testid="save-pdp-texts"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      writeTo(AdminSettingsApi.productPageInfoUrl).flush(
+        { title: 'One or more fields are invalid.', status: 400, errors: { returnsInfoHtml: ['Too long.'] } },
+        { status: 400, statusText: 'Bad Request' },
+      );
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(element.querySelector('[data-testid="error-returnsInfoHtml"]')!.textContent).toContain('Too long.');
+      expect(field('returnsInfoHtml').getAttribute('aria-invalid')).toBe('true');
     });
   });
 

@@ -22,6 +22,8 @@ import {
   PayPalValues,
   SETTING_GROUPS,
   SETTING_KEYS,
+  PRODUCT_PAGE_INFO_MAX_LENGTH,
+  ProductPageInfoValues,
   TRAFFIC_BOUNDS,
   TrafficValues,
 } from '../../core/settings/admin-settings.model';
@@ -624,6 +626,63 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
           </section>
         }
 
+        @if (canEditProductPage()) {
+          <section class="adm-panel" aria-labelledby="pdp-texts-title" data-testid="pdp-texts-panel">
+            <h2 class="adm-panel__title" id="pdp-texts-title">Product page: delivery and returns</h2>
+            <p class="adm-panel__hint">
+              Shown on every product page, under the delivery fees, with links to the Shipping and Returns pages.
+              The fees and delivery days are drawn from the delivery rates, so do not type them here. Paragraphs,
+              lists, bold and links are kept; anything else is removed when you save. Leave a box empty to show
+              no text.
+            </p>
+
+            <form class="adm-fields" (ngSubmit)="saveProductPage()" novalidate>
+              @for (field of productPageFields; track field.name) {
+                @if (field.name in productPageForm()) {
+                  <div class="adm-field adm-field--wide">
+                    <!-- An explicit for/id pair, as the invoice form above. No backticks in this comment. -->
+                    <label class="adm-label" [attr.for]="'pdp-' + field.name">{{ field.label }}</label>
+                    <textarea
+                      class="adm-input adm-input--multiline"
+                      rows="7"
+                      [id]="'pdp-' + field.name"
+                      [name]="field.name"
+                      autocomplete="off"
+                      [attr.aria-invalid]="fieldError(field.name) ? 'true' : null"
+                      [attr.aria-describedby]="'pdp-hint-' + field.name"
+                      [ngModel]="productPageForm()[field.name]"
+                      (ngModelChange)="patchProductPage(field.name, $event)"
+                      [attr.data-testid]="'field-' + field.name"
+                    ></textarea>
+                    <span class="adm-panel__hint" [id]="'pdp-hint-' + field.name">{{ field.hint }}</span>
+                    @if (fieldError(field.name); as message) {
+                      <span class="adm-field-error" [attr.data-testid]="'error-' + field.name">{{ message }}</span>
+                    }
+                  </div>
+                }
+              }
+
+              @if (productPageRemoved(); as removed) {
+                <p class="adm-panel__hint adm-field--wide" data-testid="pdp-removed">
+                  Some markup was removed when the texts were saved: {{ removed }}.
+                </p>
+              }
+
+              <div class="adm-actions adm-field--wide">
+                <!-- aria-disabled, not disabled, for the reason the invoice form's button gives. -->
+                <button
+                  class="adm-btn--primary"
+                  type="submit"
+                  [attr.aria-disabled]="busy() ? 'true' : null"
+                  data-testid="save-pdp-texts"
+                >
+                  {{ busy() ? 'Saving…' : 'Save product page texts' }}
+                </button>
+              </div>
+            </form>
+          </section>
+        }
+
         @if (canEditReviews()) {
           <section class="adm-panel" aria-labelledby="reviews-title" data-testid="reviews-panel">
             <h2 class="adm-panel__title" id="reviews-title">Reviews</h2>
@@ -669,7 +728,7 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
 
         @if (
           !canEditStore() && !canEditContact() && !canEditBank() && !canEditInvoice() && !canEditPayPal()
-          && !canEditTraffic() && !canEditReviews() && !smtpGroup()
+          && !canEditTraffic() && !canEditReviews() && !smtpGroup() && !canEditProductPage()
         ) {
           <p class="adm-state" data-testid="nothing-to-edit">
             There are no settings you can change here.
@@ -1072,6 +1131,12 @@ export class SettingsPage {
   /** The Traffic form's two periods, holding **only the keys the server sent** — see `toTrafficForm`. */
   private readonly trafficValues = signal<TrafficValues>({});
 
+  /** The product page's two texts (issue #33), holding **only the keys the server sent** — see `toProductPageForm`. */
+  private readonly productPageValues = signal<ProductPageInfoValues>({});
+
+  /** What the last product-page save's sanitiser removed, as one readable list, or null. */
+  protected readonly productPageRemoved = signal<string | null>(null);
+
   protected readonly settings = this.loaded.asReadonly();
   protected readonly loading = this.isLoading.asReadonly();
   protected readonly busy = this.isBusy.asReadonly();
@@ -1088,6 +1153,7 @@ export class SettingsPage {
   protected readonly payPalSecret = signal('');
   protected readonly invoiceForm = this.invoiceValues.asReadonly();
   protected readonly trafficForm = this.trafficValues.asReadonly();
+  protected readonly productPageForm = this.productPageValues.asReadonly();
   protected readonly announcement = this.said.asReadonly();
 
   /**
@@ -1219,6 +1285,27 @@ export class SettingsPage {
   protected readonly smtpGroup = computed(
     () => this.loaded()?.groups.find((group) => group.groupKey === SETTING_GROUPS.smtp) ?? null,
   );
+
+  /** Whether the server sent the `Content` group: the product page's texts (issue #33, `Settings.Edit`). */
+  protected readonly canEditProductPage = computed(() => this.hasGroup(SETTING_GROUPS.content));
+
+  /** The product page form's two boxes (issue #33), as data for the same reason the other forms' are. */
+  protected readonly productPageFields = [
+    {
+      name: 'deliveryInfoHtml',
+      label: 'Delivery text',
+      hint:
+        'A few lines under the delivery fees: how you deliver in Sri Lanka and overseas, and how customers pay. '
+        + `At most ${PRODUCT_PAGE_INFO_MAX_LENGTH.toLocaleString('en-GB')} characters of HTML.`,
+    },
+    {
+      name: 'returnsInfoHtml',
+      label: 'Returns text',
+      hint:
+        'A few lines on returns and exchanges, in line with the Returns page. '
+        + `At most ${PRODUCT_PAGE_INFO_MAX_LENGTH.toLocaleString('en-GB')} characters of HTML.`,
+    },
+  ] as const satisfies readonly { name: keyof ProductPageInfoValues; label: string; hint: string }[];
 
   /**
    * The approval switch as the server sent it, or as the checkbox now says. Anything but a readable "false"
@@ -1365,6 +1452,20 @@ export class SettingsPage {
 
     this.trafficValues.set(trafficFromServer as TrafficValues);
 
+    const productPageFromServer: Record<string, string | null> = { ...toProductPageForm(settings) };
+
+    if (keepUnsavedEdits) {
+      const currentProductPage = this.productPageValues() as Record<string, string | null | undefined>;
+
+      for (const field of this.editedSinceWrite) {
+        if (field in productPageFromServer) {
+          productPageFromServer[field] = currentProductPage[field] ?? null;
+        }
+      }
+    }
+
+    this.productPageValues.set(productPageFromServer as ProductPageInfoValues);
+
     if (!(keepUnsavedEdits && this.editedSinceWrite.has('requireApproval'))) {
       this.requireApproval.set(toRequireApproval(settings));
     }
@@ -1417,6 +1518,15 @@ export class SettingsPage {
   protected patchTraffic<K extends keyof TrafficValues>(field: K, value: TrafficValues[K]): void {
     this.editedSinceWrite.add(field);
     this.trafficValues.update((current) => ({ ...current, [field]: value }));
+
+    this.problem.update((current) =>
+      current?.kind === 'validation' && current.fieldErrors?.[field] ? null : current,
+    );
+  }
+
+  protected patchProductPage<K extends keyof ProductPageInfoValues>(field: K, value: ProductPageInfoValues[K]): void {
+    this.editedSinceWrite.add(field);
+    this.productPageValues.update((current) => ({ ...current, [field]: value }));
 
     this.problem.update((current) =>
       current?.kind === 'validation' && current.fieldErrors?.[field] ? null : current,
@@ -1544,6 +1654,35 @@ export class SettingsPage {
 
     this.api.updateTraffic(this.trafficValues(), group).subscribe({
       next: () => this.afterWrite('Traffic settings saved. They apply from the next nightly clean-up.'),
+      error: (error: unknown) => this.afterFailure(error),
+    });
+  }
+
+  /**
+   * Saves the product page's delivery and returns texts (issue #33). The server sanitises them; what it removed is
+   * shown beside the form and announced, so a paste that lost part of itself does not look complete.
+   */
+  protected saveProductPage(): void {
+    const group = this.groupVersion(SETTING_GROUPS.content);
+    if (group === null || this.isBusy()) {
+      return;
+    }
+
+    this.productPageRemoved.set(null);
+    this.beforeWrite('Saving the product page texts…');
+
+    this.api.updateProductPageInfo(this.productPageValues(), group).subscribe({
+      next: (response) => {
+        const removed = Array.isArray(response?.removed)
+          ? response.removed.filter((item): item is string => typeof item === 'string')
+          : [];
+        this.productPageRemoved.set(removed.length > 0 ? removed.join(', ') : null);
+        this.afterWrite(
+          removed.length > 0
+            ? `Product page texts saved. Some markup was removed: ${removed.join(', ')}.`
+            : 'Product page texts saved. They show on the next product page.',
+        );
+      },
       error: (error: unknown) => this.afterFailure(error),
     });
   }
@@ -1900,6 +2039,29 @@ export function toTrafficForm(settings: AdminSettings): TrafficValues {
   }
 
   return form as TrafficValues;
+}
+
+/**
+ * The product page form's values (issue #33), read out of the payload by key — **only the keys the payload
+ * contained**, {@link toBankForm}'s rule.
+ */
+export function toProductPageForm(settings: AdminSettings): ProductPageInfoValues {
+  const byKey = new Map(
+    settings.groups.flatMap((group) => group.settings.map((setting) => [setting.key, setting.value] as const)),
+  );
+
+  const form: Record<string, string | null> = {};
+
+  for (const [field, key] of [
+    ['deliveryInfoHtml', SETTING_KEYS.pdpDeliveryInfoHtml],
+    ['returnsInfoHtml', SETTING_KEYS.pdpReturnsInfoHtml],
+  ] as const) {
+    if (byKey.has(key)) {
+      form[field] = byKey.get(key) ?? null;
+    }
+  }
+
+  return form as ProductPageInfoValues;
 }
 
 /** `Reviews.RequireApproval` from the payload: on unless it reads exactly "false" (case and spaces aside). */
