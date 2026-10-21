@@ -53,12 +53,12 @@ Feature IDs → [docs/02-scope-baseline.md](docs/02-scope-baseline.md). Process 
 ## Week 2 — Storefront (26 Sep–2 Oct)
 | ID | Task | Features | Status |
 |---|---|---|---|
-| W2-01 | Homepage blocks + Content admin | HOME-01–10, ADM-17 | DONE — merged (#39). Content schema, seeder, read-only content API and the page. |
+| W2-01 | Homepage blocks + Content admin | HOME-01–10, ADM-17 | DONE — merged (#39). Content schema, seeder, read-only content API and the page. Admin editing of every block, announcement bar and size guides #214 (issue #192); mega-menu promo cards #225 (issue #215), 2026-10-21. |
 | W2-02 | Department, New Arrivals, Sale pages | DEPT-01–03 | DONE — merged with #31 and #67. Department pages, New Arrivals and Sale; banners and copy are ADM-17. |
 | W2-03 | Listing: filters, chips, sort, count, empty, load more | PLP-01–07 | DONE — merged (#31). Filters, chips, sort, count, empty state and Load More. |
 | W2-04 | Product card + Quick View | CARD-01, QV-01 | DONE — merged (#112) |
 | W2-05 | Product page: gallery/zoom/video, variants, size guide, details, related, recently viewed | PDP-01–07 | DONE — merged (#35). Gallery, variants, details, related and recently viewed; size guide landed with #72. |
-| W2-06 | Reviews + moderation | PDP-08, ADM-16 | TODO — **now unblocked** (customer accounts merged, #162). **Tharanga**, #187. |
+| W2-06 | Reviews + moderation | PDP-08, ADM-16 | DONE — merged 2026-10-21 (#216, issue #189): reviews, Verified buyer badge, moderation, `Reviews.RequireApproval`. |
 | W2-07 | Search overlay + results | SRCH-01–02 | DONE — merged (#83) | Overlay, results page, filters, sort, chips, Load More and the no-results state. Two tester rounds, both finding shopper-facing defects: a second Escape emptied the search box and reopened the suggestions, and the history stored email addresses because the privacy rule was anchored. **SRCH-01 is partial**: "popular searches" is not delivered and must not be ticked off — doc 08 §1.7 names `analytics.SearchQueriesDaily` as its source and the table, the recording and the read are all unbuilt (#78, with ADM-20). Nothing was faked in its place. 
 | W2-08 | Wishlist | WISH-01 | DONE — merged (#119), after three tester rounds |
 | W2-09 | Bag + mini bag | CART-01–02 | DONE — merged (#94), with the `sales` schema's first migration. #117 (3 of 8 concurrent Add to Bag calls answer 500) is open against it. |
@@ -73,7 +73,7 @@ Feature IDs → [docs/02-scope-baseline.md](docs/02-scope-baseline.md). Process 
 | W3-03 | Payment provider abstraction + Bank transfer + stock reservation/expiry. **Tharanga** — issue #53, which also carries the `sales` schema (orders, payments, refunds), because none of it exists yet. Read docs/11 P7 before building; the states are already decided. | PAY-01, PAY-03 | DONE — merged (#125): PAY-01 + PAY-03, three rounds. PayPal is W4-01 |
 | W3-04 | Admin orders: workflow, approve transfer, courier tracking, invoice | ADM-09 | DONE — merged (#130), after two tester rounds. Closes #124. |
 | W3-04b | Cancel an unpaid order (staff with a reason; customer from their own order link) | docs/11 P10 flow A | DONE — merged (#131). Cancel is for **unpaid** orders only: P10 says a paid order is refunded, not cancelled. The tester added the missing half — a cancelled order could not take a late transfer, because `CanAcceptLatePayment` looked for the wrong two payment statuses. |
-| W3-05 | Promo codes + sale campaigns | ADM-13–14 | DONE — promo codes #153, campaigns backend #157, campaign screen + exclude-sale-items + the promo-code admin 500 fix #158. Open: campaign product targets and banner picker. |
+| W3-05 | Promo codes + sale campaigns | ADM-13–14 | DONE — promo codes #153, campaigns backend #157, campaign screen + exclude-sale-items + the promo-code admin 500 fix #158. Product targets and the Sale page banner merged 2026-10-21 (#220, issue #191). |
 | W3-06 | Transactional emails | ACC-03 | DONE — merged (#133). `ops.EmailOutbox`, a transactional outbox in six transactions, the `SendEmails` job (1/5/15/60/240 min), six order emails. **Nothing sends until the client supplies the mail account**; unconfigured SMTP queues and spends no retry. Bank details unset ⇒ the instructions email is not queued at all. |
 | W3-07 | Customers, newsletter subscribers, settings | ADM-15, ADM-21, ADM-22 | DONE — settings #104 and the remainder #211 (issue #193: traffic retention form, YouTube, deferred-key review); customers + newsletter #172 (which also fixed the pooled-isolation leak that delayed customer emails). |
 

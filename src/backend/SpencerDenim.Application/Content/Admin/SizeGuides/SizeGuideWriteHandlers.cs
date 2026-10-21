@@ -142,9 +142,10 @@ public sealed class SizeGuideWriteHandlers(
             command.Actor,
             clock.UtcNow.UtcDateTime));
 
-        var outcome = await store.SaveAsync(command.Actor.UserId, Usage(guide), cancellationToken);
+        var usage = Usage(guide);
+        var outcome = await store.SaveAsync(command.Actor.UserId, usage, cancellationToken);
 
-        return Saved(outcome, guide, values);
+        return Saved(outcome, guide, values, usage);
     }
 
     public async Task<ContentWriteResult> HandleAsync(UpdateSizeGuideCommand command, CancellationToken cancellationToken)
@@ -192,9 +193,10 @@ public sealed class SizeGuideWriteHandlers(
         }
 
         auditLog.Enlist(audit);
-        var outcome = await store.SaveAsync(command.Actor.UserId, Usage(guide), cancellationToken);
+        var usage = Usage(guide);
+        var outcome = await store.SaveAsync(command.Actor.UserId, usage, cancellationToken);
 
-        return Saved(outcome, guide, values);
+        return Saved(outcome, guide, values, usage);
     }
 
     public async Task<ContentWriteResult> HandleAsync(DeleteSizeGuideCommand command, CancellationToken cancellationToken)
@@ -315,11 +317,17 @@ public sealed class SizeGuideWriteHandlers(
         return cleaned;
     }
 
-    private ContentWriteResult Saved(ContentSaveOutcome outcome, SizeGuide guide, Values values)
+    private ContentWriteResult Saved(ContentSaveOutcome outcome, SizeGuide guide, Values values, ContentMediaUsageChange usage)
     {
         if (outcome == ContentSaveOutcome.ConcurrencyConflict)
         {
             return StaleConflict();
+        }
+
+        // Re-checked under the asset's lock in the save (#215 tester M1).
+        if (outcome == ContentSaveOutcome.MediaUnavailable)
+        {
+            return new ContentWriteResult.Invalid(ContentMediaRules.UnavailableErrors(usage.Unavailable));
         }
 
         homePageCache.Evict();

@@ -368,6 +368,14 @@ public static partial class SettingKeys
         /// <see cref="SettingValueType.Int"/> row, written by the seeder and read by nothing else.
         /// </summary>
         public const string HomeContentVersion = "Seed.HomeContentVersion";
+
+        /// <summary>
+        /// The highest mega-menu card seed version applied to this database (#215). A marker of its own rather
+        /// than a step of <see cref="HomeContentVersion"/>: raising that number would re-offer #63's artwork
+        /// rows to every database already at version 2, putting back tiles a client deleted. Same rule, same
+        /// shape: an <see cref="SettingValueType.Int"/> row, written by the seeder and read by nothing else.
+        /// </summary>
+        public const string MegaMenuCardsVersion = "Seed.MegaMenuCardsVersion";
     }
 
     /// <summary><c>ops.Settings.Key</c> is <c>varchar(100)</c>.</summary>

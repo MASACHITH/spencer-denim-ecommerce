@@ -18,6 +18,7 @@ import {
   SizeGuideSaved,
   UploadedMedia,
 } from './admin-site-content.model';
+import { AdminMegaMenuContent, MegaMenuCardRequest, MegaMenuCardSaved } from './admin-mega-menu.model';
 
 /**
  * The homepage blocks, the announcement bar and the size guides (ADM-17, GLB-03, PDP-04; #192).
@@ -31,6 +32,7 @@ export class AdminSiteContentApi {
   static readonly homeUrl = '/api/admin/content/home';
   static readonly announcementsUrl = '/api/admin/content/announcements';
   static readonly sizeGuidesUrl = '/api/admin/content/size-guides';
+  static readonly megaMenuUrl = '/api/admin/content/mega-menu';
   static readonly imagesUrl = '/api/admin/media/images';
   static readonly videosUrl = '/api/admin/media/videos';
 
@@ -138,6 +140,35 @@ export class AdminSiteContentApi {
   deleteSizeGuide(id: number, rowVersion: string): Observable<void> {
     return this.auth.withAntiforgeryToken((token) =>
       this.http.delete<void>(`${AdminSiteContentApi.sizeGuidesUrl}/${id}`, {
+        headers: { 'X-XSRF-TOKEN': token, 'If-Match': quoted(rowVersion) },
+      }),
+    );
+  }
+
+  // ---- mega-menu cards (#215) ---------------------------------------------------------------------
+
+  megaMenu(): Observable<AdminMegaMenuContent> {
+    return this.http.get<AdminMegaMenuContent>(AdminSiteContentApi.megaMenuUrl);
+  }
+
+  /** Adds (id null) or replaces a card. The row version rides in the body on an edit. */
+  saveMegaMenuCard(id: number | null, body: MegaMenuCardRequest, rowVersion: string | null): Observable<MegaMenuCardSaved> {
+    return this.auth.withAntiforgeryToken((token) =>
+      id === null
+        ? this.http.post<MegaMenuCardSaved>(`${AdminSiteContentApi.megaMenuUrl}/cards`, body, {
+            headers: { 'X-XSRF-TOKEN': token },
+          })
+        : this.http.put<MegaMenuCardSaved>(
+            `${AdminSiteContentApi.megaMenuUrl}/cards/${id}`,
+            { ...body, rowVersion },
+            { headers: { 'X-XSRF-TOKEN': token } },
+          ),
+    );
+  }
+
+  deleteMegaMenuCard(id: number, rowVersion: string): Observable<void> {
+    return this.auth.withAntiforgeryToken((token) =>
+      this.http.delete<void>(`${AdminSiteContentApi.megaMenuUrl}/cards/${id}`, {
         headers: { 'X-XSRF-TOKEN': token, 'If-Match': quoted(rowVersion) },
       }),
     );

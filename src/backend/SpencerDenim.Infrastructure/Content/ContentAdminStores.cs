@@ -11,7 +11,7 @@ using SpencerDenim.Infrastructure.Persistence.Interceptors;
 namespace SpencerDenim.Infrastructure.Content;
 
 /// <summary>
-/// The EF Core side of the ADM-17 homepage, announcement and size-guide writes (#192).
+/// The EF Core side of the ADM-17 homepage, announcement, size-guide (#192) and mega-menu card (#215) writes.
 /// <para>
 /// The arrangement <see cref="ContentPageStore"/> established — tracked entities out, one unit of work in —
 /// plus the one thing these rows need that a content page does not: <c>media.MediaUsages</c>. Doc 08
@@ -25,7 +25,7 @@ internal sealed class ContentAdminStores(
     AppDbContext dbContext,
     AuditAndSoftDeleteInterceptor auditColumns,
     IClock clock)
-    : IHomeContentAdminStore, IAnnouncementAdminStore, ISizeGuideAdminStore
+    : IHomeContentAdminStore, IAnnouncementAdminStore, ISizeGuideAdminStore, IMegaMenuCardAdminStore
 {
     // ------------------------------------------------------------------ shared
 
@@ -159,16 +159,85 @@ internal sealed class ContentAdminStores(
         CancellationToken cancellationToken) =>
         SaveWithUsageAsync(actingUserId, usage, cancellationToken);
 
+    // ------------------------------------------------------------------ mega-menu cards (#215)
+
+    Task<MegaMenuPromoCard?> IMegaMenuCardAdminStore.FindAsync(int cardId, CancellationToken cancellationToken) =>
+        dbContext.MegaMenuPromoCards.FirstOrDefaultAsync(card => card.Id == cardId, cancellationToken);
+
+    public Task<int> CountForDepartmentAsync(int departmentId, CancellationToken cancellationToken) =>
+        dbContext.MegaMenuPromoCards.CountAsync(card => card.DepartmentId == departmentId, cancellationToken);
+
+    public void Add(MegaMenuPromoCard card)
+    {
+        ArgumentNullException.ThrowIfNull(card);
+        dbContext.MegaMenuPromoCards.Add(card);
+    }
+
+    public void Remove(MegaMenuPromoCard card)
+    {
+        ArgumentNullException.ThrowIfNull(card);
+        dbContext.MegaMenuPromoCards.Remove(card);
+    }
+
+    Task<ContentSaveOutcome> IMegaMenuCardAdminStore.SaveAsync(
+        int? actingUserId,
+        ContentMediaUsageChange? usage,
+        MegaMenuCardLimit? limit,
+        CancellationToken cancellationToken) =>
+        SaveWithUsageAsync(
+            actingUserId,
+            usage,
+            cancellationToken,
+            limit is null ? null : token => DepartmentHasRoomAsync(limit, token));
+
+    /// <summary>
+    /// #215 tester M2: the limit counted under an update lock on the department row, so two creates cannot both
+    /// read "five" and both insert. The count after the lock is a plain RCSI read taking its snapshot after the
+    /// lock was granted, so it sees every card a save holding the lock before us committed — #191's argument.
+    /// </summary>
+    private async Task<bool> DepartmentHasRoomAsync(MegaMenuCardLimit limit, CancellationToken cancellationToken)
+    {
+        await dbContext.Database
+            .SqlQuery<int>(
+                $"SELECT 1 AS Value FROM catalog.Departments WITH (UPDLOCK, READCOMMITTEDLOCK, ROWLOCK) WHERE Id = {limit.DepartmentId}")
+            .ToListAsync(cancellationToken);
+
+        var held = await dbContext.MegaMenuPromoCards
+            .AsNoTracking()
+            .CountAsync(
+                card => card.DepartmentId == limit.DepartmentId && card.Id != (limit.ExceptCardId ?? 0),
+                cancellationToken);
+
+        return held < limit.Max;
+    }
+
     // ------------------------------------------------------------------ the save
 
+    /// <summary>
+    /// The save every homepage item, size guide and mega-menu card goes through: one transaction that, in this
+    /// order, (1) runs <paramref name="serialise"/> when given (a card's department lock and count), (2) locks
+    /// every media asset the owner will point at, by ascending id, and re-checks it is still usable, (3) writes
+    /// the owner, (4) rewrites its usage rows.
+    /// <para>
+    /// <b>Step 2 is #191's pattern, and #215 tester M1 is why.</b> The handler's media check is an RCSI read, so
+    /// a library delete could commit between it and this save, leaving the owner — and a usage row — on a
+    /// soft-deleted picture (15 of 15 rounds). <c>MediaService.DeleteAsync</c> takes the same
+    /// <c>UPDLOCK, READCOMMITTEDLOCK, ROWLOCK</c> on the asset row before its own checks, so exactly one wins:
+    /// a save that locks first commits its usage row and the delete then refuses; a delete that locks first
+    /// commits, and this re-check then finds the asset deleted and nothing is written. Lock order (doc 08
+    /// §5.3): the serialising row, then asset rows by ascending id, then writes; the delete takes only its one
+    /// asset row, so no cycle is possible.
+    /// </para>
+    /// </summary>
     private async Task<ContentSaveOutcome> SaveWithUsageAsync(
         int? actingUserId,
         ContentMediaUsageChange? usage,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<CancellationToken, Task<bool>>? serialise = null)
     {
         auditColumns.CurrentUserId = actingUserId;
 
-        if (usage is null)
+        if (usage is null && serialise is null)
         {
             return await SaveOnceAsync(cancellationToken);
         }
@@ -179,19 +248,89 @@ internal sealed class ContentAdminStores(
         {
             await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
+            if (serialise is not null && !await serialise(cancellationToken))
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return ContentSaveOutcome.LimitReached;
+            }
+
+            if (usage is not null)
+            {
+                var unavailable = await LockUnusableMediaAsync(usage.Desired, cancellationToken);
+                if (unavailable.Count > 0)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    usage.Unavailable = unavailable;
+                    return ContentSaveOutcome.MediaUnavailable;
+                }
+            }
+
             if (await SaveOnceAsync(cancellationToken) == ContentSaveOutcome.ConcurrencyConflict)
             {
                 await transaction.RollbackAsync(cancellationToken);
                 return ContentSaveOutcome.ConcurrencyConflict;
             }
 
-            await ReplaceUsagesAsync(usage, cancellationToken);
-            await dbContext.SaveChangesAsync(cancellationToken);
+            if (usage is not null)
+            {
+                await ReplaceUsagesAsync(usage, cancellationToken);
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+
             await transaction.CommitAsync(cancellationToken);
 
             return ContentSaveOutcome.Saved;
         });
     }
+
+    /// <summary>
+    /// Locks each asset in <paramref name="desired"/> (ascending id, each once) with
+    /// <c>UPDLOCK, READCOMMITTEDLOCK, ROWLOCK</c> and answers the usages whose asset is no longer usable: deleted,
+    /// not ready, not public, not of its slot's kind, or an image without alt text — the questions
+    /// <c>ContentMediaRules.ResolveAsync</c> asked before the save, asked again under the lock.
+    /// </summary>
+    private async Task<List<ContentMediaUsage>> LockUnusableMediaAsync(
+        IReadOnlyCollection<ContentMediaUsage> desired,
+        CancellationToken cancellationToken)
+    {
+        var unavailable = new List<ContentMediaUsage>();
+
+        foreach (var group in desired.GroupBy(usage => usage.MediaAssetId).OrderBy(group => group.Key))
+        {
+            var assetId = group.Key;
+            var rows = await dbContext.Database
+                .SqlQuery<LockedAsset>(
+                    $"SELECT a.IsDeleted, a.Status, a.Visibility, a.MediaType, a.AltText FROM media.MediaAssets a WITH (UPDLOCK, READCOMMITTEDLOCK, ROWLOCK) WHERE a.Id = {assetId}")
+                .ToListAsync(cancellationToken);
+
+            foreach (var usage in group)
+            {
+                var expected = usage.UsageRole == MediaUsageRoles.Video ? MediaAssetType.Video : MediaAssetType.Image;
+
+                var usable = rows.Count == 1
+                    && !rows[0].IsDeleted
+                    && rows[0].Status == MediaAssetStatus.Ready
+                    && rows[0].Visibility == MediaVisibility.Public
+                    && rows[0].MediaType == expected
+                    && (expected != MediaAssetType.Image || !string.IsNullOrWhiteSpace(rows[0].AltText));
+
+                if (!usable)
+                {
+                    unavailable.Add(usage);
+                }
+            }
+        }
+
+        return unavailable;
+    }
+
+    /// <summary>One asset row as the locked re-check reads it.</summary>
+    private sealed record LockedAsset(
+        bool IsDeleted,
+        MediaAssetStatus Status,
+        MediaVisibility Visibility,
+        MediaAssetType MediaType,
+        string? AltText);
 
     private async Task<ContentSaveOutcome> SaveOnceAsync(CancellationToken cancellationToken)
     {

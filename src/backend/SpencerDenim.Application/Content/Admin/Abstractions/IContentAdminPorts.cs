@@ -1,5 +1,6 @@
 using SpencerDenim.Application.Content.Admin.Home;
 using SpencerDenim.Application.Content.Admin.Announcements;
+using SpencerDenim.Application.Content.Admin.MegaMenu;
 using SpencerDenim.Application.Content.Admin.SizeGuides;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Content;
@@ -36,7 +37,21 @@ public sealed record ContentMediaUsage(int MediaAssetId, string UsageRole);
 public sealed record ContentMediaUsageChange(
     string OwnerType,
     Func<int> OwnerId,
-    IReadOnlyCollection<ContentMediaUsage> Desired);
+    IReadOnlyCollection<ContentMediaUsage> Desired)
+{
+    /// <summary>
+    /// Set by the store when the save answers <see cref="ContentSaveOutcome.MediaUnavailable"/>: the usages whose
+    /// asset was no longer usable when it was locked. The handler turns each into a field error.
+    /// </summary>
+    public IReadOnlyList<ContentMediaUsage> Unavailable { get; set; } = [];
+}
+
+/// <summary>
+/// The rule that keeps a mega-menu department to its limit under concurrency (#215 tester M2): inside the save's
+/// transaction the store locks the department row, counts its cards other than <see cref="ExceptCardId"/>, and
+/// answers <see cref="ContentSaveOutcome.LimitReached"/> at <see cref="Max"/>.
+/// </summary>
+public sealed record MegaMenuCardLimit(int DepartmentId, int Max, int? ExceptCardId);
 
 /// <summary>Lookups every content write shares.</summary>
 public interface IContentLookups
@@ -152,4 +167,40 @@ public interface ISizeGuideAdminReader
     Task<IReadOnlyList<AdminSizeGuideListItemDto>> ListAsync(CancellationToken cancellationToken);
 
     Task<AdminSizeGuideDto?> GetAsync(int sizeGuideId, CancellationToken cancellationToken);
+}
+
+/// <summary>Write port for the mega-menu cards (ADM-17, GLB-05; #215).</summary>
+public interface IMegaMenuCardAdminStore : IContentLookups
+{
+    /// <summary>One card for update, or <see langword="null"/>.</summary>
+    Task<MegaMenuPromoCard?> FindAsync(int cardId, CancellationToken cancellationToken);
+
+    /// <summary>Whether a department with this id exists.</summary>
+    Task<bool> DepartmentExistsAsync(int departmentId, CancellationToken cancellationToken);
+
+    /// <summary>How many cards the department holds, on or off.</summary>
+    Task<int> CountForDepartmentAsync(int departmentId, CancellationToken cancellationToken);
+
+    void Add(MegaMenuPromoCard card);
+
+    /// <summary>A hard delete: the table has no soft-delete flag (doc 08 §3.7).</summary>
+    void Remove(MegaMenuPromoCard card);
+
+    /// <summary>
+    /// <see cref="IHomeContentAdminStore.SaveAsync"/>, plus <paramref name="limit"/>: when given (a create, or a
+    /// move into another department), the department row is locked and counted inside the transaction first.
+    /// Lock order: the department row, then the media asset rows by ascending id, then the writes (doc 08 §5.3).
+    /// </summary>
+    Task<ContentSaveOutcome> SaveAsync(
+        int? actingUserId,
+        ContentMediaUsageChange? usage,
+        MegaMenuCardLimit? limit,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>Read port for the mega-menu card editor.</summary>
+public interface IMegaMenuCardAdminReader
+{
+    /// <summary>Every department and every card, with <c>IsLiveNow</c>/<c>IsShownNow</c> at <paramref name="utcNow"/>.</summary>
+    Task<AdminMegaMenuContentDto> GetAsync(DateTime utcNow, CancellationToken cancellationToken);
 }

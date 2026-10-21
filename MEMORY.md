@@ -6,6 +6,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Current state (keep this section up to date)
 
+- **2026-10-21:** four more taken back from #187 and merged: **#189 reviews + moderation** (#216), **#191 campaign product targets + Sale banner** (#220), **#192 homepage/content editing** (#214), **#215 mega-menu promo cards** (#225). Follow-ups: #223 (media delete edge cases + lock order for product media/categories/department hero), #226 (dependency audit gate red on main — Angular dev-tooling advisories).
 - **2026-10-20:** the owner took four items back from #187 and Sachith's side built them: **#186 demo-style admin charts** (plus a Customers report chart), **#190 inventory screen + `InventoryMovements` ledger**, **#193 settings remainder**, and the sale-campaign test time-bomb. All are merged (#208–#212); the rest of #187 is still Tharanga's.
 - **Phase:** Development handed over to **Tharanga** on **2026-10-16** (owner's instruction). **All remaining work and every open issue (57) is his**, tracked in the pinned handover issue **#187**: remaining features, security fixes before Live, then **deploy UAT (`staging`) and Live (`production`), map the domain, run a full UAT round, and document it**. The original 15 Oct deadline passed with the core shop complete: browse, search, bag, wishlist, checkout, bank transfer, emails, customer accounts with order history and tracking, admin orders, promo codes and sale campaigns, customers, newsletter, dashboard, reports and traffic.
 - **Deadline:** the original was Thu **15 Oct 2026**; it has passed, and the owner extended into a deployment phase run by Tharanga (#187).
@@ -42,6 +43,21 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 ---
 
 ## Session log
+
+### 2026-10-20 to 2026-10-21 — reviews, campaigns, homepage editing, mega-menu cards
+
+`main`: `a478fa8` → after **#225**. Owner: "Do this by you" (reviews, homepage content, campaign targets), taken off Tharanga's list. Every task developer → independent tester; **all four failed a tester round on a real defect.**
+
+- **#214 homepage content (#192):** admin editing for every homepage block, announcement bar and size guides; #63 seeder move, #36 header height, #37 cache boundaries, #70 size-guide bounds. Round 1: two simultaneous announcement saves both "saved" (lost edit 9/10 under RCSI → `UpdatedAtUtc` concurrency token); a page built before a save cached after it (→ cache generation counter); stub looser than API (→ one shared rule table drives C# and stub parity tests).
+- **#216 reviews (#189):** Verified buyer = Delivered order on the reviewer's own account, never email; approval on by default. Round 1: bidi/control characters from a profile name reached the public name beside the badge (→ refused at registration, stripped, `<bdi>`); U+2028/2029 split titles. Tester settled the stats lock: without it `READCOMMITTEDLOCK` deadlocks (1205) — proven with retries off. Sinhala/Tamil ZWJ/ZWNJ explicitly tested and kept.
+- **#220 campaign targets + banner (#191):** product picker (ARIA combobox), Sale page banner read live. Developer found the old banner check accepted private bank slips. Round 1: pre-#191 banners deletable while live; save/delete race (→ both lock the `MediaAssets` row first, doc 08 §5.3).
+- **#225 mega-menu cards (#215):** one migration. Round 1: save/delete race 15/15 even with #191 (→ shared `SaveWithUsageAsync` now locks assets, covering homepage items and size guides too); limit of 6 broken by parallel creates (→ department row lock). 300-round mixed workload: no 1205, no 500.
+
+**Lessons:**
+- **A lock on one side of a race does nothing.** #191 locked the delete; the content save still raced it 15/15 until it took the same lock.
+- **RCSI makes check-then-act races wide, not millisecond.** Every "count then insert" or "compare token in the handler" needed a lock or a conditional statement.
+- **Agents' edit helpers can mojibake** (`—` → `â€”`): scan touched files for `â€` before merge.
+- **The new audit gate (#218) is red on main** from dev-tooling advisories; #225 merged with it red because main had the identical failure (#226).
 
 ### 2026-10-19 to 2026-10-20 — admin charts, inventory, settings (taken back from #187)
 

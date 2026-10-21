@@ -329,6 +329,9 @@ public sealed class SeedCounts
 
     public int AnnouncementMessages { get; set; }
 
+    /// <summary><c>content.MegaMenuPromoCards</c> offered by #215's seed step: one per department, once.</summary>
+    public int MegaMenuCards { get; set; }
+
     /// <summary>
     /// <c>content.ContentPages</c> system-page shells (GLB-10, doc 08 §9): six on a fresh database, zero
     /// afterwards.
@@ -359,7 +362,7 @@ public sealed class SeedCounts
         $"products {Products}, variants {Variants}, media assets {MediaAssets}, " +
         $"media placeholders {MediaPlaceholders}, " +
         $"home sections {HomeSections}, home section items {HomeSectionItems}, " +
-        $"announcements {AnnouncementMessages}, content pages {ContentPages}, settings {Settings}, " +
+        $"announcements {AnnouncementMessages}, mega-menu cards {MegaMenuCards}, content pages {ContentPages}, settings {Settings}, " +
         $"default role permissions {DefaultRolePermissions}, " +
         $"provinces {Sales.Provinces}, districts {Sales.Districts}, " +
         $"delivery methods {Sales.DeliveryMethods}, zone rates {Sales.DeliveryMethodZoneRates}, " +

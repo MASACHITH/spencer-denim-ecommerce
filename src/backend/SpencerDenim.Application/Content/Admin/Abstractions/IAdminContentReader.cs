@@ -99,4 +99,18 @@ public enum ContentSaveOutcome
 
     /// <summary><c>UX_ContentPages_Slug</c> or <c>UX_ContentPages_SystemKey</c> refused it.</summary>
     DuplicateKey = 2,
+
+    /// <summary>
+    /// A picture or video the row would point at was deleted, or stopped being ready, public or of its kind,
+    /// between the handler's check and the save (#215 tester M1). Read under an update lock on the asset row, the
+    /// lock <c>MediaService.DeleteAsync</c> also takes first (doc 08 §5.3), so this is the authoritative answer.
+    /// Nothing was written; <see cref="Admin.Abstractions.ContentMediaUsageChange.Unavailable"/> names the slots.
+    /// </summary>
+    MediaUnavailable = 3,
+
+    /// <summary>
+    /// The owner's group is full, counted under an update lock on the row that serialises it (a mega-menu card's
+    /// department, #215 tester M2). Nothing was written.
+    /// </summary>
+    LimitReached = 4,
 }
