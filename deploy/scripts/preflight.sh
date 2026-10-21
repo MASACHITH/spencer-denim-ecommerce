@@ -127,6 +127,8 @@ if [ -n "$repo" ]; then
       pass "checkout contains the RCSI fix (8bd27a7, #183), so install.sh will copy a provision-database.sql that turns READ_COMMITTED_SNAPSHOT on"
     elif git -C "$repo" cat-file -e 8bd27a7 2>/dev/null; then
       fail "checkout does NOT contain 8bd27a7 (#183): update it first (git fetch && git checkout <release commit>), or the live database silently lacks READ_COMMITTED_SNAPSHOT"
+    else
+      warnl "cannot tell whether the checkout has the RCSI fix: 8bd27a7 (#183) is not in this checkout's history (a shallow clone, or a bundle without history). The provision-database.sql checks below decide; fetch the full history to be sure"
     fi
   fi
 else

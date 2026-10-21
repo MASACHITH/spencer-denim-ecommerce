@@ -65,7 +65,7 @@ EOF
 }
 mk() {   # base args... -> runs make-dp-cert.sh in that layout, output in $OUT, status in $RC
   local b="$1"; shift
-  OUT="$(SD_APPS_BASE="$b/apps" SD_DB_BASE="$b/db" SD_DP_CERT_ALLOW_NONROOT=1 SD_DP_CERT_TTY="$b/tty" PATH="$stubs:$PATH" bash "$scripts/make-dp-cert.sh" "$@" 2>&1 < "${MK_STDIN:-/dev/null}")"
+  OUT="$(SD_APPS_BASE="$b/apps" SD_DB_BASE="$b/db" SD_DP_CERT_ALLOW_NONROOT=1 SD_DP_CERT_TTY="$b/tty" PATH="${EXTRA_PATH:+$EXTRA_PATH:}$stubs:$PATH" bash "$scripts/make-dp-cert.sh" "$@" 2>&1 < "${MK_STDIN:-/dev/null}")"
   RC=$?
 }
 chk() {   # base -> runs check-env.sh, output in $OUT, status in $RC
@@ -145,6 +145,9 @@ expect_in "... and warns the old key stays in clear text" "$OUT" "1 unencrypted"
 b="$(new_layout days)"
 mk "$b" staging --days 100
 [ "$RC" != 0 ] && ok "--days under 365 refused" || bad "--days 100 accepted"
+mk "$b" staging --days
+[ "$RC" != 0 ] && ok "--days with no value refused" || bad "--days with no value accepted"
+expect_in "... with a usage message" "$OUT" "--days needs a value"
 mk "$b" staging --nonsense
 [ "$RC" != 0 ] && ok "unknown option refused" || bad "unknown option accepted"
 mk "$b" qa
@@ -153,6 +156,41 @@ if [ "$(id -u)" -ne 0 ]; then
   OUT="$(SD_APPS_BASE="$b/apps" SD_DB_BASE="$b/db" SD_DP_CERT_TTY="$b/tty" bash "$scripts/make-dp-cert.sh" staging 2>&1 </dev/null)"; RC=$?
   [ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q 'run this with sudo' && ok "refuses to run without sudo" || bad "ran without root"
 fi
+
+echo "== make-dp-cert.sh: a run that stops half-way leaves nothing half-installed (review of #219, L1/L2)"
+# Each fake fails exactly one step after the .pfx is installed and before the password is shown.
+real_openssl="$(command -v openssl)"
+f_x509="$work/fail-x509"; mkdir -p "$f_x509"
+printf '#!/bin/sh\n[ "$1" = x509 ] && { echo "injected failure" >&2; exit 1; }\nexec "%s" "$@"\n' "$real_openssl" > "$f_x509/openssl"
+f_mv="$work/fail-mv"; mkdir -p "$f_mv"
+printf '#!/bin/sh\necho "mv: injected failure (disk full)" >&2\nexit 1\n' > "$f_mv/mv"
+f_awk="$work/empty-awk"; mkdir -p "$f_awk"
+printf '#!/bin/sh\ncat >/dev/null 2>&1 </dev/null\nexit 0\n' > "$f_awk/awk"
+chmod +x "$f_x509/openssl" "$f_mv/mv" "$f_awk/awk"
+envf_of() { printf '%s/apps/staging/spencer-denim-app/config/app.env' "$1"; }
+leftovers() { ls -A "$1/apps/staging/spencer-denim-app/config" | grep -E '^\.app\.env\.' | tr '\n' ' '; }
+for case_ in "x509:$f_x509:" "x509:$f_x509:--write-env" "mv:$f_mv:--write-env" "awk:$f_awk:--write-env"; do
+  what="${case_%%:*}"; rest="${case_#*:}"; dir="${rest%%:*}"; flag="${rest#*:}"
+  label="failure in $what${flag:+ ($flag)}"
+  b="$(new_layout "half-$what-${flag:-plain}")"
+  cp "$(envf_of "$b")" "$work/env.before"
+  EXTRA_PATH="$dir" mk "$b" staging $flag
+  [ "$RC" != 0 ] && ok "$label: exits non-zero" || bad "$label: exited 0"
+  case "$what" in awk) needle="came out shorter than the old one" ;; *) needle="injected failure" ;; esac
+  expect_in "$label: it stopped at the injected step" "$OUT" "$needle"
+  [ ! -e "$(pfx_of "$b")" ] && ok "$label: the .pfx was removed again" || bad "$label: a .pfx whose password was never shown is left behind"
+  expect_in "$label: ... and it says so" "$OUT" "was removed again"
+  [ -s "$(envf_of "$b")" ] && cmp -s "$work/env.before" "$(envf_of "$b")" && ok "$label: app.env is not empty and exactly as before" || bad "$label: app.env changed or emptied ($(wc -c < "$(envf_of "$b")") bytes)"
+  [ -z "$(leftovers "$b")" ] && ok "$label: no temp copies of app.env left" || bad "$label: left behind: $(leftovers "$b")"
+  if [ ! -s "$b/tty" ] || ! grep -q 'SHOWN ONCE' "$b/tty"; then ok "$label: no password was shown for it"; else bad "$label: a password was shown for a removed certificate"; fi
+done
+b="$(new_layout half-then-again)"
+EXTRA_PATH="$f_x509" mk "$b" staging --write-env
+mk "$b" staging --write-env
+[ "$RC" = 0 ] && [ -e "$(pfx_of "$b")" ] && ok "after a half-way stop, a plain re-run succeeds (no 'already holds' refusal)" || { bad "the re-run after a half-way stop failed"; printf '%s\n' "$OUT" | tail -n 5; }
+pw="$(sed -n 's/^ *\([A-Za-z0-9]\{32\}\)$/\1/p' "$b/tty" | head -n 1)"
+grep -qx "SD_DP_CERT_PASSWORD=$pw" "$(envf_of "$b")" && ok "... and app.env holds the password that was shown" || bad "app.env does not hold the shown password"
+[ -z "$(leftovers "$b")" ] && ok "... and no temp copies of app.env are left" || bad "left behind: $(leftovers "$b")"
 
 echo "== check-env.sh: the certificate rules (lib.sh check_dp_cert)"
 good="$(new_layout checks)"
@@ -174,8 +212,14 @@ c="$(cp_layout)"; set_env "$c" SD_DP_CERT_PASSWORD "NotThePasswordAtAll12345"; c
 [ "$RC" != 0 ] && ok "the wrong password: refused" || bad "wrong password accepted"; expect_in "... saying so" "$OUT" "could not open"
 expect_not_in "... without printing either password" "$OUT" "NotThePasswordAtAll12345"
 expect_not_in "... or the real one" "$OUT" "$pw"
-c="$(cp_layout)"; FAKE_PFX_MODE=644 chk "$c"
-[ "$RC" != 0 ] && ok "a world-readable .pfx: refused" || bad "world-readable .pfx accepted"; expect_in "... saying so" "$OUT" "other users can read it"
+for m in 660 644 604 670 700; do
+  c="$(cp_layout)"; FAKE_PFX_MODE=$m chk "$c"
+  [ "$RC" != 0 ] && ok "a .pfx with mode $m (looser than 640): refused" || bad "mode $m accepted"; expect_in "... saying so" "$OUT" "is mode $m, looser than 640"
+done
+for m in 640 600 440 400; do
+  c="$(cp_layout)"; FAKE_PFX_MODE=$m chk "$c"
+  [ "$RC" = 0 ] && ok "a .pfx with mode $m: accepted" || { bad "mode $m refused"; printf '%s\n' "$OUT" | head -n 5; }
+done
 c="$(cp_layout)"; FAKE_PFX_OWNER=bob chk "$c"
 [ "$RC" != 0 ] && ok "a .pfx not owned by root: refused" || bad ".pfx owned by bob accepted"; expect_in "... saying so" "$OUT" "not owned by root"
 

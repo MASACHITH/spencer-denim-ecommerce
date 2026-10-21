@@ -12,6 +12,7 @@ run() { printf '\n######## %s\n' "$1"; shift; "$@" || rc=1; }
 
 for f in "$here"/../*.sh; do bash -n "$f" || { echo "syntax error in $f"; rc=1; }; done
 run "make-dp-cert.sh and the check-env.sh certificate rules" bash "$here/test-make-dp-cert.sh"
+run "wipe-staging.sh (temp tree, fake docker; staging only, verified empty)" bash "$here/test-wipe-staging.sh"
 run "preflight.sh (fake docker/ss/ip/nginx/dig, no mutating commands on PATH)" bash "$here/test-preflight.sh"
 run "verify-public.sh (mock shop: right, and wrong in one way at a time)" bash "$here/test-verify-public.sh"
 if [ "$fast" -eq 0 ]; then

@@ -36,7 +36,8 @@ while [ $# -gt 0 ]; do
     --password-stdin)           mode=stdin ;;
     --write-env)                write_env=1 ;;
     --allow-existing-keyring)   allow_ring=1 ;;
-    --days)                     shift; days="${1:-}" ;;
+    --days)                     [ $# -ge 2 ] || die "--days needs a value (a whole number of days, at least 365)"
+                                shift; days="$1" ;;
     *) die "unknown option '$1' (see the header of this script)" ;;
   esac
   shift
@@ -127,9 +128,30 @@ valid_password "$pw" || die "the password must be $password_rules"
 # --- certificate and .pfx ---------------------------------------------------------------------------------------
 # The unencrypted private key exists only here, for a moment: in RAM (/dev/shm) where there is one, else in $TMPDIR.
 # mktemp -d creates it mode 700, and the EXIT trap removes it on every way out.
+#
+# From the moment the .pfx is installed until the password has been shown (and app.env written, with --write-env) the
+# run is "half done". If it stops in between (a failed command under set -e, a full disk, Ctrl-C), the EXIT trap undoes
+# it: it removes the .pfx, whose password nobody has seen, and puts app.env back as it was. A re-run then starts clean
+# instead of refusing over a certificate that cannot be used.
 work="$(mktemp -d /dev/shm/sd-dp-cert.XXXXXX 2>/dev/null)" || work="$(mktemp -d)"
-cleanup() { [ -n "$work" ] && rm -rf "$work"; unset pw; }
+installed=0 finished=0 env_new="" env_orig=""
+cleanup() {
+  local rc=$?
+  set +e           # a failing step in here must not cut the rest of the clean-up short
+  if [ "$installed" -eq 1 ] && [ "$finished" -ne 1 ]; then
+    rm -f -- "$pfx"
+    if [ -n "$env_orig" ] && [ -f "$env_orig" ]; then mv -f -- "$env_orig" "$app_env"; fi
+    printf '[%s] ERROR: stopped before the password was shown: %s was removed again%s, so nothing is half-installed. Fix the cause and re-run.\n' \
+      "$(date -u +%H:%M:%SZ)" "$pfx" "$([ -n "$env_orig" ] && echo " and $app_env restored" || true)" >&2
+  fi
+  [ -n "$env_new" ] && rm -f -- "$env_new"
+  [ -n "$env_orig" ] && rm -f -- "$env_orig"
+  [ -n "$work" ] && rm -rf -- "$work"
+  unset pw
+  return "$rc"
+}
 trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
 
 log "Generating a 3072-bit RSA key and a self-signed certificate valid for $days days ($env)..."
 openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days "$days" \
@@ -150,6 +172,7 @@ case "$info" in *[Kk]eybag*|*"Key bag"*) ;; *) die "the .pfx has no private key 
 # Owner and group are set before the file is made readable to the group, so it is never readable by the wrong one.
 mkdir -p "$cert_dir"
 chmod 750 "$cert_dir"
+installed=1      # set first: if install fails half-way, the trap still removes what it left
 install -m 600 "$work/dataprotection.pfx" "$pfx"
 if [ "$as_root" -eq 1 ]; then
   chown "root:$SD_API_UID" "$cert_dir" "$pfx"
@@ -162,7 +185,13 @@ pfx_sha="$(openssl dgst -sha256 -r "$pfx" | awk '{print $1}')"
 
 # --- app.env ----------------------------------------------------------------------------------------------------
 if [ "$write_env" -eq 1 ]; then
-  tmp="$work/app.env.new"
+  # Written to a temp file NEXT TO app.env (same directory, so the final mv is an atomic rename on one file system),
+  # given app.env's mode and owner, checked, then renamed over it: app.env is never empty or half-written, whatever
+  # happens. A copy of the original (same directory, root-only) lets the EXIT trap put it back if the run stops later.
+  env_dir="$(dirname "$app_env")"
+  env_new="$(mktemp "$env_dir/.app.env.new.XXXXXX")"
+  env_orig="$(mktemp "$env_dir/.app.env.orig.XXXXXX")"
+  cp -p -- "$app_env" "$env_orig"
   # Values travel in the environment, not in awk's argv, so the password is not on a command line.
   SD_NEW_FILE="dataprotection.pfx" SD_NEW_PW="$pw" awk '
     /^SD_DP_CERT_FILE=/     { print "SD_DP_CERT_FILE=" ENVIRON["SD_NEW_FILE"]; f = 1; next }
@@ -171,8 +200,13 @@ if [ "$write_env" -eq 1 ]; then
     END {
       if (!f) print "SD_DP_CERT_FILE=" ENVIRON["SD_NEW_FILE"]
       if (!p) print "SD_DP_CERT_PASSWORD=" ENVIRON["SD_NEW_PW"]
-    }' "$app_env" > "$tmp"
-  cat "$tmp" > "$app_env"      # overwrite in place: the file keeps its owner and mode 600
+    }' "$app_env" > "$env_new"
+  grep -q '^SD_DP_CERT_PASSWORD=.' "$env_new" && [ "$(wc -l < "$env_new")" -ge "$(wc -l < "$app_env")" ] \
+    || die "the new app.env came out shorter than the old one; $app_env was not changed"
+  chmod --reference="$app_env" "$env_new"
+  if [ "$as_root" -eq 1 ]; then chown --reference="$app_env" "$env_new"; fi
+  mv -f -- "$env_new" "$app_env"
+  env_new=""
   log "Set SD_DP_CERT_FILE and SD_DP_CERT_PASSWORD in $app_env."
 fi
 
@@ -194,6 +228,8 @@ if [ "$mode" = generate ]; then
     printf '  ==================================================================================\n\n'
   } >> "$tty"
 fi
+finished=1       # from here on the run is complete: the trap keeps the .pfx and app.env
+[ -n "$env_orig" ] && rm -f -- "$env_orig"; env_orig=""
 
 if [ "$write_env" -eq 0 ]; then
   log "Add these two lines to $app_env (then run check-env.sh $env):"

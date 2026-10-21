@@ -69,7 +69,7 @@ has_unsafe_password_chars() {
 # (DataProtectionSetup throws), and for a *missing* one is "every admin is signed out after a restore".
 # Warns once per problem and returns 1 if there was any; never prints the password.
 check_dp_cert() {
-  local file="$1" cert pw dir path mode other problems=0
+  local file="$1" cert pw dir path mode problems=0
   cert="$(env_value "$file" SD_DP_CERT_FILE)"
   pw="$(env_value "$file" SD_DP_CERT_PASSWORD)"
   { [ -n "$cert" ] || [ -n "$pw" ]; } || return 0
@@ -96,13 +96,17 @@ check_dp_cert() {
   fi
 
   mode="$(stat -c '%a' "$path" 2>/dev/null || echo unknown)"
-  if [ "$mode" != unknown ]; then
-    other="${mode: -1}"
-    if [ "$other" != 0 ]; then
-      warn "$path is mode $mode: other users can read it. It must not be world-readable (chmod 640, owner root, group 1654)"
-      problems=1
-    fi
-  fi
+  # 640 or stricter: any permission bit outside rw-r----- is refused (group write, anything for other users, execute,
+  # setuid/setgid/sticky). 600, 440 and 400 pass; 660, 644, 604, 700 do not.
+  case "$mode" in
+    unknown) ;;
+    *[!0-7]*|'') warn "$path: could not read its mode ('$mode')"; problems=1 ;;
+    *)
+      if [ $(( 8#$mode & ~8#640 )) -ne 0 ]; then
+        warn "$path is mode $mode, looser than 640 (the API's group can write it, or other users can read it). chmod 640, owner root, group 1654"
+        problems=1
+      fi ;;
+  esac
   if [ "$(stat -c '%U' "$path" 2>/dev/null || echo root)" != root ]; then
     warn "$path is not owned by root (chown root:1654 $path)"
     problems=1

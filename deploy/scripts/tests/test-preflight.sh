@@ -439,6 +439,8 @@ sc_old_checkout() {
   PF_SCRIPT="$r/deploy/scripts/preflight.sh" run_pf "$fx" staging --skip-dns
   rc_is 1
   check FAIL "this checkout's tools/db/provision-database.sql does not mention READ_COMMITTED_SNAPSHOT"
+  # 8bd27a7 is not in this one-commit history at all, so neither PASS nor FAIL can be decided: it must say so.
+  check WARN "8bd27a7 (#183) is not in this checkout's history"
 }
 sc_not_root() {
   local fx="$1"; fx_baseline "$fx"; echo 1000 > "$fx/uid"

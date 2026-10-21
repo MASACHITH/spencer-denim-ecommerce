@@ -27,7 +27,8 @@ Issue **#195** (OPS-01 hosting/domain/SSL, OPS-03 staging site), part of the han
   [`make-dp-cert.sh`](../deploy/scripts/make-dp-cert.sh), [`db-up.sh`](../deploy/scripts/db-up.sh),
   [`db-provision.sh`](../deploy/scripts/db-provision.sh), [`build-images.sh`](../deploy/scripts/build-images.sh),
   [`deploy.sh`](../deploy/scripts/deploy.sh), [`rollback.sh`](../deploy/scripts/rollback.sh),
-  [`backup-db.sh`](../deploy/scripts/backup-db.sh), and, from any machine, [`verify-public.sh`](../deploy/scripts/verify-public.sh).
+  [`backup-db.sh`](../deploy/scripts/backup-db.sh), [`wipe-staging.sh`](../deploy/scripts/wipe-staging.sh) (destructive, UAT only, §E), and, from any machine,
+  [`verify-public.sh`](../deploy/scripts/verify-public.sh).
   Host nginx files are in [`deploy/host-nginx/`](../deploy/host-nginx/).
 
 ---
@@ -124,8 +125,9 @@ Each row names the recommended answer, so that "no objection" is also an answer.
 | 11 | www → apex redirect on Live | **Yes, if `www.` exists in DNS; otherwise skip** | One canonical address for search engines and e-mail links | |
 | 12 | Password-protect UAT with HTTP basic auth (B13) | **Yes, if the round involves people outside the team**; optional otherwise | `noindex` is only a request to crawlers | |
 | 13 | `server_tokens off;` (hides the nginx version in the `Server:` header) | **Yes**, as a one-line http-level snippet (§C1) | `verify-public.sh` warns about it; the Live site template is deliberately left as it is | |
-| 14 | Catch-all `default_server` | **Decided by `preflight.sh`**: install the template only if it reports none | A second default_server makes `nginx -t` fail | |
+| 14 | Catch-all `default_server` | **On this server: SKIP it** (A0, B12-b). Elsewhere: decided by `preflight.sh`, install the template only if it reports none | **This departs from #195**, which lists the catch-all as a must-do. Here the stock `default` site already is `default_server` on 80 and nothing owns 443, so a 443-only catch-all would change what unknown-host requests get, for the other project too. The cost of skipping: on 443 an unknown host is answered by whichever 443 block nginx reads first; `verify-public.sh` FAILs if that turns out to be our shop. A second default_server makes `nginx -t` fail. **Owner to confirm** | |
 | 15 | Where the code comes from on the server | **Read-only deploy key** on the VPS (B3), or a `git bundle` copied over | The repository is private. The owner must add the key | |
+| 16 | Data Protection certificate password in `app.env` (B7, `make-dp-cert.sh --write-env`) | **Keep** | The API needs it at every start, so it is stored like every other secret here: in `config/app.env` (root, mode 600) and, once deployed, in the API container's environment, where root or anyone in the `docker` group can read it with `docker inspect`. It is not in the repository, in a log or on a command line. **Owner to confirm** | |
 
 ### A5. What UAT must not be able to do (read this before B5)
 
@@ -289,19 +291,33 @@ APP=/opt/apps/$ENV/spencer-denim-app; DB=/opt/server/database/$ENV
 gen() { printf 'Aa1%s' "$(openssl rand -base64 60 | tr -dc 'A-Za-z0-9' | cut -c1-29)"; }   # 32 chars, letters+digits only
 sa="$(gen)"; app_pw="$(gen)"; mig_pw="$(gen)"; admin_pw="$(gen)"
 
+# set_kv <file> <KEY> <value>: replaces the KEY= line. The value reaches awk through its ENVIRONMENT, not its command
+# line, so no password is ever visible in `ps` / /proc/<pid>/cmdline to the other users of this shared VPS (the same
+# pattern as make-dp-cert.sh). The file is rewritten next to itself and renamed into place (never left half-written),
+# mode 600, and a KEY missing from the template is an error rather than a silent no-op.
+set_kv() {
+  local f="$1" tmp; tmp="$(mktemp "$f.XXXXXX")"
+  SD_KV_KEY="$2" SD_KV_VAL="$3" awk '
+    index($0, ENVIRON["SD_KV_KEY"] "=") == 1 { print ENVIRON["SD_KV_KEY"] "=" ENVIRON["SD_KV_VAL"]; n++; next }
+    { print }
+    END { exit n ? 0 : 3 }' "$f" > "$tmp" || { rm -f "$tmp"; echo "ERROR: $2 is not in $f: stop" >&2; exit 1; }
+  chmod 600 "$tmp" && mv -f "$tmp" "$f"
+}
+
 # database stack: sa password, and STAGING's memory (the template carries production's 2048 / 2560m)
-sed -i -e "s|^SD_MSSQL_SA_PASSWORD=.*|SD_MSSQL_SA_PASSWORD=$sa|" \
-       -e 's|^SD_MSSQL_MEMORY_LIMIT_MB=.*|SD_MSSQL_MEMORY_LIMIT_MB=1024|' \
-       -e 's|^SD_MSSQL_CONTAINER_MEMORY=.*|SD_MSSQL_CONTAINER_MEMORY=1536m|' "$DB/config/db.env"
+set_kv "$DB/config/db.env" SD_MSSQL_SA_PASSWORD      "$sa"
+set_kv "$DB/config/db.env" SD_MSSQL_MEMORY_LIMIT_MB  1024
+set_kv "$DB/config/db.env" SD_MSSQL_CONTAINER_MEMORY 1536m
 
 # application stack: host, origin, database logins, first Super Admin. SMTP and the Data Protection lines stay EMPTY.
-sed -i -e "s|^SD_PUBLIC_HOSTS=.*|SD_PUBLIC_HOSTS=$HOST|" \
-       -e "s|^SD_PUBLIC_ORIGIN=.*|SD_PUBLIC_ORIGIN=https://$HOST|" \
-       -e "s|^SD_APP_DB_CONNECTION=.*|SD_APP_DB_CONNECTION=Server=sqlserver,1433;Database=SpencerDenim_Staging;User Id=sd_staging_app;Password=$app_pw;Encrypt=True;TrustServerCertificate=True|" \
-       -e "s|^SD_MIGRATOR_DB_CONNECTION=.*|SD_MIGRATOR_DB_CONNECTION=Server=sqlserver,1433;Database=SpencerDenim_Staging;User Id=sd_staging_migrator;Password=$mig_pw;Encrypt=True;TrustServerCertificate=True|" \
-       -e 's|^SD_SEED_ADMIN_ENABLED=.*|SD_SEED_ADMIN_ENABLED=true|' \
-       -e "s|^SD_SEED_ADMIN_EMAIL=.*|SD_SEED_ADMIN_EMAIL=$ADMIN_EMAIL|" \
-       -e "s|^SD_SEED_ADMIN_PASSWORD=.*|SD_SEED_ADMIN_PASSWORD=$admin_pw|" "$APP/config/app.env"
+A="$APP/config/app.env"
+set_kv "$A" SD_PUBLIC_HOSTS           "$HOST"
+set_kv "$A" SD_PUBLIC_ORIGIN          "https://$HOST"
+set_kv "$A" SD_APP_DB_CONNECTION      "Server=sqlserver,1433;Database=SpencerDenim_Staging;User Id=sd_staging_app;Password=$app_pw;Encrypt=True;TrustServerCertificate=True"
+set_kv "$A" SD_MIGRATOR_DB_CONNECTION "Server=sqlserver,1433;Database=SpencerDenim_Staging;User Id=sd_staging_migrator;Password=$mig_pw;Encrypt=True;TrustServerCertificate=True"
+set_kv "$A" SD_SEED_ADMIN_ENABLED     true
+set_kv "$A" SD_SEED_ADMIN_EMAIL       "$ADMIN_EMAIL"
+set_kv "$A" SD_SEED_ADMIN_PASSWORD    "$admin_pw"
 chmod 600 "$APP/config/app.env" "$DB/config/db.env"
 
 echo
@@ -314,8 +330,10 @@ EOF
 *Expect:* the boxed line with the admin e-mail and password, and nothing else. **Save that password in the password manager now**, then
 run `clear` so it does not stay in the terminal's scrollback.
 Notes: the seed password is 32 characters, comfortably above the staff minimum of 10 that issue **#200** is introducing. The sa
-and the two login passwords live only in the two root-only files; read them with `sudo` when needed, never paste them. The
-`sed` lines are safe because the generated passwords contain only letters and digits.
+and the two login passwords live only in the two root-only files; read them with `sudo` when needed, never paste them. No
+password appears on any command line (`set_kv` hands it to `awk` through the environment), and awk prints the value as it is, so
+no character in it is treated specially. Do not "simplify" this back to `sed -i "s|…|$password|"`: a `sed` command line is readable
+by every local user in `ps` while it runs.
 
 ### B6. Check the env files
 
@@ -353,7 +371,9 @@ terminal only, once** — a boxed password. It refuses if a `.pfx` or a key ring
    ```
    Store it next to the password. Never commit it (`*.pfx` is git-ignored). **A key ring restored from a backup without
    this file and this password cannot be read**: every admin sign-in and every encrypted setting goes with it.
-3. `sudo "$APP"/scripts/check-env.sh "$ENV"` — it now also checks that the file is mode ≤ 640, owned by root, and opens with the password.
+3. `sudo "$APP"/scripts/check-env.sh "$ENV"` — it now also checks that the file is mode 640 or stricter (it refuses any permission
+   outside `rw-r-----`, such as group write or anything for other users: 660, 644 and 604 fail; 640 and 600 pass), owned by root, and
+   opens with the password.
 4. After the first deploy (B11), every key file must be encrypted. The folder is readable by root only, so the wildcard has to be
    expanded by root: `sudo bash -c 'grep -L encryptedSecret "$1"/data/dataprotection-keys/key-*.xml' _ "$APP"` must print **nothing**
    (it lists any key file that is *not* encrypted).
@@ -475,7 +495,8 @@ nothing.
 
 **b. The catch-all: SKIP on this server.** (A0: `default` is already `default_server` on 80, nothing owns 443, and the unknown-host
 check in `verify-public.sh` accepts another site's answer. A 443-only copy would change what unknown-host requests receive, for the other
-project too. The rest of this step is for a server where B1 said "install".)
+project too. The rest of this step is for a server where B1 said "install".) **This is a change from #195**, which lists the
+catch-all as a must-do; it is an owner decision (A4 #14).
 
 First check what depends on being "first": `sudo nginx -T | grep -E 'server_name|listen'`. Every domain served from this VPS must
 have its own `server_name`; a site that only works because it happens to be the first block (for example when reached by the
@@ -732,7 +753,7 @@ planned switch of the nginx site, done only after UAT passed and the owner said 
 | Preflight (B1/B3) | host `$HOST` | add `$HOST` (and `www.$HOST` if A4 #11): the apex's DNS may still point elsewhere, so the DNS line may FAIL until the cut-over below. Everything else must be clean |
 | B4 install | `install.sh staging` | `install.sh production`. The checkout is the one that passed UAT: **same commit, same tag** |
 | B5 env | database `SpencerDenim_Staging`, logins `sd_staging_*`, memory `1024` / `1536m` | database **`SpencerDenim`**, logins **`sd_production_app`** / **`sd_production_migrator`**, memory left at the template's **`2048` / `2560m`**. Use new generated passwords: never reuse UAT's |
-| SMTP (B5) | empty | **Set** `SD_SMTP_HOST`, `SD_SMTP_PORT`, `SD_SMTP_USERNAME`, `SD_SMTP_PASSWORD`, `SD_SMTP_FROM_ADDRESS`, `SD_SMTP_FROM_NAME` (A3). The password goes through your own `sed`/editor straight into `app.env`, never into a message. Reminder: messages queued while SMTP was unset are sent at the first start with it set — on a new Live database there are none |
+| SMTP (B5) | empty | **Set** `SD_SMTP_HOST`, `SD_SMTP_PORT`, `SD_SMTP_USERNAME`, `SD_SMTP_PASSWORD`, `SD_SMTP_FROM_ADDRESS`, `SD_SMTP_FROM_NAME` (A3). The password goes straight into `app.env` with `set_kv` (B5) or an editor (`sudo nano`), never through a `sed` with the password on its command line, and never into a message. Reminder: messages queued while SMTP was unset are sent at the first start with it set — on a new Live database there are none |
 | Seed admin (B5) | test admin | the **owner's** e-mail; the generated password is ≥ 10 characters (the staff minimum rises to 10 with #200, so a shorter one would be refused). After the first sign-in set `SD_SEED_ADMIN_ENABLED=false`, blank the password, redeploy the same tag |
 | B7 certificate | before first deploy | before first deploy, same procedure; **separate** `.pfx` and password; the off-server copy is not optional |
 | B9 RCSI check | `SpencerDenim_Staging` → `1` | `SpencerDenim` → `1`. Replace the database name in the `SELECT`. |
@@ -801,6 +822,7 @@ Backups: run `backup-db.sh production` by hand now and copy the file off the ser
 | certbot issue | **Yes**, but real issuance is rate-limited | Always run `--dry-run` first. Remove a certificate: `sudo certbot delete --cert-name "$HOST"` |
 | nginx site | **Yes** | Undo = `sudo rm /etc/nginx/sites-enabled/spencer-denim-<env>.conf && sudo nginx -t && sudo systemctl reload nginx`. Nothing else on the machine changes |
 | Catch-all | Yes | Undo = remove its link in `sites-enabled`, `nginx -t`, reload |
+| `wipe-staging.sh` | Yes, but it is **destructive** | Staging only; deletes all staging data (below). No undo: there is nothing to restore from but an off-server copy |
 
 **Abort UAT without destroying anything:**
 ```bash
@@ -809,22 +831,30 @@ sudo rm /etc/nginx/sites-enabled/spencer-denim-staging.conf && sudo nginx -t && 
 ```
 and remove the DNS records. Start again with `db-up.sh` then `deploy.sh` (same tag).
 
-**Wipe UAT completely and start over: DESTRUCTIVE, UAT ONLY, NEVER `production`.** It deletes the staging database, uploads and key ring.
-This block sets **its own** variables, from literals, and refuses to run for anything but staging, because the shell variables of a
-session that also did Live (D1) point at production:
+**Wipe UAT completely and start over: DESTRUCTIVE, UAT ONLY, NEVER `production`.** It deletes the staging database files, the
+staging database backups, the uploads and the key ring. It is a script, not a pasted block, so that it can be tested and cannot be
+half-run:
 ```bash
-bash -c '
-  set -euo pipefail
-  APP=/opt/apps/staging/spencer-denim-app; DB=/opt/server/database/staging
-  [ -d "$APP/data" ] && [ -d "$DB/data" ] || { echo "staging directories not found: stop"; exit 1; }
-  (cd "$APP/compose" && sudo env SD_IMAGE_TAG=unused docker compose -p sd-staging --project-directory . -f compose.yml -f compose.staging.yml --env-file ../config/app.env down)   # no -v, ever
-  (cd "$DB/compose" && sudo docker compose --env-file ../config/db.env down)
-  sudo rm -rf -- "$DB"/data/* "$DB"/backups/* "$APP"/data/*
-  sudo /opt/apps/src/spencer-denim-ecommerce/deploy/scripts/install.sh staging     # recreates the directories and their owners
-'
+sudo /opt/apps/src/spencer-denim-ecommerce/deploy/scripts/wipe-staging.sh     # from the checkout; it asks you to type: wipe staging
 ```
-Then B8 onwards. The `.pfx` in `config/dataprotection/` is untouched by this; after wiping `data/`, the key ring is new, so a fresh
-start with the same certificate is fine.
+What it does, in order: stops the staging application stack (`sd-staging`) and the staging database stack (`sd-staging-database`,
+named explicitly), both **without** `-v`; refuses to go on if any container of either is still running; deletes everything inside
+`/opt/server/database/staging/data`, `/opt/server/database/staging/backups` and `/opt/apps/staging/spencer-denim-app/data` with
+`find … -mindepth 1 -delete` run **as root** (dot-files included, no shell glob); then **checks that each of the three is empty and
+stops with an error, naming what is left, if one is not**; only then runs `install.sh staging` to recreate the directories and their
+owners. *Expect:* `Verified empty: …` and `Staging wiped.` Anything else: stop and paste the output.
+
+Why it cannot touch Live: it takes **no** environment argument (`staging` is a literal in the script, and any argument is refused);
+every directory it deletes in is checked to lie under `…/staging/…`; it stops the database stack only if staging's own `db.env` says
+`SD_ENV=staging`; and it waits for the typed confirmation. The shell variables of a session that also did Live (D1) point at
+production, which is why none of them is used.
+
+(The earlier version of this block ran `sudo rm -rf -- "$DB"/data/* …` from `deploy1`'s shell. `deploy1` cannot list the mode-770
+database directories, so the glob stayed a literal path, `rm -f` exited 0 and **nothing was deleted**, silently. If you used that
+block, the old staging database is still there.)
+
+Then B8 onwards. The `.pfx` in `config/dataprotection/` and both env files in `config/` are untouched by this; after wiping `data/`,
+the key ring is new, so a fresh start with the same certificate is fine.
 
 **Stop conditions on Live:** `FAIL` in `verify-public.sh`; `deploy.sh` not ending in `production is running <tag>`; the RCSI query
 not `1`; any `is missing` line on the first deploy. In each case stop, paste, and do not switch DNS.
@@ -881,8 +911,10 @@ Deviations from this sheet (anything done differently, with the reason; docs/15 
   `nginx -t` ok for staging, production, the catch-all and the optional www block; a second `default_server` makes it fail, as
   stated; without the catch-all an unknown host is answered by the shop (the failure described in #187 §4), with it the TLS
   handshake is refused; staging answers `Disallow: /` and `noindex`.
-- `make-dp-cert.sh` and the `check-env.sh` certificate rules; the API starting with an OpenSSL-made `.pfx`
-  (`DataProtectionKeyRingTests`).
+- `make-dp-cert.sh` and the `check-env.sh` certificate rules (including a run stopped half-way: the `.pfx` is removed again
+  and `app.env` is left exactly as it was); the API starting with an OpenSSL-made `.pfx` (`DataProtectionKeyRingTests`).
+- `wipe-staging.sh` in a temp tree: it empties the three staging directories, dot-files included, and nothing else; each guard
+  stops it before anything is stopped or deleted; a deletion that leaves files behind fails loudly.
 - `docker compose config` on the compose files with and without the certificate settings.
 
 **Independent tester, round 1 (2026-10-21): FAIL on the sheet, scripts sound.** The tester ran the repo's tests (Git Bash, and an Ubuntu 26.04.1
@@ -895,6 +927,12 @@ not exist (`preflight.sh staging`), the unscoped `certbot renew --dry-run` (now 
 Minors fixed: the `ss` expectation, the `db-up`/`db-provision` environment and name guards, B5 being staging-only, the Ubuntu 26.04 facts.
 **Still open from that round:** `test-host-nginx.sh` leaves mock servers running (its cleanup trap does not see the pids); HTTP/2 is switched on for the other
 sites sharing `:443` (templates would need the nginx 1.25.1+ form); `verify-public.sh` cannot tell the old stack from the new one on the apex.
+
+**Review of PR #219 (2026-10-21), fixed:** the "wipe UAT" block deleted nothing (its glob was expanded by `deploy1`, who cannot read the
+database directories): it is now `wipe-staging.sh`, run as root, with an emptiness check (§E). `make-dp-cert.sh` no longer leaves a
+`.pfx` whose password was never shown if it stops half-way, and rewrites `app.env` atomically (never empty). B5 no longer puts the
+generated passwords on `sed`'s command line. The `.pfx` mode check now refuses anything looser than 640, as B7 says. `preflight.sh`
+says so when it cannot tell whether the checkout has 8bd27a7. Two owner decisions are stated in A4 (#14, #16).
 
 **Only the VPS can show, and what to watch for on the first run:**
 
