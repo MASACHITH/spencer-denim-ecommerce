@@ -122,6 +122,7 @@ run_case "admin-500"           production good "admin-500"           "admin:FAIL
 run_case "departments-html"    production good "departments-html"    "api-departments:FAIL exit:1"
 run_case "departments-500"     production good "departments-500"     "api-departments:FAIL exit:1"
 run_case "unknown-host-200"    production good "unknown-host-200"    "unknown-host-https:FAIL unknown-host-http:FAIL exit:1"
+run_case "unknown-host-other-tenant" production good "unknown-host-other-tenant" "unknown-host-https:WARN unknown-host-http:PASS exit:0"
 run_case "order-500"           production good "order-500"           "order-token:FAIL exit:1"
 run_case "reset-500"           production good "reset-500"           "reset-password:FAIL exit:1"
 run_case "pageview-200"        production good "pageview-200"        "page-view:FAIL exit:1"

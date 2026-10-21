@@ -411,12 +411,14 @@ else skip_all api-departments; fi
 unk="unknown-host-$(date +%s)-$$.invalid"
 looks_like_shop() {   # headers file, body file: did our stack answer?
   # Two of our own fingerprints together (the gateway's Referrer-Policy and the site file's HSTS), the staging
-  # file's noindex header, or the storefront's markup. One header alone could be another tenant's default site.
+  # file's noindex header, or the storefront's server-rendered markup. One header alone could be another tenant's
+  # default site. Not `<app-root`: every Angular app has it, and the other project on this server is one (found on
+  # the first UAT run, where its front end answered the unknown name and was reported as ours).
   local h="$1" b="$2" rp
   rp="$(lower "$(hdr "$h" referrer-policy)")"
   [ -n "$(hdr "$h" strict-transport-security)" ] && [ "$rp" = strict-origin-when-cross-origin ] && return 0
   [ "$envname" = staging ] && [ "$(lower "$(hdr "$h" x-robots-tag)")" = "noindex, nofollow" ] && return 0
-  grep -q -e 'ng-version' -e 'ng-server-context' -e '<app-root' "$b" && return 0
+  grep -q -e 'ng-version' -e 'ng-server-context' "$b" && return 0
   return 1
 }
 if [ -z "$ip_for_probes" ]; then
