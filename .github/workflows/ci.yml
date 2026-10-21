@@ -23,7 +23,10 @@ jobs:
     name: Backend (.NET build and tests)
     runs-on: ubuntu-latest
     # The integration suite outgrew 30 minutes once PayPal (W4-01) landed: 1,819 tests take ~35 min on a laptop.
-    timeout-minutes: 60
+    # 2026-10-21: it outgrew 60 too. With ~2,550 integration tests the job took 56–57 min on the hosted runner
+    # (#220, #225), and #229 was cancelled at 60 min mid-run with no failure. 90 leaves room while the suite is
+    # split or sped up.
+    timeout-minutes: 90
 
     services:
       sqlserver:
