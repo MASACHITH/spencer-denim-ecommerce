@@ -159,6 +159,30 @@ public sealed class DeliveryReturnsEndpointTests(SqlServerDatabaseFixture sqlSer
         }
     }
 
+    [Fact]
+    public async Task A_row_flipped_to_secret_or_to_plain_text_is_never_published()
+    {
+        await using var factory = await StartAsync();
+        using var client = factory.CreateClient();
+
+        try
+        {
+            await RetypeAsync(factory, SettingKeys.Content.PdpDeliveryInfoHtml, SettingValueType.Secret, secret: true);
+            await RetypeAsync(factory, SettingKeys.Content.PdpReturnsInfoHtml, SettingValueType.String, secret: false);
+
+            var panel = await GetPanelAsync(client);
+
+            Assert.Equal(string.Empty, panel.GetProperty("deliveryInfoHtml").GetString());
+            Assert.Equal(string.Empty, panel.GetProperty("returnsInfoHtml").GetString());
+        }
+        finally
+        {
+            await RetypeAsync(factory, SettingKeys.Content.PdpDeliveryInfoHtml, SettingValueType.TextHtml, secret: false);
+            await RetypeAsync(factory, SettingKeys.Content.PdpReturnsInfoHtml, SettingValueType.TextHtml, secret: false);
+            await ResetTextsAsync(factory);
+        }
+    }
+
     // ---- the editor -----------------------------------------------------------------------------------
 
     [Fact]
@@ -371,6 +395,17 @@ public sealed class DeliveryReturnsEndpointTests(SqlServerDatabaseFixture sqlSer
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         await db.Settings.Where(row => row.Key == key).ExecuteUpdateAsync(update => update.SetProperty(row => row.Value, value), Token);
+    }
+
+    private static async Task RetypeAsync(ApiFactory factory, string key, SettingValueType type, bool secret)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // CK_Settings_IsSecret moves both columns together.
+        await db.Settings
+            .Where(row => row.Key == key)
+            .ExecuteUpdateAsync(update => update.SetProperty(row => row.ValueType, type).SetProperty(row => row.IsSecret, secret), Token);
     }
 
     private static async Task ResetTextsAsync(ApiFactory factory)

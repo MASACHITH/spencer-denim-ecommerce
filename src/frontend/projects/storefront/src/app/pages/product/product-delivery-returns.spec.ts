@@ -125,6 +125,19 @@ describe('ProductDeliveryReturns (#33)', () => {
     expect(element.querySelector('[data-testid="pdp-delivery"]')).not.toBeNull();
   });
 
+  it('keeps the Sri Lanka section for store pickup alone, when no delivery method is on offer', () => {
+    render({
+      ...PANEL,
+      methods: [],
+      estimate: null,
+      pickupPoints: [{ name: 'Flagship', city: 'Colombo 3', openingHours: null, fee: 0, daysMin: 1, daysMax: 2 }],
+    });
+
+    expect(element.querySelector('[data-testid="pdp-delivery-lk"]')).not.toBeNull();
+    expect(text('[data-testid="delivery-pickup"]')).toContain('Flagship, Colombo 3');
+    expect(element.querySelector('[data-testid="pdp-delivery-estimate"]')).toBeNull();
+  });
+
   it('leaves out the Sri Lanka section when nothing is on offer but keeps the text', () => {
     render({ ...PANEL, methods: [], estimate: null });
 
