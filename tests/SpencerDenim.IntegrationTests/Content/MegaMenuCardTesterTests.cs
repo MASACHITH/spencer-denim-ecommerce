@@ -150,7 +150,7 @@ public sealed class MegaMenuCardTesterTests(SqlServerDatabaseFixture sqlServer)
             asset = await db.MediaAssets.AsNoTracking().SingleAsync(candidate => candidate.Id == picture, Token);
             var department = await AddDepartmentAsync(db, "renditions", 1);
 
-            db.MegaMenuPromoCards.Add(Card(department, picture, "Now", sortOrder: 1));
+            db.MegaMenuPromoCards.Add(Card(department, picture, "Now", sortOrder: 1, startsAt: now.AddHours(-1), endsAt: now.AddDays(2)));
             db.MegaMenuPromoCards.Add(Card(department, picture, "Later", sortOrder: 0, startsAt: now.AddDays(1)));
             db.MegaMenuPromoCards.Add(Card(department, picture, "Ended", sortOrder: 2, endsAt: now));
             var hidden = await AddImageAsync(db);
@@ -166,6 +166,12 @@ public sealed class MegaMenuCardTesterTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal("Now", drawn.Title);
         Assert.Equal(expected.Url, drawn.ImageUrl);
         Assert.Equal(expected.SrcSet, drawn.ImageSrcSet);
+
+        // Round 2: the window travels with the card, marked UTC, so the browser can re-check it.
+        Assert.Equal(now.AddHours(-1), drawn.StartsAtUtc);
+        Assert.Equal(now.AddDays(2), drawn.EndsAtUtc);
+        Assert.Equal(DateTimeKind.Utc, drawn.StartsAtUtc!.Value.Kind);
+        Assert.Equal(DateTimeKind.Utc, drawn.EndsAtUtc!.Value.Kind);
 
         await using (var scope = deployment.Services.CreateAsyncScope())
         {
