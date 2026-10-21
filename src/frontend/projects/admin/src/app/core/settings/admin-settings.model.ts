@@ -242,6 +242,13 @@ export const SETTING_KEYS = {
   trafficRawRetentionDays: 'Traffic.RawRetentionDays',
   trafficBotRetentionDays: 'Traffic.BotRetentionDays',
   reviewsRequireApproval: 'Reviews.RequireApproval',
+  smtpHost: 'Email.Smtp.Host',
+  smtpPort: 'Email.Smtp.Port',
+  smtpUsername: 'Email.Smtp.Username',
+  smtpPassword: 'Email.Smtp.Password',
+  smtpFromAddress: 'Email.Smtp.FromAddress',
+  smtpFromName: 'Email.Smtp.FromName',
+  smtpUseStartTls: 'Email.Smtp.UseStartTls',
 } as const;
 
 /** Doc 08 §3.8's group names. */
@@ -267,4 +274,24 @@ export const SETTING_GROUPS = {
 
   /** The review approval switch (issue #189): its own panel and save unit, `Settings.Edit`. */
   reviews: 'Reviews',
+
+  /**
+   * The mail account (ADM-22, 2026-10-21): its own panel and save unit, `Settings.Security` — Super Admin only,
+   * so no other role ever receives this group.
+   */
+  smtp: 'Email.Smtp',
 } as const;
+
+/**
+ * The email account form's text fields, as `PUT /api/admin/settings/email-smtp` names them
+ * (`UpdateSmtpSettingsCommandHandler.TextFields`, less the write-only password). Port is digits as text, like every
+ * other numeric box on this screen. The switch is sent separately as a boolean.
+ */
+export const SMTP_TEXT_FIELDS = ['host', 'port', 'username', 'fromAddress', 'fromName'] as const;
+
+export type SmtpTextValues = Readonly<Record<(typeof SMTP_TEXT_FIELDS)[number], string | null>>;
+
+/** `POST /api/admin/settings/email-smtp/test`'s answer: where the test went (the signed-in admin's own address). */
+export interface SmtpTestResponse {
+  readonly sentTo: string;
+}

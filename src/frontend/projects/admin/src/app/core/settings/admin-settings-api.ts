@@ -9,6 +9,8 @@ import {
   InvoiceAndFulfilmentValues,
   ContactAndSocialValues,
   PayPalValues,
+  SmtpTestResponse,
+  SmtpTextValues,
   TrafficValues,
   UploadedMediaAsset,
 } from './admin-settings.model';
@@ -29,6 +31,8 @@ export class AdminSettingsApi {
   static readonly payPalUrl = '/api/admin/settings/paypal';
   static readonly trafficUrl = '/api/admin/settings/traffic';
   static readonly reviewsUrl = '/api/admin/settings/reviews';
+  static readonly smtpUrl = '/api/admin/settings/email-smtp';
+  static readonly smtpTestUrl = '/api/admin/settings/email-smtp/test';
   static readonly imagesUrl = '/api/admin/media/images';
 
   private readonly http = inject(HttpClient);
@@ -137,6 +141,25 @@ export class AdminSettingsApi {
   /** Whether reviews wait for approval (issue #189): a JSON true or false, never null. */
   updateReviews(requireApproval: boolean, rowVersion: string): Observable<void> {
     return this.put(AdminSettingsApi.reviewsUrl, { requireApproval, rowVersion });
+  }
+
+  /** The email account (Super Admin). A password is sent only when one was typed: absent keeps the saved one. */
+  updateSmtp(
+    values: SmtpTextValues & { readonly password?: string; readonly useStartTls: boolean },
+    rowVersion: string,
+  ): Observable<void> {
+    return this.put(AdminSettingsApi.smtpUrl, { ...values, rowVersion });
+  }
+
+  /** Sends a test email to the signed-in admin through the account as typed. Saves nothing. */
+  testSmtp(
+    values: SmtpTextValues & { readonly password?: string; readonly useStartTls: boolean },
+  ): Observable<SmtpTestResponse> {
+    return this.auth.withAntiforgeryToken((token) =>
+      this.http.post<SmtpTestResponse>(AdminSettingsApi.smtpTestUrl, values, {
+        headers: { 'X-XSRF-TOKEN': token },
+      }),
+    );
   }
 
   private put(url: string, body: unknown): Observable<void> {
