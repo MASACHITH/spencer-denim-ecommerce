@@ -152,6 +152,11 @@ public sealed class MegaMenuCardTesterTests(SqlServerDatabaseFixture sqlServer)
 
             db.MegaMenuPromoCards.Add(Card(department, picture, "Now", sortOrder: 1));
             db.MegaMenuPromoCards.Add(Card(department, picture, "Later", sortOrder: 0, startsAt: now.AddDays(1)));
+            db.MegaMenuPromoCards.Add(Card(department, picture, "Ended", sortOrder: 2, endsAt: now));
+            var hidden = await AddImageAsync(db);
+            await db.MediaAssets.Where(row => row.Id == hidden)
+                .ExecuteUpdateAsync(set => set.SetProperty(row => row.Visibility, MediaVisibility.Private), Token);
+            db.MegaMenuPromoCards.Add(Card(department, hidden, "Hidden picture", sortOrder: 3));
             await db.SaveChangesAsync(Token);
         }
 
@@ -174,6 +179,88 @@ public sealed class MegaMenuCardTesterTests(SqlServerDatabaseFixture sqlServer)
             var current = cards.Single(card => card.Title == "Now");
             Assert.True(current.IsLiveNow);
             Assert.True(current.IsShownNow);
+            Assert.False(current.IsEnded);
+            Assert.False(current.IsPictureUnavailable);
+
+            // Round 2: the end is exclusive, so a card ending exactly now has ended; a live card on a private
+            // picture is "picture unavailable", not merely waiting.
+            var ended = cards.Single(card => card.Title == "Ended");
+            Assert.True(ended.IsEnded);
+            Assert.False(ended.IsLiveNow);
+            Assert.False(later.IsEnded);
+            var unavailable = cards.Single(card => card.Title == "Hidden picture");
+            Assert.True(unavailable.IsLiveNow);
+            Assert.True(unavailable.IsPictureUnavailable);
+        }
+    }
+
+    /// <summary>
+    /// Round 2: the save's re-check under the asset lock refuses every way a picture can stop being usable after
+    /// the handler looked — made private, back to processing, its alt text cleared, or a video — not only a
+    /// delete. Driven at the store, so the outcome does not depend on winning a race.
+    /// </summary>
+    [Theory]
+    [InlineData("private")]
+    [InlineData("processing")]
+    [InlineData("noAlt")]
+    [InlineData("video")]
+    [InlineData("good")]
+    public async Task The_locked_recheck_refuses_a_picture_that_stopped_being_usable(string flaw)
+    {
+        sqlServer.SkipIfUnavailable();
+        await using var deployment = await FreshDeployment.CreateAsync(sqlServer.ConnectionString, Token);
+
+        int department, picture;
+        await using (var scope = deployment.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var poster = await AddImageAsync(db);
+            picture = flaw == "video" ? await AddImageAsync(db, MediaAssetType.Video, posterAssetId: poster) : await AddImageAsync(db);
+            department = await AddDepartmentAsync(db, "recheck", 1);
+
+            var assets = db.MediaAssets.Where(asset => asset.Id == picture);
+            _ = flaw switch
+            {
+                "private" => await assets.ExecuteUpdateAsync(set => set.SetProperty(asset => asset.Visibility, MediaVisibility.Private), Token),
+                "processing" => await assets.ExecuteUpdateAsync(set => set.SetProperty(asset => asset.Status, MediaAssetStatus.Processing), Token),
+                "noAlt" => await assets.ExecuteUpdateAsync(set => set.SetProperty(asset => asset.AltText, (string?)null), Token),
+                _ => 0,
+            };
+        }
+
+        await using (var scope = deployment.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            IMegaMenuCardAdminStore store = new ContentAdminStores(
+                db,
+                new SpencerDenim.Infrastructure.Persistence.Interceptors.AuditAndSoftDeleteInterceptor(new FixedClock(DateTime.UtcNow)),
+                new FixedClock(DateTime.UtcNow));
+
+            var card = Card(department, picture, "Recheck " + flaw);
+            card.IsActive = false;
+            store.Add(card);
+            var usage = new ContentMediaUsageChange(
+                MediaUsageOwnerTypes.MegaMenuPromoCard,
+                () => card.Id,
+                [new ContentMediaUsage(picture, MediaUsageRoles.Image)]);
+
+            var outcome = await store.SaveAsync(null, usage, limit: null, Token);
+
+            if (flaw == "good")
+            {
+                Assert.Equal(ContentSaveOutcome.Saved, outcome);
+                return;
+            }
+
+            Assert.Equal(ContentSaveOutcome.MediaUnavailable, outcome);
+            Assert.Single(usage.Unavailable);
+        }
+
+        await using (var scope = deployment.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.False(await db.MegaMenuPromoCards.AnyAsync(Token));
+            Assert.False(await db.MediaUsages.AnyAsync(usage => usage.OwnerType == MediaUsageOwnerTypes.MegaMenuPromoCard, Token));
         }
     }
 

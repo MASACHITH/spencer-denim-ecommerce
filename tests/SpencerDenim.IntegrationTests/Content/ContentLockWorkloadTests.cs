@@ -78,9 +78,12 @@ public sealed class ContentLockWorkloadTests(SqlServerDatabaseFixture sqlServer)
         var failures = new ConcurrentBag<string>();
         var statuses = new ConcurrentDictionary<string, int>(StringComparer.Ordinal);
 
+        var roundCodes = new ConcurrentDictionary<string, int>(StringComparer.Ordinal);
+
         void Note(string actor, HttpResponseMessage answer, string body)
         {
             var code = (int)answer.StatusCode;
+            roundCodes[actor] = code;
             statuses.AddOrUpdate(actor + " " + code.ToString(CultureInfo.InvariantCulture), 1, (_, n) => n + 1);
             if (code >= 500)
             {
@@ -130,6 +133,7 @@ public sealed class ContentLockWorkloadTests(SqlServerDatabaseFixture sqlServer)
                 var picture = await UploadImageAsync(client);
                 var pictureId = await AssetIdAsync(host, picture);
                 var spare = await UploadImageAsync(client);
+                roundCodes.Clear();
 
                 var card = Task.Run(async () =>
                 {
@@ -192,6 +196,19 @@ public sealed class ContentLockWorkloadTests(SqlServerDatabaseFixture sqlServer)
                 }, Token);
 
                 await Task.WhenAll(card, item, guide, campaign, department, refusedDelete, contestedDelete, freeDelete);
+
+                // When the delete won, every content save that chose the picture was refused — not answered
+                // 200 with nothing written.
+                if (roundCodes.TryGetValue("delete-contested", out var deleteCode) && deleteCode == 204)
+                {
+                    foreach (var actor in new[] { "card", "item", "guide", "campaign" })
+                    {
+                        if (roundCodes.TryGetValue(actor, out var saveCode) && saveCode is >= 200 and < 300)
+                        {
+                            orphaned.Add(string.Create(CultureInfo.InvariantCulture, $"round {round}: {actor} answered {saveCode} though its picture was deleted"));
+                        }
+                    }
+                }
 
                 // Whoever won, no content owner may be left on a deleted picture. (The department is left out:
                 // the admin department edit writes no usage row and takes no lock — a pre-existing ADM-11 gap.)
