@@ -64,6 +64,18 @@ conn_part() {
   printf '%s' "$1" | tr ';' '\n' | sed -n "s/^[[:space:]]*$2[[:space:]]*=//Ip" | head -n 1
 }
 
+# password_missing_classes <value>: what the staff password rule still needs, as ", a number, a symbol" (leading comma
+# included, empty when the value has them all). IdentityRegistration requires a digit, a lower-case letter, an upper-case
+# letter and a non-alphanumeric character, besides the length. POSIX classes, so the result does not depend on the locale.
+password_missing_classes() {
+  local v="$1" out=""
+  case "$v" in *[[:digit:]]*) ;; *) out="$out, a number" ;; esac
+  case "$v" in *[[:lower:]]*) ;; *) out="$out, a lower-case letter" ;; esac
+  case "$v" in *[[:upper:]]*) ;; *) out="$out, an upper-case letter" ;; esac
+  case "$v" in *[![:alnum:]]*) ;; *) out="$out, a symbol" ;; esac
+  printf '%s' "$out"
+}
+
 # has_unsafe_password_chars <value>: true if it contains ' " ] \ ; or $.
 has_unsafe_password_chars() {
   case "$1" in
@@ -241,12 +253,19 @@ EOF_HOSTS
     # shorter than SD_PASSWORD_MIN_LENGTH creates no account, logs an error and starts anyway, so a first install
     # would come up with no way into the admin panel. Refused here instead, before anything is deployed. Only
     # when the seed is switched on; the value itself is never printed.
-    local seed_enabled
+    local seed_enabled missing
     seed_enabled="$(env_value "$file" SD_SEED_ADMIN_ENABLED | tr '[:upper:]' '[:lower:]')"
     if [ "$seed_enabled" = true ]; then
       pw="$(env_value "$file" SD_SEED_ADMIN_PASSWORD)"
       if [ "${#pw}" -lt "$SD_PASSWORD_MIN_LENGTH" ]; then
         warn "$file: SD_SEED_ADMIN_ENABLED is true but SD_SEED_ADMIN_PASSWORD is shorter than $SD_PASSWORD_MIN_LENGTH characters, so the first Super Admin would not be created. Use at least $SD_PASSWORD_MIN_LENGTH characters with an upper-case letter, a lower-case letter, a number and a symbol; or, if that account already exists, set SD_SEED_ADMIN_ENABLED=false and blank the password"
+        problems=1
+      fi
+      missing="$(password_missing_classes "$pw")"
+      if [ -n "$missing" ]; then
+        # Found on the first UAT run: a generated 32-character password of letters and digits passed the length check, the
+        # deploy went green, and the API logged SeedingFailed ("Passwords must have at least one non alphanumeric character").
+        warn "$file: SD_SEED_ADMIN_ENABLED is true but SD_SEED_ADMIN_PASSWORD is missing${missing#,}, so the first Super Admin would not be created (the staff password rule needs a number, a lower-case letter, an upper-case letter and a symbol). Generate one with a symbol in it; the value is not printed"
         problems=1
       fi
     fi
