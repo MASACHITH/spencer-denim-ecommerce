@@ -9,11 +9,23 @@ import { HeaderSearch } from './header-search';
 import { ProductCardDto, ProductSearchResponse } from '../../core/catalog/catalog.model';
 import { CategoryNodeDto, DepartmentDto } from '../../core/navigation/catalog-departments.model';
 import { NavigationService } from '../../core/navigation/navigation.service';
+import { PopularSearches } from '../../core/search/popular-searches';
 import { RECENT_SEARCHES_KEY } from '../../core/search/recent-searches.service';
 import { SUGGESTION_DEBOUNCE_MS } from '../../core/search/suggestion-store';
 
 /** Long enough for the debounce to have fired, short enough not to slow the suite down. */
 const PAST_THE_DEBOUNCE_MS = SUGGESTION_DEBOUNCE_MS + 60;
+
+/** `PopularSearches` without the network: what the API answered, and how often it was asked (#78). */
+class PopularStub {
+  readonly list = signal<readonly string[]>([]);
+  readonly terms = this.list.asReadonly();
+  loads = 0;
+
+  load(): void {
+    this.loads++;
+  }
+}
 
 class StorageStub {
   readonly entries = new Map<string, string>();
@@ -131,9 +143,12 @@ describe('HeaderSearch (SRCH-01)', () => {
   let storage: StorageStub;
   let navigate: ReturnType<typeof vi.spyOn>;
   let navigateByUrl: ReturnType<typeof vi.spyOn>;
+  let popular: PopularStub;
 
-  function setUp(stored: readonly string[] = []): void {
+  function setUp(stored: readonly string[] = [], popularTerms: readonly string[] = []): void {
     storage = new StorageStub();
+    popular = new PopularStub();
+    popular.list.set(popularTerms);
     if (stored.length > 0) {
       storage.entries.set(RECENT_SEARCHES_KEY, JSON.stringify(stored));
     }
@@ -146,6 +161,7 @@ describe('HeaderSearch (SRCH-01)', () => {
         provideHttpClientTesting(),
         provideRouter([]),
         { provide: SafeLocalStorage, useValue: storage },
+        { provide: PopularSearches, useValue: popular },
       ],
     });
 
@@ -709,6 +725,70 @@ describe('HeaderSearch (SRCH-01)', () => {
     expect(headings()).toEqual(['Browse the shop']);
     expect(labels()).toEqual(['Women', 'Men', 'New Arrivals', 'Sale']);
     expect(root().textContent?.toLowerCase()).not.toContain('popular');
+  });
+
+  // ------------------------------------------------------------------ popular searches (#78)
+
+  it('offers the popular searches under their own heading when the field is empty', () => {
+    setUp([], ['linen', 'denim jacket']);
+
+    press('ArrowDown');
+
+    expect(headings()).toEqual(['Popular searches']);
+    expect(labels()).toEqual(['linen', 'denim jacket']);
+    expect(root().textContent).not.toContain('Browse the shop');
+    // Nothing to clear: the Clear button is the shopper's control over their own history, not the shop's.
+    expect(root().querySelector('.suggestions__clear')).toBeNull();
+  });
+
+  it('shows recent searches first and does not offer one of them twice as popular', () => {
+    setUp(['Linen'], ['linen', 'jeans']);
+
+    press('ArrowDown');
+
+    expect(headings()).toEqual(['Recent searches', 'Popular searches']);
+    expect(labels()).toEqual(['Linen', 'jeans']);
+  });
+
+  it('walks into the popular block with the arrow keys and runs the search on Enter', () => {
+    setUp(['shirts'], ['linen']);
+
+    press('ArrowDown');
+    press('ArrowDown');
+    expect(input().getAttribute('aria-activedescendant')).toMatch(/-popular-0$/);
+
+    press('Enter');
+
+    expect(navigate).toHaveBeenCalledWith(['/search'], { queryParams: { q: 'linen' } });
+    expect(JSON.parse(storage.entries.get(RECENT_SEARCHES_KEY)!)).toEqual(['linen', 'shirts']);
+  });
+
+  it('runs a popular search on a click as well', () => {
+    setUp([], ['cotton dress']);
+
+    press('ArrowDown');
+    options()[0].click();
+
+    expect(navigate).toHaveBeenCalledWith(['/search'], { queryParams: { q: 'cotton dress' } });
+  });
+
+  it('asks for the popular list only when the popup is opened or typed in, never on render', () => {
+    setUp();
+    expect(popular.loads).toBe(0);
+
+    press('ArrowDown');
+    expect(popular.loads).toBeGreaterThan(0);
+  });
+
+  it('shows popular searches only while the field is empty, never beside suggestions', async () => {
+    setUp([], ['linen']);
+
+    type('linen');
+    await settle();
+    searchRequest().flush(response([card(1, 'Linen Shirt')], 'linen'));
+    fixture.detectChanges();
+
+    expect(headings()).not.toContain('Popular searches');
   });
 
   it('records a submitted search, and only a submitted one', async () => {

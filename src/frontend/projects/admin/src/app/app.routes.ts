@@ -249,6 +249,14 @@ export const routes: Routes = [
       import('./pages/content/announcements-page').then((m) => m.AnnouncementsPage),
   },
   {
+    // SRCH-01 (#78): the popular searches shoppers are offered, and the staff hide list.
+    path: 'content/popular-searches',
+    title: `Popular searches — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/content/popular-searches-page').then((m) => m.PopularSearchesPage),
+  },
+  {
     // GLB-05 (#215): the picture card at the end of each department's mega menu.
     path: 'content/mega-menu',
     title: `Mega menu cards — ${BRAND.adminName}`,

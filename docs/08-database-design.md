@@ -46,7 +46,7 @@ Design only. No application code. SQL fragments illustrate intent and are not fi
 | `marketing` | Promo codes, sale campaigns, newsletter | PromoCodes, SaleCampaigns, SaleCampaignTargets, NewsletterSubscribers | 4 |
 | `content` | CMS | HomeSections, HomeSectionItems, AnnouncementMessages, MegaMenuPromoCards, ContentPages, ContactSubmissions | 6 |
 | `ops` | Settings, audit, admin alerts, email outbox, job leases, Data Protection keys | Settings, DataProtectionKeys, AuditLogs, AdminAlerts, EmailOutbox, JobLeases | 6 |
-| `analytics` | Raw traffic and daily traffic/search aggregates | PageViews, TrafficDaily, PageDaily, SearchQueriesDaily | 4 |
+| `analytics` | Raw traffic and daily traffic/search aggregates | PageViews, TrafficDaily, PageDaily, SearchQueriesDaily, HiddenSearchTerms | 5 |
 
 - **Unused by design:** UserClaims and UserLogins exist for Identity compatibility and stay empty. UserTokens stores staff 2FA authenticator data.
 - **Removed in revision 2** (Appendix A): PromoRedemptions, MediaRenditions, CustomerProfiles, StockReservations (derived), Invoices (folded into Orders), SizeScales (merged into Sizes), RolePermissions (replaced by RoleClaims), and all sales summary tables. Deferred: ProductTags, UrlRedirects.
@@ -1422,6 +1422,9 @@ All `Date` columns are Colombo dates; there are no FKs.
 - **Dropped** if the query matches an email pattern or contains ≥ 7 digits once separators are removed (phone numbers).
 - Buffered in memory and flushed every 60 s with a race-safe upsert: `UPDATE … SET Searches += @n …`; if 0 rows, INSERT; on 2627/2601, retry the UPDATE.
 - **Retention: 13 months.**
+- **As built (#78, 2026-10-21):** the storefront's results page sends `POST /api/search/submissions` `{ term, automated }` once per term it shows (never on keystrokes, filters, sort or Load More); bots (user agent or `navigator.webdriver`) are not counted. The privacy rule is the storefront's `isPrivate`, inherited as #78 requires: **any at-sign** (`@`, `＠`, `﹫`), **seven or more decimal digits anywhere** (stricter than a run), or an order/invoice number shape (`SD-2026-…`, `INV-2026-…`). `ZeroResultSearches` is decided by the server running the real search once per distinct term per flush, never by the caller. Key collation is explicit: `Latin1_General_100_CI_AS_SC`. Purged nightly at 01:30 Colombo with the traffic purge (`DELETE TOP (4000)` loops).
+- **Public list (§7.6) and its abuse controls (owner decision, journal 2026-10-21-78-118-search):** a term is shown only when it had **≥ `SearchStats:PopularMinimumSearches` (default 5) searches with results** in the last 30 Colombo days, is **≤ 40 characters**, and is **not on the staff hide list**. `GET /api/search/popular` returns terms only (no counts), cached 5 min.
+- **`analytics.HiddenSearchTerms`** (QueryNormalized `nvarchar(100)` PK, same collation; HiddenAtUtc `datetime2(0)`): the staff hide list for the public list. Admin → Content → Popular searches (`Content.View` to read, `Content.Edit` to hide/show; audited as `HiddenSearchTerm`). No column names a person; the actor is in `ops.AuditLogs`. Kept indefinitely (staff decisions, a handful of rows).
 
 ## 4. Order and payment state machines (ADM-09, PAY-01..03)
 
@@ -1828,6 +1831,7 @@ OFFSET @skip ROWS FETCH NEXT 24 ROWS ONLY;
 | PageViews (human / bot) | 90 / 7 days |
 | TrafficDaily, PageDaily | Indefinite (tens of MB/year) |
 | SearchQueriesDaily | 13 months |
+| HiddenSearchTerms | Indefinite (staff hide list) |
 | AuditLogs | 3 years (D9) |
 | EmailOutbox | Bodies 30 days, rows 1 year |
 | Orders, Payments, Refunds, PaymentEvents, InventoryMovements, invoice data, paid-order bank slips | **≥ 7 years** (D9, pending the accountant); no purge in v1 |

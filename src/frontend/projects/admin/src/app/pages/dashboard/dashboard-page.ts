@@ -327,6 +327,7 @@ interface Access {
           <a class="adm-link" routerLink="/content/announcements" data-testid="dashboard-announcements-link">Announcement bar</a>
           <a class="adm-link" routerLink="/content/mega-menu" data-testid="dashboard-mega-menu-link">Mega menu cards</a>
           <a class="adm-link" routerLink="/content/size-guides" data-testid="dashboard-size-guides-link">Size guides</a>
+          <a class="adm-link" routerLink="/content/popular-searches" data-testid="dashboard-popular-searches-link">Popular searches</a>
           <a class="adm-link" routerLink="/content/pages" data-testid="dashboard-content-pages-link">Content pages</a>
           @if (access()?.reports) {
             <a class="adm-link" routerLink="/reports" data-testid="dashboard-reports-link">Reports</a>

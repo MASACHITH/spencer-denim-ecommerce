@@ -17,6 +17,7 @@ import { Icon } from '@spencer-denim/shared';
 
 import { NavigationService } from '../../core/navigation/navigation.service';
 import { UniqueId } from '../../core/platform/unique-id';
+import { PopularSearches } from '../../core/search/popular-searches';
 import { RecentSearches } from '../../core/search/recent-searches.service';
 import {
   Suggestion,
@@ -25,6 +26,7 @@ import {
   categorySuggestions,
   group,
   nextSuggestionId,
+  popularSuggestions,
   productSuggestions,
   recentSuggestions,
   suggestionAt,
@@ -164,7 +166,7 @@ import { SuggestionStore } from '../../core/search/suggestion-store';
                   />
                 } @else {
                   <span class="suggestions__glyph" aria-hidden="true">
-                    <sd-icon [name]="option.kind === 'recent' ? 'search' : 'chevron-right'" size="sm" />
+                    <sd-icon [name]="option.term ? 'search' : 'chevron-right'" size="sm" />
                   </span>
                 }
                 <span class="suggestions__text">
@@ -383,6 +385,7 @@ export class HeaderSearch {
   private readonly router = inject(Router);
   private readonly navigation = inject(NavigationService);
   private readonly recentSearches = inject(RecentSearches);
+  private readonly popularSearches = inject(PopularSearches);
   private readonly suggestions = inject(SuggestionStore);
 
   /** What is in the field, as the component knows it. Follows {@link initialTerm} when that moves. */
@@ -403,11 +406,8 @@ export class HeaderSearch {
    * The blocks in the popup.
    *
    * With a usable term: the products the API matched and the categories the cached tree matched.
-   * Without one: this browser's recent searches, or — when there are none — ways into the catalogue.
-   *
-   * **There is no "popular searches" block, and that is deliberate.** Nothing in this system records
-   * what anyone has searched for; see `browseSuggestions` for the whole reason and what was built
-   * instead.
+   * Without one: this browser's recent searches and the shop's popular searches (#78), either or
+   * both — or, when there are neither, ways into the catalogue.
    */
   protected readonly groups = computed<readonly SuggestionGroup[]>(() => {
     const term = this.term();
@@ -430,9 +430,14 @@ export class HeaderSearch {
       ];
     }
 
-    const recent = recentSuggestions(this.recentSearches.recent(), prefix);
-    if (recent.length > 0) {
-      return group('recent', prefix, 'Recent searches', recent);
+    const mine = this.recentSearches.recent();
+    const recent = recentSuggestions(mine, prefix);
+    const popular = popularSuggestions(this.popularSearches.terms(), mine, prefix);
+    if (recent.length > 0 || popular.length > 0) {
+      return [
+        ...group('recent', prefix, 'Recent searches', recent),
+        ...group('popular', prefix, 'Popular searches', popular),
+      ];
     }
 
     return group('browse', prefix, 'Browse the shop', browseSuggestions(this.navigation.departments(), prefix));
@@ -510,6 +515,7 @@ export class HeaderSearch {
 
   protected onInput(): void {
     const value = this.field().nativeElement.value;
+    this.popularSearches.load();
     this.raw.set(value);
     this.suggestions.suggestFor(value);
     this.highlighted.set(null);
@@ -583,7 +589,7 @@ export class HeaderSearch {
   }
 
   protected choose(option: Suggestion): void {
-    if (option.kind === 'recent' && option.term) {
+    if ((option.kind === 'recent' || option.kind === 'popular') && option.term) {
       this.run(option.term);
       return;
     }
@@ -630,6 +636,10 @@ export class HeaderSearch {
   }
 
   private openPopup(): void {
+    // The first open in a page load asks for the popular list; it arrives a moment later and the popup
+    // redraws. Never earlier: a list nobody opens is a request nobody needed.
+    this.popularSearches.load();
+
     if (!this.opened()) {
       this.suggestions.suggestFor(this.raw());
       this.opened.set(true);

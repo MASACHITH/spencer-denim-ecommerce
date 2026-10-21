@@ -280,6 +280,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     /// <summary><c>analytics.PageDaily</c> (doc 08 §3.8), rebuilt nightly by the traffic rollup.</summary>
     public DbSet<PageDaily> PageDaily => Set<PageDaily>();
 
+    /// <summary>
+    /// <c>analytics.SearchQueriesDaily</c> (doc 08 §3.8, DB25; issue #78): submitted-search counts per Colombo day and
+    /// normalised term, written only by <c>SearchQueryStore</c>'s race-safe upsert.
+    /// </summary>
+    public DbSet<SearchQueryDaily> SearchQueriesDaily => Set<SearchQueryDaily>();
+
+    /// <summary><c>analytics.HiddenSearchTerms</c> (issue #78): terms staff have taken off the public popular list.</summary>
+    public DbSet<HiddenSearchTerm> HiddenSearchTerms => Set<HiddenSearchTerm>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);

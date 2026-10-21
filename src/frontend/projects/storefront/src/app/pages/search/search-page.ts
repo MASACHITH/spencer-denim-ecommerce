@@ -34,6 +34,7 @@ import {
   toSearchQueryParams,
   withSearchFilters,
 } from '../../core/search/search-state';
+import { PopularSearches, SearchSubmissions } from '../../core/search/popular-searches';
 import { MIN_TERM_LENGTH, isSearchable } from '../../core/search/search-term';
 
 /**
@@ -97,6 +98,18 @@ import { MIN_TERM_LENGTH, isSearchable } from '../../core/search/search-term';
             Type at least {{ minTermLength }} characters in the box above — a product name, a
             category, a colour or a material.
           </p>
+          <!-- What other shoppers search for most (#78). Drawn only once the list has arrived in the
+               browser, and not at all in a shop that has none yet: no heading over nothing. -->
+          @if (popularTerms().length > 0) {
+            <p class="search__popular-title" id="search-popular-heading">Popular searches</p>
+            <ul class="chips search__popular" aria-labelledby="search-popular-heading">
+              @for (popular of popularTerms(); track popular) {
+                <li>
+                  <a class="chip" routerLink="/search" [queryParams]="{ q: popular }">{{ popular }}</a>
+                </li>
+              }
+            </ul>
+          }
           <div class="search__state-actions">
             @for (department of departments(); track department.slug) {
               <a class="btn btn--secondary" [routerLink]="'/' + department.slug">
@@ -321,6 +334,25 @@ import { MIN_TERM_LENGTH, isSearchable } from '../../core/search/search-term';
     .search {
       padding-block: var(--space-3) var(--space-8);
     }
+    .search__popular-title {
+      margin-block-start: var(--space-3);
+      color: var(--color-text-muted);
+      font-size: var(--text-label);
+      letter-spacing: var(--tracking-label);
+      text-transform: uppercase;
+    }
+    .search__popular {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-1);
+      margin-block-start: var(--space-1);
+      padding: 0;
+      list-style: none;
+    }
+    .search__popular .chip {
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
     .search__head {
       display: grid;
       gap: var(--space-2);
@@ -497,6 +529,11 @@ export class SearchPage {
   private readonly router = inject(Router);
   private readonly navigation = inject(NavigationService);
   private readonly recentSearches = inject(RecentSearches);
+  private readonly submissions = inject(SearchSubmissions);
+  private readonly popularSearches = inject(PopularSearches);
+
+  /** The shop's popular searches (#78), for the page with no term. */
+  protected readonly popularTerms = this.popularSearches.terms;
   private readonly title = inject(Title);
   private readonly meta = inject(Meta);
   private readonly viewport = inject(Viewport);
@@ -610,11 +647,19 @@ export class SearchPage {
     // Remembered here rather than only in the search box, so a search reached by any route — a
     // shared link, Back, a suggestion — is in the history the overlay offers. The service drops
     // anything that looks like an email address or a telephone number.
+    //
+    // And counted, once per term this page shows, for popular searches (#78; doc 08 DB25 "results-page
+    // requests"). A filter, the sort or Load More changes the state and not the term, so they are not
+    // counted again; `SearchSubmissions` does nothing on the server, so a server render and the browser
+    // that hydrates it are one count, not two.
     effect(() => {
       const term = this.term();
       untracked(() => {
         if (isSearchable(term)) {
           this.recentSearches.remember(term);
+          this.submissions.record(term);
+        } else {
+          this.popularSearches.load();
         }
       });
     });

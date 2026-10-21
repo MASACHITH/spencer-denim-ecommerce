@@ -19,6 +19,8 @@ export type SuggestionKind =
   | 'category'
   /** Runs one of this browser's earlier searches again. */
   | 'recent'
+  /** Runs one of the searches other shoppers make most (issue #78). */
+  | 'popular'
   /** A way into the catalogue, offered when there is nothing else to show. */
   | 'browse';
 
@@ -32,9 +34,9 @@ export interface Suggestion {
   readonly detail: string | null;
   readonly imageUrl: string | null;
   readonly imageSrcSet: string | null;
-  /** Where choosing it navigates. Null on a `recent` option, which searches again instead. */
+  /** Where choosing it navigates. Null on a `recent` or `popular` option, which searches instead. */
   readonly path: string | null;
-  /** The term a `recent` option searches for. Null on everything else. */
+  /** The term a `recent` or `popular` option searches for. Null on everything else. */
   readonly term: string | null;
 }
 
@@ -146,15 +148,43 @@ export function recentSuggestions(
 }
 
 /**
- * Ways into the catalogue, for an overlay that has nothing else to put in front of a shopper who
- * has not typed anything and has no history.
+ * What other shoppers search for most (SRCH-01, issue #78), as options that run the search — minus any
+ * the shopper already has in their own recent searches, which are shown above and would otherwise be
+ * offered twice.
  *
- * **This is not "popular searches", and it must never be labelled as if it were.** SRCH-01 asks for
- * popular searches and nothing in this system records what anyone has searched for:
- * `analytics.SearchQueriesDaily` is designed (doc 08 §3, §7.6) and not built, and the reporting
- * milestone that would build it is week 4 (ADM-19/20). A hard-coded list under the word "Popular"
- * would be a fabricated statistic on the client's shop. These are the catalogue's own departments
- * and its two permanent listings — real links, labelled as what they are.
+ * The terms come from `analytics.SearchQueriesDaily` through `PopularSearches`; they are real counts,
+ * and an empty list (a new shop, or one whose searches have not reached the threshold yet) is shown as
+ * nothing at all rather than padded with anything invented.
+ */
+export function popularSuggestions(
+  terms: readonly string[],
+  recent: readonly string[],
+  prefix: string,
+): readonly Suggestion[] {
+  const mine = new Set(recent.map((term) => term.toLowerCase()));
+
+  return terms
+    .filter((term) => !mine.has(term.toLowerCase()))
+    .map((term, index) => ({
+      id: `${prefix}-popular-${index}`,
+      kind: 'popular' as const,
+      label: term,
+      detail: null,
+      imageUrl: null,
+      imageSrcSet: null,
+      path: null,
+      term,
+    }));
+}
+
+/**
+ * Ways into the catalogue, for an overlay that has nothing else to put in front of a shopper who
+ * has not typed anything, has no history, and is in a shop with no popular searches yet.
+ *
+ * **This is not "popular searches", and it must never be labelled as if it were.** Popular searches
+ * are their own block (`popularSuggestions`), fed by what shoppers really searched for; a hard-coded
+ * list under the word "Popular" would be a fabricated statistic on the client's shop. These are the
+ * catalogue's own departments and its two permanent listings — real links, labelled as what they are.
  */
 export function browseSuggestions(
   departments: readonly DepartmentDto[],

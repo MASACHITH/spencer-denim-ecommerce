@@ -135,6 +135,9 @@ app.MapPayPalEndpoints();
 // Traffic recording (W4-03, ADM-06, ADM-20; doc 08 §3.8).
 app.MapTrafficEndpoints();
 
+// Search statistics: SRCH-01 popular searches (#78; doc 08 DB25).
+app.MapSearchStatsEndpoints();
+
 // Customer accounts (W3-01, ACC-01/02; doc 11 P11).
 app.MapCustomerAuthEndpoints();
 app.MapCustomerAccountEndpoints();

@@ -254,6 +254,15 @@ internal sealed partial class TrafficRetentionService(
         return (human, bot, periods);
     }
 
+    /// <summary>One purge of <c>analytics.SearchQueriesDaily</c> as of <paramref name="now"/>: rows older than 13 months.</summary>
+    public async Task<int> RunSearchPurgeOnceAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+
+        return await scope.ServiceProvider.GetRequiredService<SearchQueryRetention>()
+            .PurgeAsync(ReportPeriod.ColomboDayOf(now), cancellationToken);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!options.JobsEnabled)
@@ -288,6 +297,22 @@ internal sealed partial class TrafficRetentionService(
                 LogFailed(exception);
             }
 
+            // Doc 08 §8.4's 13 months of search counts (#78), in the same nightly window and on its own: a failure in
+            // one purge must not skip the other.
+            try
+            {
+                var searches = await RunSearchPurgeOnceAsync(clock.UtcNow, stoppingToken);
+                LogSearchesPurged(searches, SearchQueryRetention.RetentionMonths);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                LogSearchPurgeFailed(exception);
+            }
+
             var now = clock.UtcNow;
             delay = NextRun(now) - now;
         }
@@ -308,4 +333,13 @@ internal sealed partial class TrafficRetentionService(
 
     [LoggerMessage(EventId = 7132, Level = LogLevel.Error, Message = "The traffic retention purge failed; it will try again tomorrow.")]
     private partial void LogFailed(Exception exception);
+
+    [LoggerMessage(
+        EventId = 7156,
+        Level = LogLevel.Information,
+        Message = "Purged {Rows} search-count row(s) older than {Months} months.")]
+    private partial void LogSearchesPurged(int rows, int months);
+
+    [LoggerMessage(EventId = 7157, Level = LogLevel.Error, Message = "The search-count retention purge failed; it will try again tomorrow.")]
+    private partial void LogSearchPurgeFailed(Exception exception);
 }

@@ -178,9 +178,13 @@ internal static class SerilogSetup
                 // The page-view beacon is one request per storefront page view (W4-03). At Information it
                 // would put a line per page view in the log for ever — a second, unretained copy of the
                 // traffic table's volume — so a successful one is Debug, like a health probe is Verbose.
+                // The search beacon (#78) likewise: one per results page shown.
                 return httpContext.Request.Path.StartsWithSegments(
-                    Endpoints.Analytics.TrafficEndpoints.PageViewsRoute,
-                    StringComparison.OrdinalIgnoreCase)
+                        Endpoints.Analytics.TrafficEndpoints.PageViewsRoute,
+                        StringComparison.OrdinalIgnoreCase)
+                    || httpContext.Request.Path.StartsWithSegments(
+                        Endpoints.Analytics.SearchStatsEndpoints.SubmissionsRoute,
+                        StringComparison.OrdinalIgnoreCase)
                     ? LogEventLevel.Debug
                     : LogEventLevel.Information;
             };

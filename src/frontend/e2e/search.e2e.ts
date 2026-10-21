@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright';
 import { Locator, Page, expect, test } from '@playwright/test';
 
 import { apiURL } from '../playwright.config';
@@ -71,11 +72,30 @@ async function search(page: Page, term: string, settledLabel: string): Promise<L
  * to the storefront's origin, which in production is a reverse proxy in front of the API.
  */
 async function useStubApi(page: Page): Promise<void> {
-  await page.route('**/api/catalog/**', async (route) => {
-    const url = new URL(route.request().url());
-    const response = await route.fetch({ url: `${apiURL}${url.pathname}${url.search}` });
-    await route.fulfill({ response });
+  for (const pattern of ['**/api/catalog/**', '**/api/search/**']) {
+    await page.route(pattern, async (route) => {
+      const url = new URL(route.request().url());
+      const response = await route.fetch({ url: `${apiURL}${url.pathname}${url.search}` });
+      await route.fulfill({ response });
+    });
+  }
+}
+
+/** Answers `GET /api/search/popular` with `terms` for this page only (the shared stub answers none). */
+async function usePopular(page: Page, terms: readonly string[]): Promise<void> {
+  await page.route('**/api/search/popular', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ terms }) }),
+  );
+}
+
+/** Every body the page sends to the submitted-search beacon, in order. */
+async function captureSubmissions(page: Page): Promise<{ term: string; automated: boolean }[]> {
+  const sent: { term: string; automated: boolean }[] = [];
+  await page.route('**/api/search/submissions', async (route) => {
+    sent.push(route.request().postDataJSON() as { term: string; automated: boolean });
+    await route.fulfill({ status: 204 });
   });
+  return sent;
 }
 
 test.beforeEach(async ({ page }) => {
@@ -767,11 +787,11 @@ test.describe('the suggestions overlay (SRCH-01)', () => {
   });
 
   /**
-   * SRCH-01 asks for popular searches and nothing in this system records what anyone has searched
-   * for. What the overlay offers instead is the catalogue's own entrances, and the one thing it must
-   * never do is call them popular.
+   * A new shop has no popular searches (#78), and what the overlay offers then is the catalogue's own
+   * entrances. The one thing it must never do is call them popular: an invented "popular" list would be a
+   * fabricated statistic on the client's shop. The shared stub answers an empty list, as a new shop does.
    */
-  test('nothing in the overlay claims to be popular', async ({ page }) => {
+  test('with no popular searches yet, nothing in the overlay claims to be popular', async ({ page }) => {
     await page.goto(RESULTS);
     const box = pageBox(page);
     await box.click();
@@ -782,6 +802,103 @@ test.describe('the suggestions overlay (SRCH-01)', () => {
     const overlay = await page.locator('.search__field .suggestions').innerText();
 
     expect(overlay.toLowerCase()).not.toContain('popular');
+    // This page's own term is in the history now, so the empty box offers it — and nothing else.
+    await expect(page.locator('.search__field .suggestions__heading')).toHaveText(['Recent searches']);
+  });
+
+  test('popular searches have their own heading beside recent ones, and run the search', async ({
+    page,
+  }) => {
+    await usePopular(page, ['linen', 'denim jacket', 'jeans']);
+    // "jeans" is in this browser's own history, so it is offered once, under Recent. Written straight
+    // into storage rather than by visiting a results page first: the server-rendered grid is visible
+    // before the page hydrates, so "wait for the products, then leave" can leave before the browser has
+    // remembered anything — a race in the test, not in the shop.
+    await page.addInitScript(() => localStorage.setItem('sd.recent-searches', JSON.stringify(['jeans'])));
+
+    await page.goto('/search');
+    const box = pageBox(page);
+    await box.click();
+    await box.press('ArrowDown');
+
+    await expect(page.locator('.search__field .suggestions__heading')).toHaveText([
+      'Recent searches',
+      'Popular searches',
+    ]);
+    await expect(pageOptions(page)).toHaveText(['jeans', 'linen', 'denim jacket']);
+
+    // The arrow keys walk into the popular block like any other, and Enter runs the search. From a
+    // closed popup, so the walk starts from a known place whatever the first keystroke met.
+    await box.press('Escape');
+    await box.press('ArrowDown');
+    await expect(box).toHaveAttribute('aria-activedescendant', /-recent-0$/);
+    await box.press('ArrowDown');
+    await expect(box).toHaveAttribute('aria-activedescendant', /-popular-0$/);
+    await box.press('Enter');
+
+    await expect(page).toHaveURL('/search?q=linen');
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('linen');
+  });
+
+  test('the empty search page offers the popular searches as links', async ({ page }) => {
+    await usePopular(page, ['linen', 'cotton']);
+    await page.goto('/search');
+
+    const list = page.getByRole('list', { name: 'Popular searches' });
+    await expect(list.getByRole('link')).toHaveText(['linen', 'cotton']);
+
+    await list.getByRole('link', { name: 'cotton' }).click();
+    await expect(page).toHaveURL('/search?q=cotton');
+  });
+
+  /**
+   * Doc 08 DB25: "Records **submitted** searches only (results-page requests), never suggestion
+   * keystrokes." One count per term the results page shows — not one per keystroke, per filter, per sort
+   * or per Load More — and the server render and the browser that hydrates it are one page, not two.
+   */
+  test('the results page counts each term it shows once, and typing counts nothing', async ({
+    page,
+  }) => {
+    const sent = await captureSubmissions(page);
+
+    await page.goto(RESULTS);
+    await expect(page.locator('.product-grid > li')).toHaveCount(24);
+    await expect.poll(() => sent.length).toBe(1);
+    // `automated` passes on navigator.webdriver, which is how the API knows this browser is a bot.
+    expect(sent[0]).toEqual({ term: 'test', automated: true });
+
+    // Suggestions as the shopper types: no count.
+    await search(page, 'jeans', 'Test Product 1');
+    expect(sent).toHaveLength(1);
+
+    // The same term re-sorted and a page longer, on the same page: still one.
+    await page.locator('#search-sort').selectOption('price-asc');
+    await expect(page).toHaveURL(/sort=price-asc/);
+    await page.locator('.search__more button').click();
+    await expect(page.locator('.product-grid > li')).toHaveCount(48);
+    expect(sent).toHaveLength(1);
+
+    // Submitting a new term from the box: one more.
+    const box = pageBox(page);
+    await box.click();
+    await box.fill('linen');
+    await box.press('Enter');
+    await expect(page).toHaveURL('/search?q=linen');
+    await expect.poll(() => sent.length).toBe(2);
+    expect(sent.map((body) => body.term)).toEqual(['test', 'linen']);
+  });
+
+  test('a term that looks like an email address or a phone number is never sent', async ({ page }) => {
+    const sent = await captureSubmissions(page);
+
+    for (const term of ['someone@example.com', '077 123 4567']) {
+      await page.goto(`/search?q=${encodeURIComponent(term)}`);
+      await expect(page.locator('sd-search-page')).toHaveCount(1);
+    }
+
+    await page.goto(RESULTS);
+    await expect.poll(() => sent.length).toBe(1);
+    expect(sent.map((body) => body.term)).toEqual(['test']);
   });
 });
 
@@ -880,6 +997,44 @@ test.describe('a search box opened during start-up keeps its suggestions (#118)'
 });
 
 test.describe('responsive and accessible', () => {
+  /**
+   * Popular searches (#78) add a block to the overlay and links to the empty search page. Both are scanned
+   * at every width with the overlay open over the page — serious and critical only, which is the gate
+   * `docs/06` §3 states — and neither may make the page scroll sideways, with the longest term the API
+   * would send (40 characters, one word).
+   */
+  for (const width of BREAKPOINTS) {
+    test(`popular searches pass axe and do not scroll sideways at ${width} px`, async ({ page }) => {
+      const longest = 'k'.repeat(40);
+      await usePopular(page, ['linen', 'denim jacket', longest]);
+      await page.addInitScript(() => localStorage.setItem('sd.recent-searches', JSON.stringify(['jeans'])));
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto('/search');
+
+      await expect(page.locator('.search__popular a')).toHaveCount(3);
+
+      const box = pageBox(page);
+      await box.click();
+      await box.press('ArrowDown');
+      await expect(page.locator('.search__field .suggestions__heading')).toHaveText([
+        'Recent searches',
+        'Popular searches',
+      ]);
+
+      expect(await horizontalOverflow(page)).toBe(0);
+
+      const results = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+        .include('sd-search-page')
+        .analyze();
+      const serious = results.violations
+        .filter((violation) => violation.impact === 'serious' || violation.impact === 'critical')
+        .map((violation) => ({ id: violation.id, nodes: violation.nodes.map((node) => node.target.join(' ')) }));
+
+      expect(serious).toEqual([]);
+    });
+  }
+
   for (const width of BREAKPOINTS) {
     test(`no horizontal scroll at ${width} px, with the overlay open`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });

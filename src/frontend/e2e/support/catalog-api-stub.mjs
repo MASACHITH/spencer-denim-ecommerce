@@ -4129,6 +4129,24 @@ const server = createServer((request, response) => {
     return;
   }
 
+  // Popular searches (#78). The real list is counts from `analytics.SearchQueriesDaily`, and a stub that
+  // invented some would be a fabricated statistic in every spec's header; so it answers what a new shop
+  // answers — nothing — and a spec that needs a list fulfils the route itself.
+  if (url.pathname === '/api/search/popular' && request.method === 'GET') {
+    response.end(JSON.stringify({ terms: [] }));
+    return;
+  }
+
+  // The submitted-search beacon: 204 whatever it was sent, as the API answers.
+  if (url.pathname === '/api/search/submissions' && request.method === 'POST') {
+    request.resume();
+    request.on('end', () => {
+      response.statusCode = 204;
+      response.end();
+    });
+    return;
+  }
+
   // Test-only: the page views one visit session sent, oldest first.
   if (url.pathname === '/__test__/page-views') {
     const session = url.searchParams.get('session');

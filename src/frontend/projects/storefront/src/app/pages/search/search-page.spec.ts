@@ -1,6 +1,6 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, TestRequest, provideHttpClientTesting } from '@angular/common/http/testing';
-import { ApplicationRef } from '@angular/core';
+import { ApplicationRef, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Title } from '@angular/platform-browser';
 import { Router, provideRouter } from '@angular/router';
@@ -12,7 +12,28 @@ import { ProductCardDto, ProductSearchResponse } from '../../core/catalog/catalo
 import { MAX_LOADED_PAGES, MAX_PAGE_SIZE, PAGE_SIZE } from '../../core/catalog/listing-state';
 import { CategoryNodeDto, DepartmentDto } from '../../core/navigation/catalog-departments.model';
 import { NavigationService } from '../../core/navigation/navigation.service';
+import { PopularSearches, SearchSubmissions } from '../../core/search/popular-searches';
 import { RECENT_SEARCHES_KEY } from '../../core/search/recent-searches.service';
+
+/** `PopularSearches` without the network (#78). */
+class PopularStub {
+  readonly list = signal<readonly string[]>([]);
+  readonly terms = this.list.asReadonly();
+  loads = 0;
+
+  load(): void {
+    this.loads++;
+  }
+}
+
+/** `SearchSubmissions` without the network: the terms the page counted (#78). */
+class SubmissionsStub {
+  readonly recorded: string[] = [];
+
+  record(term: string): void {
+    this.recorded.push(term);
+  }
+}
 
 class StorageStub {
   readonly entries = new Map<string, string>();
@@ -100,6 +121,8 @@ describe('SearchPage (SRCH-02)', () => {
   let http: HttpTestingController;
   let harness: RouterTestingHarness;
   let storage: StorageStub;
+  let popular: PopularStub;
+  let submissions: SubmissionsStub;
 
   function text(): string {
     return (harness.routeNativeElement as HTMLElement).textContent ?? '';
@@ -182,6 +205,8 @@ describe('SearchPage (SRCH-02)', () => {
 
   async function goTo(url: string, departments: readonly DepartmentDto[] = DEPARTMENTS): Promise<void> {
     storage = new StorageStub();
+    popular ??= new PopularStub();
+    submissions = new SubmissionsStub();
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
       providers: [
@@ -189,6 +214,8 @@ describe('SearchPage (SRCH-02)', () => {
         provideHttpClientTesting(),
         provideRouter(routes),
         { provide: SafeLocalStorage, useValue: storage },
+        { provide: PopularSearches, useValue: popular },
+        { provide: SearchSubmissions, useValue: submissions },
       ],
     });
 
@@ -210,6 +237,7 @@ describe('SearchPage (SRCH-02)', () => {
 
   afterEach(() => {
     http.verify();
+    popular = undefined as unknown as PopularStub;
   });
 
   // ------------------------------------------------------------------ the route
@@ -573,6 +601,59 @@ describe('SearchPage (SRCH-02)', () => {
     await open('/search?q=linen', 2);
 
     expect(JSON.parse(storage.entries.get(RECENT_SEARCHES_KEY) ?? '[]')).toEqual(['linen']);
+  });
+
+  // ------------------------------------------------------------------ popular searches (#78)
+
+  it('counts the term it shows once, for popular searches', async () => {
+    await open('/search?q=linen', 2);
+
+    expect(submissions.recorded).toEqual(['linen']);
+  });
+
+  it('does not count again when only the filters or the sort change', async () => {
+    await open('/search?q=linen', 2);
+
+    await TestBed.inject(Router).navigateByUrl('/search?q=linen&sort=price-asc');
+    await settle();
+    flushAll(searchRequests(), 2);
+
+    expect(submissions.recorded).toEqual(['linen']);
+  });
+
+  it('counts a new term when the page moves to one', async () => {
+    await open('/search?q=linen', 2);
+
+    await TestBed.inject(Router).navigateByUrl('/search?q=cotton');
+    await settle();
+    flushAll(searchRequests(), 2);
+
+    expect(submissions.recorded).toEqual(['linen', 'cotton']);
+  });
+
+  it('counts nothing for a page with no usable term, and asks for the popular list instead', async () => {
+    await goTo('/search?q=a');
+
+    expect(submissions.recorded).toEqual([]);
+    expect(popular.loads).toBeGreaterThan(0);
+  });
+
+  it('offers the popular searches as links on the page with no term', async () => {
+    popular = new PopularStub();
+    popular.list.set(['linen', 'denim jacket']);
+    await goTo('/search');
+
+    const links = queryAll<HTMLAnchorElement>('.search__popular a');
+    expect(links.map((link) => link.textContent?.trim())).toEqual(['linen', 'denim jacket']);
+    expect(links[1].getAttribute('href')).toBe('/search?q=denim%20jacket');
+    expect(query('#search-popular-heading')?.textContent?.trim()).toBe('Popular searches');
+  });
+
+  it('draws no popular heading over an empty list', async () => {
+    await goTo('/search');
+
+    expect(query('.search__popular')).toBeNull();
+    expect(query('#search-popular-heading')).toBeNull();
   });
 
   it('does not remember a term that looks like an order number', async () => {

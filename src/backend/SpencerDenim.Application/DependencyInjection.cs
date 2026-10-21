@@ -14,6 +14,7 @@ using SpencerDenim.Application.Admin.Customers.Contracts;
 using SpencerDenim.Application.Admin.Reporting;
 using SpencerDenim.Application.Admin.Reporting.Contracts;
 using SpencerDenim.Application.Analytics.Reporting;
+using SpencerDenim.Application.Analytics.Search;
 using SpencerDenim.Application.Catalog.Admin;
 using SpencerDenim.Application.Catalog.Admin.Contracts;
 using SpencerDenim.Application.Catalog.Admin.Products;
@@ -287,6 +288,15 @@ public static class DependencyInjection
             provider => provider.GetRequiredService<HomeContentWriteHandlers>());
         services.AddScoped<ICommandHandler<DeleteHomeSectionItemCommand, ContentWriteResult>>(
             provider => provider.GetRequiredService<HomeContentWriteHandlers>());
+
+        // Search statistics (#78, SRCH-01 popular searches; doc 08 DB25, §7.6).
+        services.AddScoped<IQueryHandler<GetPopularSearchesQuery, PopularSearchesDto>, GetPopularSearchesQueryHandler>();
+        services.AddScoped<IQueryHandler<GetAdminPopularSearchesQuery, AdminPopularSearchesDto>, GetAdminPopularSearchesQueryHandler>();
+        services.AddScoped<HiddenSearchTermHandlers>();
+        services.AddScoped<ICommandHandler<HideSearchTermCommand, Result<bool>>>(
+            provider => provider.GetRequiredService<HiddenSearchTermHandlers>());
+        services.AddScoped<ICommandHandler<ShowSearchTermCommand, Result<bool>>>(
+            provider => provider.GetRequiredService<HiddenSearchTermHandlers>());
 
         services.AddScoped<AnnouncementWriteHandlers>();
         services.AddScoped<ICommandHandler<CreateAnnouncementCommand, ContentWriteResult>>(

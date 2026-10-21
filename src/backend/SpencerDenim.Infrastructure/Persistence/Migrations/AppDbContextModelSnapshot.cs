@@ -140,6 +140,22 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.ToTable("UserTokens", "identity");
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Analytics.HiddenSearchTerm", b =>
+                {
+                    b.Property<string>("QueryNormalized")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_100_CI_AS_SC");
+
+                    b.Property<DateTime>("HiddenAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.HasKey("QueryNormalized")
+                        .HasName("PK_HiddenSearchTerms");
+
+                    b.ToTable("HiddenSearchTerms", "analytics");
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Analytics.PageDaily", b =>
                 {
                     b.Property<DateOnly>("Date")
@@ -244,6 +260,31 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_PageViews_DeviceType", "[DeviceType] IN (1, 2, 3, 9)");
 
                             t.HasCheckConstraint("CK_PageViews_PageType", "[PageType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 99)");
+                        });
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Analytics.SearchQueryDaily", b =>
+                {
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<string>("QueryNormalized")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_100_CI_AS_SC");
+
+                    b.Property<int>("Searches")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ZeroResultSearches")
+                        .HasColumnType("int");
+
+                    b.HasKey("Date", "QueryNormalized")
+                        .HasName("PK_SearchQueriesDaily");
+
+                    b.ToTable("SearchQueriesDaily", "analytics", t =>
+                        {
+                            t.HasCheckConstraint("CK_SearchQueriesDaily_Counts", "[Searches] >= 1 AND [ZeroResultSearches] >= 0 AND [ZeroResultSearches] <= [Searches]");
                         });
                 });
 

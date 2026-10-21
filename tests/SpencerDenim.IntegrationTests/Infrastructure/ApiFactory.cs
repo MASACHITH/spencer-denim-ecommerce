@@ -97,6 +97,10 @@ public sealed class ApiFactory(
                 // in every test host; the traffic tests run one pass directly, as of a day they choose.
                 ["Traffic:JobsEnabled"] = "false",
 
+                // The search-count flush (#78) likewise writes in the background once a minute; ten minutes here, so
+                // a test host never writes behind a test's back and the search tests drain it with FlushAsync.
+                ["SearchStats:FlushSeconds"] = "600",
+
                 // The order-placement limit (issue #107) is per visitor address, and a test host has exactly
                 // one: TestServer reports no address at all, so every shopper in every test lands in the
                 // shared bucket. The checkout suites place hundreds of orders from it (the concurrency
