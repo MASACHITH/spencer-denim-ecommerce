@@ -947,3 +947,72 @@ test.describe('a body that never went through the sanitiser still renders safely
     }
   });
 });
+
+/**
+ * Issue #33: the Shipping and Returns pages as the shop ships them (published, with the owner's starting terms),
+ * the live fee list under Shipping, and the product page's links to both.
+ */
+test.describe('the Shipping and Returns pages and the product page links (#33)', () => {
+  test.beforeEach(async ({ page }) => {
+    await publish(page, 'all');
+    await useStubApi(page);
+  });
+
+  test.afterEach(async ({ page }) => {
+    await publish(page, 'none');
+  });
+
+  test('the product page links to both published pages, and the links land on them', async ({ page }) => {
+    await page.goto('/product/test-product-1');
+
+    const delivery = page.locator('[data-testid="pdp-delivery"]');
+    await delivery.locator('summary').click();
+    const shipping = page.getByRole('link', { name: 'Delivery details' });
+    await expect(shipping).toHaveAttribute('href', '/shipping');
+
+    const returns = page.locator('[data-testid="pdp-returns"]');
+    await returns.locator('summary').click();
+    await expect(page.getByRole('link', { name: 'Returns and exchanges policy' })).toHaveAttribute('href', '/returns');
+
+    await shipping.click();
+    await expect(page.getByRole('heading', { level: 1, name: 'Delivery and shipping' })).toBeVisible();
+  });
+
+  test('the Shipping page carries its copy and the live Sri Lankan fees under it', async ({ page }) => {
+    await page.goto('/shipping');
+
+    await expect(page.getByRole('heading', { level: 2, name: 'Delivery worldwide' })).toBeVisible();
+    const rates = page.getByRole('region', { name: 'Current delivery fees in Sri Lanka' });
+    await expect(rates).toBeVisible();
+    await expect(rates).toContainText('Rs. 400, free over Rs. 10,000, 1–2 working days');
+    await expect(rates).toContainText('Rest of Sri Lanka');
+    await expect(rates).toContainText('for your country if you are ordering from overseas');
+  });
+
+  test('the Returns page carries its copy and no fee list', async ({ page }) => {
+    await page.goto('/returns');
+
+    await expect(page.getByRole('heading', { level: 2, name: 'The short version' })).toBeVisible();
+    await expect(page.locator('main')).toContainText('original payment method');
+    await expect(page.locator('[data-testid="shipping-rates"]')).toHaveCount(0);
+  });
+
+  test('neither page scrolls sideways at any of the eight widths', async ({ page }) => {
+    for (const path of ['/shipping', '/returns']) {
+      for (const width of BREAKPOINTS) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(path);
+        await expect(page.locator('h1')).toBeVisible();
+        expect(await horizontalOverflow(page), `${path} at ${width}px`).toBe(0);
+      }
+    }
+  });
+
+  test('the Shipping page has no axe violations', async ({ page }) => {
+    await page.goto('/shipping');
+    await expect(page.locator('[data-testid="shipping-rates"]')).toBeVisible();
+
+    const results = await new AxeBuilder({ page }).include('main').analyze();
+    expect(results.violations.map((violation) => `${violation.id}: ${violation.help}`)).toEqual([]);
+  });
+});

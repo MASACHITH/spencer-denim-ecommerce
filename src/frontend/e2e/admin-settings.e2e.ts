@@ -524,6 +524,9 @@ test.describe('the settings screen is usable and accessible', () => {
       // Issue #193: how long the nightly purge keeps raw page views.
       'h2:Traffic',
 
+      // Issue #33: the product page's delivery and returns texts.
+      'h2:Product page: delivery and returns',
+
       // Issue #189: whether customers' reviews wait for approval.
       'h2:Reviews',
 
@@ -1126,5 +1129,63 @@ test.describe('the Email account panel (ADM-22, 2026-10-21)', () => {
     );
 
     expect(serious.map((violation) => violation.id)).toEqual([]);
+  });
+});
+
+/**
+ * Issue #33: the product page's delivery and returns texts. The stub mirrors the endpoint — text or null, a
+ * sanitiser no more permissive than the server's, the 4,000-character cap, the Content token — so the screen's
+ * labels, its removed-markup notice and its field errors are exercised against what production answers.
+ */
+test.describe('product page texts (#33)', () => {
+  test('both texts are on screen as seeded, labelled, and a save says what was removed', async ({ page }) => {
+    await openSettings(page);
+
+    const panel = page.locator('[data-testid="pdp-texts-panel"]');
+    await expect(panel.getByRole('heading', { level: 2, name: 'Product page: delivery and returns' })).toBeVisible();
+
+    const delivery = panel.getByLabel('Delivery text');
+    const returns = panel.getByLabel('Returns text');
+    await expect(delivery).toHaveValue(/We also deliver worldwide/);
+    await expect(returns).toHaveValue(/within 14 days of delivery/);
+
+    await delivery.fill('<p onclick="steal()">Two days in Colombo.</p><script>alert(1)</script>');
+    await panel.locator('[data-testid="save-pdp-texts"]').click();
+
+    await expect(page.locator('[data-testid="pdp-removed"]')).toContainText('<script>');
+    await expect(page.locator('[data-testid="pdp-removed"]')).toContainText('onclick');
+    await expect(delivery).toHaveValue('<p>Two days in Colombo.</p>');
+
+    await reopenSettings(page);
+    await expect(page.locator('[data-testid="pdp-texts-panel"]').getByLabel('Delivery text')).toHaveValue('<p>Two days in Colombo.</p>');
+  });
+
+  test('a text over the cap is refused on its own box', async ({ page }) => {
+    await openSettings(page);
+
+    const panel = page.locator('[data-testid="pdp-texts-panel"]');
+    await panel.getByLabel('Returns text').fill(`<p>${'a'.repeat(4_000)}</p>`);
+    await panel.locator('[data-testid="save-pdp-texts"]').click();
+
+    await expect(page.locator('[data-testid="error-returnsInfoHtml"]')).toContainText('at most 4,000');
+    await expect(panel.getByLabel('Returns text')).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  test('the panel has no serious axe violations and fits every width', async ({ page }) => {
+    await openSettings(page);
+
+    const results = await new AxeBuilder({ page })
+      .include('[data-testid="pdp-texts-panel"]')
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    expect(results.violations.map((violation) => `${violation.id}: ${violation.help}`)).toEqual([]);
+
+    for (const width of BREAKPOINTS) {
+      await page.setViewportSize({ width, height: 900 });
+      await openSettings(page);
+      await expect(page.locator('[data-testid="pdp-texts-panel"]')).toBeVisible();
+      expect(await horizontalOverflow(page), `horizontal overflow at ${width}px`).toBeLessThanOrEqual(0);
+      expect(await undersized(page, '[data-testid="save-pdp-texts"]')).toEqual([]);
+    }
   });
 });

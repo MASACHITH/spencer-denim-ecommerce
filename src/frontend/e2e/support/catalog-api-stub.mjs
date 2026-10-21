@@ -2523,6 +2523,93 @@ const SALE_BANNER_SLOW_MS = 8_000;
 
 let saleBannerState = 'none';
 
+/**
+ * Issue #33: the product page's delivery and returns panel, as GET /api/content/delivery-returns sends it
+ * (DeliveryReturnsDto). `default` is doc 08 section 9's seeded placeholder rates and the seeded texts; the other
+ * states are what `/__test__/delivery-returns?state=` switches to, each one a thing the API can really answer:
+ * pickup enabled with a location, a fee changed in the rate table, texts written round the save handler, or a
+ * failure. The zone labels are the API's own ("Gampaha and Kalutara", "Rest of Sri Lanka").
+ */
+const DELIVERY_RETURNS_DEFAULT = {
+  estimate: { daysMin: 1, daysMax: 5 },
+  zones: [
+    { zone: 'Colombo', label: 'Colombo' },
+    { zone: 'Western', label: 'Gampaha and Kalutara' },
+    { zone: 'IslandWide', label: 'Rest of Sri Lanka' },
+  ],
+  methods: [
+    {
+      code: 'STANDARD',
+      name: 'Standard delivery',
+      description: 'Delivered to your door by courier.',
+      rates: [
+        { zone: 'Colombo', fee: 400, freeAboveAmount: 10000, daysMin: 1, daysMax: 2 },
+        { zone: 'Western', fee: 450, freeAboveAmount: 10000, daysMin: 2, daysMax: 3 },
+        { zone: 'IslandWide', fee: 600, freeAboveAmount: 15000, daysMin: 3, daysMax: 5 },
+      ],
+    },
+    {
+      code: 'EXPRESS',
+      name: 'Express delivery',
+      description: null,
+      rates: [
+        { zone: 'Colombo', fee: 950, freeAboveAmount: null, daysMin: 1, daysMax: 1 },
+        { zone: 'Western', fee: 1200, freeAboveAmount: null, daysMin: 1, daysMax: 2 },
+      ],
+    },
+  ],
+  pickupPoints: [],
+  deliveryInfoHtml:
+    '<ul><li>Within Sri Lanka we deliver to every district by courier. The fee for your district is shown at '
+    + 'checkout, before you pay.</li><li>We also deliver worldwide with a tracked international service, usually '
+    + 'in 5 to 15 working days. The fee for your country is shown at checkout.</li><li>Delivery times are in '
+    + 'working days, counted from dispatch once your payment is confirmed. Customs duties and taxes on overseas '
+    + 'orders are paid by the customer.</li><li>Pay securely online at checkout. Cash on delivery is not '
+    + 'available.</li></ul>',
+  returnsInfoHtml:
+    '<ul><li>Changed your mind? Return or exchange within 14 days of delivery.</li><li>Items must be unworn and '
+    + 'unwashed, with all their tags still attached.</li><li>Innerwear, swimwear, socks and sale items are final '
+    + 'sale and cannot be returned.</li><li>Refunds go back to your original payment method within 7 working days '
+    + 'of your return reaching us and passing our check.</li><li>Return postage is yours to pay, from Sri Lanka or '
+    + 'overseas, unless the item is faulty.</li><li>Damaged, faulty or wrong item? Tell us within 48 hours of '
+    + 'delivery, with photos, and we will put it right at our cost.</li></ul>',
+};
+
+function deliveryReturnsFor(state) {
+  if (state === 'pickup') {
+    return {
+      ...DELIVERY_RETURNS_DEFAULT,
+      pickupPoints: [
+        { name: 'Colombo Wardrobe Flagship', city: 'Colombo 3', openingHours: 'Monday to Saturday, 10am to 7pm', fee: 0, daysMin: 1, daysMax: 2 },
+      ],
+    };
+  }
+
+  if (state === 'changed') {
+    return {
+      ...DELIVERY_RETURNS_DEFAULT,
+      methods: DELIVERY_RETURNS_DEFAULT.methods.map((method) =>
+        method.code === 'STANDARD'
+          ? { ...method, rates: method.rates.map((rate) => (rate.zone === 'Colombo' ? { ...rate, fee: 375, freeAboveAmount: 8000 } : rate)) }
+          : method,
+      ),
+    };
+  }
+
+  // A row written by a support script, never through the save handler: the storefront's binding must still
+  // render it inert. (The real API sanitises on read too; this is the second layer's test.)
+  if (state === 'hostile') {
+    return {
+      ...DELIVERY_RETURNS_DEFAULT,
+      deliveryInfoHtml: '<p>Fast.</p><img src="x" onerror="window.__pdpXss = 1"><script>window.__pdpXss = 2</script>',
+    };
+  }
+
+  return DELIVERY_RETURNS_DEFAULT;
+}
+
+let deliveryReturnsState = 'default';
+
 let contentPagesState = 'none';
 
 /** Forced status for `/api/content/pages`, set through the test switch. 0 means answer normally. */
@@ -2612,8 +2699,29 @@ const CONTENT_PAGE_BODIES = {
     seoTitle: null,
     seoDescription: null,
   },
-  returns: { bodyHtml: '<p>Thirty days.</p>', seoTitle: null, seoDescription: null },
-  shipping: { bodyHtml: '<p>Island-wide.</p>', seoTitle: null, seoDescription: null },
+  // Issue #33: the opening of the seeded copy (PolicyPageContent), headings included, so the pages are drawn as
+  // the shop ships them. The live fee list under Shipping comes from /api/content/delivery-returns.
+  returns: {
+    bodyHtml:
+      '<p>We want you to love what you ordered. If something is not right, here is what to do.</p>'
+      + '<h2>The short version</h2><ul><li>Return or exchange within <strong>14 days</strong> of delivery.</li>'
+      + '<li>Items must be unworn and unwashed, with all their tags still attached.</li>'
+      + '<li>Refunds go back to your original payment method.</li></ul>'
+      + '<h2>Who pays for return postage</h2><ul><li><strong>Change of mind or size exchange:</strong> you pay to '
+      + 'send the item back, from within Sri Lanka or from overseas.</li></ul>',
+    seoTitle: null,
+    seoDescription: null,
+  },
+  shipping: {
+    bodyHtml:
+      '<p>We deliver to every district in Sri Lanka and to customers overseas. Here is how it works.</p>'
+      + '<h2>Delivery within Sri Lanka</h2><p>We deliver island-wide through trusted local couriers. Checkout shows '
+      + 'the exact fee for your district before you pay.</p>'
+      + '<h2>Delivery worldwide</h2><p>We also ship overseas with a tracked international service. The delivery fee '
+      + 'for your country is shown at checkout before you pay.</p>',
+    seoTitle: null,
+    seoDescription: null,
+  },
   privacy: { bodyHtml: '<p>Placeholder for the PDPA review.</p>', seoTitle: null, seoDescription: null },
   terms: { bodyHtml: '<p>Placeholder.</p>', seoTitle: null, seoDescription: null },
 };
@@ -4046,6 +4154,25 @@ const server = createServer((request, response) => {
   // the seeder: a real fresh shop ships five pages unpublished and Contact *on* the shop (W2-11), and
   // "nothing published" is the state most of these tests are about — a page that is not there yet.
   // `/__test__/content-pages` switches the set, so a test names a state and this file owns its bytes.
+  // Issue #33: the delivery and returns panel, and the switch that changes it. The panel is read during the
+  // **server** render, so the state lives here rather than in a page.route handler.
+  if (url.pathname === '/__test__/delivery-returns') {
+    deliveryReturnsState = url.searchParams.get('state') ?? 'default';
+    response.end(JSON.stringify({ state: deliveryReturnsState }));
+    return;
+  }
+
+  if (url.pathname === '/api/content/delivery-returns') {
+    if (deliveryReturnsState === 'fail') {
+      response.statusCode = 500;
+      response.end(JSON.stringify({ title: 'Forced failure', status: 500 }));
+      return;
+    }
+
+    response.end(JSON.stringify(deliveryReturnsFor(deliveryReturnsState)));
+    return;
+  }
+
   if (url.pathname === '/__test__/content-pages') {
     contentPagesState = url.searchParams.get('state') ?? 'none';
     contentPagesStatus = Number(url.searchParams.get('status') ?? 0);

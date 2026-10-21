@@ -55,7 +55,7 @@ import { DeliveryReturnsService } from '../../core/delivery/delivery-returns.ser
 
           @if (panel.deliveryInfoHtml) {
             <!-- Sanitised by the API on save and on read, and bound so Angular's sanitiser runs over it too. -->
-            <div class="dr__text rich" data-testid="pdp-delivery-text" [innerHTML]="panel.deliveryInfoHtml"></div>
+            <div class="dr__text" data-testid="pdp-delivery-text" [innerHTML]="panel.deliveryInfoHtml"></div>
           }
 
           @if (shippingPath(); as path) {
@@ -69,7 +69,7 @@ import { DeliveryReturnsService } from '../../core/delivery/delivery-returns.ser
           <summary class="dr__summary">Returns and exchanges</summary>
           <div class="dr__body">
             @if (panel.returnsInfoHtml) {
-              <div class="dr__text rich" data-testid="pdp-returns-text" [innerHTML]="panel.returnsInfoHtml"></div>
+              <div class="dr__text" data-testid="pdp-returns-text" [innerHTML]="panel.returnsInfoHtml"></div>
             }
             @if (returnsPath(); as path) {
               <p class="dr__more">
@@ -121,8 +121,23 @@ import { DeliveryReturnsService } from '../../core/delivery/delivery-returns.ser
       margin-top: var(--space-1);
       overflow-wrap: anywhere;
     }
-    .dr__text :is(ul, ol) {
-      padding-left: 1.25rem;
+    /* The owner's text arrives as innerHTML, which emulated encapsulation does not reach, so the global .rich
+       rules are repeated here under ::ng-deep rather than borrowing the .rich class (the product description owns
+       that hook). Scoped to this host, so nothing leaks. */
+    :host ::ng-deep .dr__text > p + p {
+      padding-top: var(--space-1);
+    }
+    :host ::ng-deep .dr__text :is(ul, ol) {
+      margin: 0;
+      padding-left: var(--space-3);
+      list-style: revert;
+    }
+    :host ::ng-deep .dr__text li + li {
+      padding-top: var(--space-0-5);
+    }
+    :host ::ng-deep .dr__text strong {
+      font-weight: var(--weight-medium);
+      color: var(--color-text);
     }
     .dr__more {
       margin: var(--space-1) 0 0;
