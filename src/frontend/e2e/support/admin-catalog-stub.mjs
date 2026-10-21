@@ -1372,6 +1372,124 @@ const TRAFFIC_BOUNDS = {
   botRetentionDays: { key: 'Traffic.BotRetentionDays', min: 7, max: 90 },
 };
 
+/** The seven Email.Smtp keys, in the order the real catalogue lists them. */
+const SMTP_KEYS = [
+  'Email.Smtp.Host',
+  'Email.Smtp.Port',
+  'Email.Smtp.Username',
+  'Email.Smtp.Password',
+  'Email.Smtp.FromAddress',
+  'Email.Smtp.FromName',
+  'Email.Smtp.UseStartTls',
+];
+
+/** The text fields of the email account form and the keys they write (UpdateSmtpSettingsCommandHandler). */
+const SMTP_TEXT_FIELDS = [
+  ['host', 'Email.Smtp.Host'],
+  ['port', 'Email.Smtp.Port'],
+  ['username', 'Email.Smtp.Username'],
+  ['fromAddress', 'Email.Smtp.FromAddress'],
+  ['fromName', 'Email.Smtp.FromName'],
+];
+
+/* eslint-disable-next-line no-control-regex */
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+/**
+ * The email account's field rules, the same as SmtpSettingRules and UpdateSmtpSettingsCommandHandler on the server,
+ * so the screen's error display is exercised and the stub is never more permissive than the API. Answers the
+ * errors object (empty when valid) and the cleaned values for the fields the body carried.
+ */
+function smtpFieldErrors(body) {
+  const errors = {};
+  const wanted = {};
+  let password = null;
+
+  for (const [field, key] of SMTP_TEXT_FIELDS) {
+    if (!Object.hasOwn(body, field)) {
+      continue;
+    }
+
+    const raw = body[field];
+
+    if (raw !== null && typeof raw !== 'string') {
+      errors[field] = ['Send this field as text, or as null to clear it.'];
+      continue;
+    }
+
+    const value = raw === null || raw.trim() === '' ? null : raw.trim();
+    wanted[key] = value;
+
+    if (value === null) {
+      continue;
+    }
+
+    if (field === 'host' && (value.length > 253 || !/^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$/.test(value))) {
+      errors[field] = ['Enter the server name only, with no https://, no port and no spaces.'];
+    } else if (field === 'port') {
+      if (!/^[0-9]+$/.test(value) || Number(value) < 1 || Number(value) > 65535) {
+        errors[field] = ['Enter the port as a whole number between 1 and 65535.'];
+      } else {
+        wanted[key] = String(Number(value));
+      }
+    } else if (field === 'username' && (value.length > 256 || CONTROL.test(value))) {
+      errors[field] = ['Keep the user name to 256 characters, on one line.'];
+    } else if (field === 'fromAddress' && (value.length > 256 || CONTROL.test(value) || !/^[^\s@<>]+@[^\s@<>]+$/.test(value))) {
+      errors[field] = ['Enter one email address, like name@yourshop.lk, with no name around it.'];
+    } else if (field === 'fromName' && (value.length > 120 || CONTROL.test(value))) {
+      errors[field] = ['Keep the name to 120 characters, on one line.'];
+    }
+  }
+
+  if (Object.hasOwn(body, 'password')) {
+    const raw = body.password;
+
+    if (raw !== null && typeof raw !== 'string') {
+      errors.password = ['Send this field as text, or as null to clear it.'];
+    } else if (raw !== null && raw.trim() !== '') {
+      if (raw.length > 256 || CONTROL.test(raw)) {
+        errors.password = ['Keep the password to 256 characters, on one line.'];
+      } else {
+        password = raw;
+      }
+    }
+  }
+
+  let startTls;
+
+  if (Object.hasOwn(body, 'useStartTls')) {
+    if (typeof body.useStartTls !== 'boolean') {
+      errors.useStartTls = ['Send this field as true or false.'];
+    } else {
+      startTls = body.useStartTls;
+    }
+  }
+
+  return { errors, wanted, password, startTls };
+}
+
+/** The cross-field rules, on the values after the save (new where sent, stored where not). */
+function smtpCrossFieldErrors(after) {
+  const errors = {};
+
+  if (after('Email.Smtp.Host')) {
+    const port = after('Email.Smtp.Port');
+    if (!port || !/^[0-9]+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
+      errors.port = ["Enter the mail server's port, usually 587."];
+    }
+
+    if (!after('Email.Smtp.FromAddress')) {
+      errors.fromAddress = ['Enter the address emails are sent from. A mail server cannot be used without one.'];
+    }
+  }
+
+  if (after('Email.Smtp.Username') && after('Email.Smtp.UseStartTls') === 'false') {
+    errors.useStartTls = ['Keep encryption on when a user name is set. Without it the password would be sent unencrypted.'];
+  }
+
+  return errors;
+}
+
 function settingsPayload(state) {
   for (const [key, value] of Object.entries(SEEDED_SETTINGS)) {
     if (!Object.hasOwn(state.settings, key)) {
@@ -1411,6 +1529,20 @@ function settingsPayload(state) {
 
     // Issue #189: the review approval switch. Settings.Edit, its own save unit.
     { groupKey: 'Reviews', keys: ['Reviews.RequireApproval'], types: { 'Reviews.RequireApproval': 'Bool' } },
+
+    // ADM-22 (2026-10-21): the mail account. Settings.Security (Super Admin only), its own save unit, the password
+    // a write-only secret. Absent when `/__test__/smtp-hidden` says the signed-in user is not a Super Admin, as the
+    // real read model leaves it out for every other role.
+    ...(state.smtpHidden
+      ? []
+      : [
+          {
+            groupKey: 'Email.Smtp',
+            keys: SMTP_KEYS,
+            types: { 'Email.Smtp.Port': 'Int', 'Email.Smtp.Password': 'Secret', 'Email.Smtp.UseStartTls': 'Bool' },
+            permission: 'Settings.Security',
+          },
+        ]),
 
     // PAY-01. Its own group and its own save unit, because it is the one group guarded by a different
     // permission (Settings.Payments) — see SettingCatalog.SaveUnits.
@@ -1462,6 +1594,10 @@ function settingsPayload(state) {
       return ['Reviews.RequireApproval'];
     }
 
+    if (groupKey === 'Email.Smtp') {
+      return SMTP_KEYS;
+    }
+
     return ['Contact.WhatsApp', 'Social.FacebookUrl', 'Social.InstagramUrl', 'Social.TikTokUrl', 'Social.YouTubeUrl'];
   };
 
@@ -1475,8 +1611,9 @@ function settingsPayload(state) {
       settings: group.keys.map((key) => ({
         key,
         valueType: group.types[key] ?? 'String',
-        value: state.settings[key],
-        isSecret: false,
+        // A secret's value never leaves the server, for anybody (AdminSettingDto.From); only hasValue does.
+        value: group.types[key] === 'Secret' ? null : (state.settings[key] ?? null),
+        isSecret: group.types[key] === 'Secret',
         hasValue: Boolean(state.settings[key]),
         requiredPermission: group.permission ?? 'Settings.Edit',
         description: `What ${key} is for.`,
@@ -1958,6 +2095,18 @@ const server = createServer(async (request, response) => {
   // Test-only, and named so. The screen's refusal branch and its "print without the legal details"
   // warning are both reachable only from a *state*, so a test names one and this file owns its bytes —
   // the rule the site-settings and bank-transfer switches already follow.
+  // Test-only (ADM-22, 2026-10-21): `hidden=yes` leaves the Email.Smtp group out, as the real read model does for
+  // anybody who is not a Super Admin; `outcome=refused` makes the next test send fail as a refused password does.
+  if (path === '/__test__/smtp-hidden') {
+    state.smtpHidden = url.searchParams.get('hidden') === 'yes';
+    return json(response, 200, { hidden: state.smtpHidden });
+  }
+
+  if (path === '/__test__/smtp-test-outcome') {
+    state.smtpTestOutcome = url.searchParams.get('outcome') ?? 'ok';
+    return json(response, 200, { outcome: state.smtpTestOutcome });
+  }
+
   if (path === '/__test__/transition-outcome') {
     state.transitionOutcome = url.searchParams.get('outcome') ?? 'ok';
     return json(response, 200, { outcome: state.transitionOutcome });
@@ -2651,6 +2800,79 @@ const server = createServer(async (request, response) => {
   // Issue #193: the Traffic form. Mirrors UpdateTrafficSettingsCommandHandler's rules and order: field errors,
   // then the token, then bots-not-longer-than-people against the value each key will hold. Only the fields the
   // body carried are written.
+  if (path === '/api/admin/settings/email-smtp' && request.method === 'PUT') {
+    if (state.smtpHidden) {
+      return problem(response, 403, 'Forbidden', 'You do not have permission to do that.', 'forbidden');
+    }
+
+    const body = await readBody(request);
+    if (body === undefined || body === null) {
+      return problem(response, 400, 'Malformed JSON', 'The request body is not valid JSON.', 'malformed_json');
+    }
+
+    const { errors, wanted, password, startTls } = smtpFieldErrors(body);
+    if (Object.keys(errors).length > 0) {
+      return json(response, 400, { title: 'One or more fields are invalid.', status: 400, errors });
+    }
+
+    if (body.rowVersion !== settingsToken(state, 'Email.Smtp')) {
+      return problem(response, 409, 'This change cannot be applied', 'Somebody else changed the email account while you were editing it.', 'stale_row_version');
+    }
+
+    if (startTls !== undefined) {
+      wanted['Email.Smtp.UseStartTls'] = startTls ? 'true' : 'false';
+    }
+
+    const after = (key) => (Object.hasOwn(wanted, key) ? wanted[key] : (state.settings[key] ?? null));
+    const cross = smtpCrossFieldErrors(after);
+    if (Object.keys(cross).length > 0) {
+      return json(response, 400, { title: 'One or more fields are invalid.', status: 400, errors: cross });
+    }
+
+    Object.assign(state.settings, wanted);
+
+    if (password !== null) {
+      // Write-only: the stub keeps only that one is set, never the text, as the real read never returns it.
+      state.settings['Email.Smtp.Password'] = 'set';
+    }
+
+    state.smtpSaves = (state.smtpSaves ?? 0) + 1;
+    return noContent(response);
+  }
+
+  if (path === '/api/admin/settings/email-smtp/test' && request.method === 'POST') {
+    if (state.smtpHidden) {
+      return problem(response, 403, 'Forbidden', 'You do not have permission to do that.', 'forbidden');
+    }
+
+    const body = await readBody(request);
+    if (body === undefined || body === null) {
+      return problem(response, 400, 'Malformed JSON', 'The request body is not valid JSON.', 'malformed_json');
+    }
+
+    const { errors, wanted, startTls } = smtpFieldErrors(body);
+    const typed = (key) => wanted[key] ?? null;
+
+    if (!typed('Email.Smtp.Host') && !errors.host) {
+      errors.host = ['Enter the mail server to test.'];
+    }
+
+    Object.assign(
+      errors,
+      smtpCrossFieldErrors((key) => (key === 'Email.Smtp.UseStartTls' ? (startTls === false ? 'false' : 'true') : typed(key))),
+    );
+
+    if (Object.keys(errors).length > 0) {
+      return json(response, 400, { title: 'One or more fields are invalid.', status: 400, errors });
+    }
+
+    if (state.smtpTestOutcome === 'refused') {
+      return problem(response, 422, 'The test email was not sent', 'The mail server refused the user name or password.', 'smtp_test_failed');
+    }
+
+    return json(response, 200, { sentTo: SESSION.email });
+  }
+
   if (path === '/api/admin/settings/traffic' && request.method === 'PUT') {
     const body = await readBody(request);
     if (body === undefined || body === null) {
