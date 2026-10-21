@@ -653,20 +653,22 @@ Grand total = 16,274.00 − 1,627.40 + 950.00 = **Rs. 15,596.60**. "You saved" =
 
 **Preconditions**
 - Bag has at least one purchasable line within available stock.
-- At least one payment provider is enabled: Bank Transfer (enabled at launch); PayPal (only when enabled, credentials valid and the exchange rate is no older than 7 days) (08 §3.5, D1).
-- At least one delivery method is available for the chosen district's zone. Store pickup needs at least one active pickup location (08 §9).
+- At least one payment provider is enabled and ready: PayPal (only when enabled, credentials valid and the exchange rate is no older than 7 days) (08 §3.5, D1); Bank Transfer **switched off since 2026-10-21** (owner, "block only for now"; a Super Admin can switch it back on). With none, checkout shows "No payment method is available" and refuses to place an order (409, nothing written).
+- **Sri Lanka:** at least one delivery method is available for the chosen district's zone. Store pickup needs at least one active pickup location (08 §9).
+- **Overseas** (2026-10-21): International delivery is switched on, and the country and its region are switched on with a fee (08 §3.5 `DeliveryRegions`). Otherwise the page says "We cannot deliver to {country} at the moment" and nothing can be placed.
 
 **Main flow**
 1. **[Customer]** Starts checkout. A guest continues with an email address or signs in; a signed-in customer's name, email, phone and saved addresses are pre-filled.
 2. **[Customer]** Enters contact details: first name, last name, email, phone.
-3. **[Customer]** Chooses a delivery method from those offered for the district:
-   - **Standard / Express:** picks a saved address or enters recipient name, phone, address line 1 and 2, city, **district** (one of 25), postal code, landmark. A signed-in customer may save it (up to 10 addresses).
-   - **Store pickup:** picks a pickup location (name, address, hours). No delivery address is needed; the order's district is the pickup location's district.
-4. **[System]** Shows the fee and estimated days from the zone rate, with a "free delivery above Rs. 10,000.00" message where a threshold applies.
+3. **[Customer]** Chooses the **country** first (default from the header's "Deliver to"; 2026-10-21), then a delivery method:
+   - **Sri Lanka — Standard / Express:** picks a saved address or enters recipient name, phone, address line 1 and 2, city, **district** (one of 25), postal code, landmark. A signed-in customer may save it (up to 10 addresses).
+   - **Sri Lanka — Store pickup:** picks a pickup location (name, address, hours). No delivery address is needed; the order's district is the pickup location's district.
+   - **Any other country — International delivery** (the only option; sent by Sri Lanka Post EMS, DHL or similar): recipient name, phone **with country code**, address line 1 and 2, city, **state/region** (required where the country always uses one, e.g. US, CA, AU), **postcode** (required where the country always uses one, e.g. GB, US, DE, JP), no district.
+4. **[System]** Shows the fee and estimated days — from the zone rate for Sri Lanka, with a "free delivery above Rs. 10,000.00" message where a threshold applies; from the country's override or its region for overseas (no free threshold; a free-delivery promo code does not waive an overseas fee).
 5. **[Customer]** Applies or removes a promo code (P3).
 6. **[Customer]** Chooses a payment method:
-   - **Bank / online transfer:** shows that the order will wait for payment for 48 hours.
-   - **PayPal:** shows the **USD amount** that will be charged (e.g. "USD 53.55, converted at Rs. 300.00 per USD plus 3%") before any redirect.
+   - **Bank / online transfer** (only when switched on): shows that the order will wait for payment for 48 hours.
+   - **PayPal** (Sri Lankan and overseas addresses alike): shows the **USD amount** of the LKR total **including delivery** that will be charged (e.g. "USD 53.55, converted at Rs. 300.00 per USD plus 3%") before any redirect.
 7. **[Customer]** Adds an optional note and clicks **Place order**.
 8. **[System]** Validates all fields, re-prices the bag live (P3), and allocates the next **order number** (`SD-2026-000123`).
 9. **[System]** In **one transaction**:
@@ -766,7 +768,7 @@ sequenceDiagram
 
 **Actors.** Customer. Staff (Order Staff, Store Manager, Super Admin; `Orders.Approve`). System (expiry job, emails). Bank (outside the system).
 
-**Preconditions.** Bank Transfer provider enabled; bank details set by a Super Admin (`Settings.Payments`); order PendingPayment with an open bank payment (*Pending*).
+**Preconditions.** Bank Transfer provider enabled **for a new order** — switched off since 2026-10-21 (owner, "block only for now"; Settings → Payment methods, Super Admin). The switch only decides what checkout offers: an order already placed by bank transfer keeps its instructions, slip upload and place in the approval queue whatever the switch says. Bank details set by a Super Admin (`Settings.Payments`); order PendingPayment with an open bank payment (*Pending*).
 
 **Main flow**
 1. **[System]** At placement, emails **Bank transfer instructions**: bank name, branch, account name, account number, exact amount (e.g. Rs. 15,596.60), **order number to quote as the reference**, due date and time (placed + 48 h), and the link to upload a payment slip.
@@ -892,7 +894,7 @@ sequenceDiagram
 **Currency.** PayPal cannot charge in LKR. The USD amount is `round(order total ÷ LKR per USD × (1 + buffer%), 2)`. Example: Rs. 15,596.60 at Rs. 300.00 per USD with a 3% buffer = **USD 53.55**. The rate, buffer and USD amount are stored on the payment and shown before redirect; a refund returns the captured USD amount; exchange differences are borne by the store (08 D1).
 
 **Main flow**
-1. **[System]** After the order is committed (P6), creates a PayPal order for the USD amount and stores the PayPal order ID. Redirects the customer to PayPal.
+1. **[System]** After the order is committed (P6), creates a PayPal order for the USD amount and stores the PayPal order ID. The PayPal order carries the **ship-to address** from the order (recipient, lines, city, state/region, postcode, ISO country code) with `SET_PROVIDED_ADDRESS`, so the buyer sees where the parcel goes and cannot change it at PayPal; a store pickup sends no address. If PayPal refuses the address itself, the system asks once more without it, so a placed order can always be paid (2026-10-21). Redirects the customer to PayPal.
 2. **[Customer]** Signs in to PayPal or pays by card, and approves.
 3. **[Customer]** Returns to the store. The return itself is **never treated as proof of payment** (08 §3.5 `PaymentEvents.EventSource = 3`).
 4. **[System] Claim.** In one short transaction, only if the order is still PendingPayment and no other capture is in progress: sets a **capture lock** on the order for 3 h and moves the payment *Initiated → Capturing*.

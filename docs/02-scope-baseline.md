@@ -1,8 +1,8 @@
 # 02 — Scope Baseline (v1.0)
 
-Last updated: 2026-09-15 · Status: **Baselined.** Answers to Q1–Q16 are applied (see [01](01-project-understanding.md) §3).
+Last updated: 2026-10-21 (decisions in §I2) · Status: **Baselined.** Answers to Q1–Q16 are applied (see [01](01-project-understanding.md) §3).
 
-**Rule:** we build every feature the client saw in the demo pages, plus the signed proposal's additions. The **only visual change is the theme** (Banana Republic). The **only payment methods** are Bank Transfer and PayPal, with PayPal built last. Any gap found mid-build is discussed before it is built.
+**Rule:** we build every feature the client saw in the demo pages, plus the signed proposal's additions. The **only visual change is the theme** (Banana Republic). The **only payment methods** are Bank Transfer and PayPal, with PayPal built last — and since 2026-10-21 bank transfer is switched off, so **PayPal is the only payment method offered** (see §I2). Any gap found mid-build is discussed before it is built.
 
 Feature IDs are used in `TASKS.md` and on the client progress page.
 
@@ -17,7 +17,7 @@ Legend: ✅ In scope · ⏭ Future phase · ❌ Removed
 | GLB-03 | Rotating announcement bar (admin-editable messages) | ✅ |
 | GLB-04 | Sticky header: logo, search, sign in/account, wishlist count, bag count | ✅ |
 | GLB-05 | Navigation **Women · Men · Kids · New Arrivals · Sale**. Desktop mega menu (categories from admin + promo image card), mobile slide-out accordion. | ✅ |
-| GLB-06 | Delivery district selector (drives delivery estimate & fee) | ✅ |
+| GLB-06 | Delivery **country** and district selector (drives delivery estimate & fee). Sri Lanka shows the district selector; any other country shows its overseas fee and estimate (2026-10-21, §I2) | ✅ |
 | GLB-07 | Multi-column footer: links, policies, social, newsletter | ✅ |
 | GLB-08 | Floating WhatsApp button, site-wide | ✅ |
 | GLB-09 | Fully responsive 320 → 1920 px | ✅ |
@@ -86,13 +86,13 @@ Every homepage block's content (images, video, text, links, which products show)
 
 | ID | Feature | Scope |
 |---|---|---|
-| CHK-01 | Checkout: customer details, delivery address (district), order summary, validation | ✅ |
-| CHK-02 | Delivery methods: Standard / Express / Store pickup (admin sets fees, can switch each on/off, free above threshold) | ✅ |
+| CHK-01 | Checkout: customer details, **country first**, then the delivery address — Sri Lanka by district, any other country in the international shape (line 1, line 2, city, state/region, postcode where the country uses one, phone with country code) — order summary, validation (2026-10-21, §I2) | ✅ |
+| CHK-02 | Delivery methods: Standard / Express / Store pickup for Sri Lanka (admin sets fees, can switch each on/off, free above threshold); **International delivery** for every other country, at a fee per region or per country, admin-editable, each country switchable (2026-10-21, §I2) | ✅ |
 | CHK-03 | Guest checkout | ✅ |
 | CHK-04 | Order success page with order number | ✅ |
-| PAY-01 | **Bank / online transfer:** bank details shown, order "Awaiting payment" until admin approves | ✅ (with checkout, week 3) |
-| PAY-02 | **PayPal:** server-side capture + webhook auto-confirmation (cards accepted through PayPal) | ✅ (**built last**, week 4) |
-| PAY-03 | Pluggable payment-provider design so the next gateway plugs in without touching checkout | ✅ |
+| PAY-01 | **Bank / online transfer:** bank details shown, order "Awaiting payment" until admin approves. **Switched off since 2026-10-21** behind a Super Admin switch ("block only for now"); orders already placed and the approval queue keep working (§I2) | ✅ (with checkout, week 3) |
+| PAY-02 | **PayPal:** server-side capture + webhook auto-confirmation (cards accepted through PayPal). **The only payment method since 2026-10-21**, for Sri Lankan and overseas addresses; charged in USD at the admin-set rate on the LKR total including delivery (§I2) | ✅ (**built last**, week 4) |
+| PAY-03 | Pluggable payment-provider design so the next gateway plugs in without touching checkout. Each provider has an admin on/off switch (Super Admin, audited) | ✅ |
 | ACC-01 | Customer register / login / logout / forgot password | ✅ |
 | ACC-02 | My account: profile, order history, live order status + courier tracking link | ✅ |
 | ACC-03 | Emails: welcome, order placed, bank-transfer instructions, payment confirmed, shipped (with tracking), password reset | ✅ |
@@ -117,14 +117,14 @@ Every homepage block's content (images, video, text, links, which products show)
 | ADM-12 | Inventory: stock per variant, bulk update, low-stock threshold | ✅ |
 | ADM-13 | Promo codes: % / fixed / free delivery, min spend, validity dates, usage limits | ✅ |
 | ADM-14 | Sale campaigns: discount on categories/products for a date range | ✅ |
-| ADM-15 | Customers: list, detail, order history, district | ✅ |
+| ADM-15 | Customers: list, detail, order history, district (and country for overseas addresses) | ✅ |
 | ADM-16 | Reviews: approve / hide | ✅ |
 | ADM-17 | Content: homepage blocks (hero video, banners, trending items, activewear, sale, social gallery, benefits), announcement bar, mega-menu promo cards, size guides, content pages | ✅ |
 | ADM-18 | Media library: upload & manage images and videos | ✅ |
 | ADM-19 | Reports: Sales, Inventory, Customers, with CSV export | ✅ |
 | ADM-20 | Traffic: visits, sources, top pages, devices | ✅ |
 | ADM-21 | Newsletter subscribers: list + export | ✅ |
-| ADM-22 | Settings: store info, contact/WhatsApp/social, bank details, delivery methods & fees, couriers + tracking URL templates, PayPal credentials, email (SMTP), order payment-expiry hours | ✅ |
+| ADM-22 | Settings: store info, contact/WhatsApp/social, bank details, delivery methods & fees, **overseas delivery (regions, countries, fees, days, on/off)**, **payment methods on/off**, couriers + tracking URL templates, PayPal credentials, email (SMTP), order payment-expiry hours | ✅ |
 
 **Default roles** (Super Admin can edit these or create new ones):
 
@@ -175,6 +175,10 @@ here so that a feature that reads differently from the proposal is visibly a dec
 
 | Date | Decision | Why | By |
 |---|---|---|---|
+| 2026-10-21 | **Delivery is Sri Lanka plus worldwide.** Sri Lankan delivery is unchanged (district, `DeliveryMethods`, `DeliveryMethodZoneRates`). A **country** is chosen first at checkout and on saved addresses (ISO 3166-1, `ref.Countries`, 249 countries). Overseas orders go by **International delivery** (an international service such as Sri Lanka Post EMS or DHL) at a fee per **region** (Asia, Middle East, Europe, North America, Oceania, rest of world) that a country can override; the admin edits every fee and estimate and switches countries, regions and International delivery on or off. Store pickup is Sri Lanka only. **Every country is enabled** ("any country in the world"), except the seven ISO entries with no street addresses (Antarctica and six uninhabited territories), and the seeded region fees are **placeholders for the owner to replace** before the first overseas order. Multi-currency stays out of scope (§J). | The owner wants to sell to overseas buyers, including the diaspora. One region table with per-country overrides keeps the fee list short to maintain while still allowing a single expensive destination to be priced on its own. | Owner |
+| 2026-10-21 | **Bank transfer is switched off; PayPal is the only payment method.** "Block only for now": a Super Admin switch (Settings → Payment methods, `Settings.Payments`, audited, alerting) turns any method back on. With bank transfer off, checkout neither offers nor accepts it, and no bank-transfer email, instructions or order-page panel appears for new orders; orders already placed by bank transfer and the staff approval queue keep working. With no method switched on, checkout refuses to take an order. A fresh database seeds bank transfer off; an existing one is switched off **once** unless an admin has saved the row (`Seed.PaymentProvidersVersion`). | The owner's decision; PayPal also serves the new overseas buyers, who cannot make a Sri Lankan bank transfer easily. Switched rather than removed, so it can come back without a release. | Owner |
+| 2026-10-21 | **Prices stay in LKR everywhere.** PayPal charges the USD equivalent at the admin-set rate (#155) on the LKR total **including the delivery fee**; the PayPal order carries the ship-to address and its country code. There is no multi-currency display. | One price list, one set of reports; the USD figure and the rate are already stored on each payment for reconciliation. | Owner |
+| 2026-10-21 | *Safe choices recorded for the owner to confirm:* (1) a free-delivery promo code waives **Sri Lankan** delivery only, not an overseas fee; (2) postcodes and states are required only in the countries where every address has one (42 and 3 countries respectively), and nowhere is a postcode's format checked; (3) an overseas delivery phone must include its country code; (4) if PayPal refuses the ship-to address, the buyer is sent to PayPal once more without it rather than being unable to pay a placed order; (5) a saved address may be in a country that is currently switched off — checkout is where "not at the moment" is said. | Each is the choice that cannot overcharge, refuse a real address, or strand a placed order; each is a setting-free code rule that is easy to change on the owner's word. | Developer (safe choice) |
 | 2026-10-02 | **The shop is called Colombo Wardrobe.** Everything a shopper or a staff user reads is Colombo Wardrobe: the header wordmark, page titles and meta descriptions, the footer and its copyright line, seeded department SEO titles, placeholder alt text, the demo placeholder caption, the admin application’s titles and headings, the authenticator issuer and the OpenAPI document. The domain is `colombowardrobecompany.com`. The name is written down once per application — `StoreBrand` in `SpencerDenim.Domain.Branding` and `BRAND` in `@spencer-denim/shared` — and read everywhere else, with a convention test that fails if it is ever written out again. **The C# namespaces, the assemblies, `SpencerDenim.sln`, the `spencer-denim-ecommerce` repository and the `SpencerDenim_Dev` database keep their names**; they are identifiers, not brand. | The client’s delivered logo artwork reads COLOMBO WARDROBE and the domain they registered is `colombowardrobecompany.com`, so the codebase and the shop disagreed about the shop’s own name (W1-13). The owner decided the shopper-facing name rather than leaving the wordmark to be settled with the artwork. Renaming identifiers as well would touch connection strings, CI, every developer’s local database and the remote, for nothing a shopper sees. The registered company name, address and VAT number are a separate question, deliberately left open until invoices are designed (W3, issue #53), when they belong in admin settings the client fills in rather than in code. | Owner |
 | 2026-10-01 | **HOME-06 is "Linen and denim", not "Activewear".** The heading, standfirst, button and link describe linen and denim separates, and the block opens `/women?material=linen&material=linen-blend&material=denim`. The feature ID, its position and its behaviour are unchanged; only the copy and the destination are. | The photograph the client delivered for this slot is a flat-lay of a white linen co-ord and a denim co-ord — nothing athletic. A block whose picture, words and destination disagree is worse than no block (issue #63), and the owner chose to retitle the slot rather than wait for an activewear photograph. The link is a listing that genuinely holds linen and denim rather than a department that happens to include them. | Owner |
 
