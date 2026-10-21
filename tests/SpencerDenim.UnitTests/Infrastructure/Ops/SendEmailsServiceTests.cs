@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -768,6 +769,82 @@ public sealed class SendEmailsServiceTests
                     ? EmailFailureOutcome.Dead
                     : EmailFailureOutcome.Retrying);
         }
+    }
+
+    // ---- doc 08 §3.8 N2: the carried previous account -------------------------------------------------------
+
+    /// <summary>An ordinary row goes through the current account; a carried row through the previous one.</summary>
+    [Fact]
+    public async Task A_carried_row_goes_through_the_previous_account_and_an_ordinary_row_through_the_current_one()
+    {
+        var store = new FakeStore();
+        store.Queue.Add(Claim(1, email: "new-copy@example.com"));
+        store.Queue.Add(Claim(2, email: "old-copy@example.com") with { TransportOverrideProtected = "previous" });
+        var transport = new FakeTransport();
+
+        await SweepAsync(store, transport);
+
+        Assert.Equal(2, transport.Sent.Count);
+        Assert.Same(Account, transport.Accounts[transport.Sent.FindIndex(e => e.ToEmail == "new-copy@example.com")]);
+        Assert.Same(PreviousAccount, transport.Accounts[transport.Sent.FindIndex(e => e.ToEmail == "old-copy@example.com")]);
+    }
+
+    /// <summary>
+    /// With no current account, a carried row still goes out through its own account (a hijacker who clears the
+    /// mail settings cannot silence the old-channel warning), and nothing ordinary is touched.
+    /// </summary>
+    [Fact]
+    public async Task With_no_current_account_a_carried_row_still_goes_out_and_ordinary_rows_wait()
+    {
+        var store = new FakeStore { DueCount = 2 };
+        store.Queue.Add(Claim(1, email: "ordinary@example.com"));
+        store.Queue.Add(Claim(2, email: "old-copy@example.com") with { TransportOverrideProtected = "previous" });
+        var transport = new FakeTransport { IsConfigured = false };
+
+        await SweepAsync(store, transport);
+
+        var sent = Assert.Single(transport.Sent);
+        Assert.Equal("old-copy@example.com", sent.ToEmail);
+        Assert.Same(PreviousAccount, Assert.Single(transport.Accounts));
+        Assert.Equal([(2L, EmailTemplateCodes.OrderPlaced)], store.Sent);
+    }
+
+    /// <summary>
+    /// A carried account that cannot be decrypted is that message's failure — never quietly sent through the current
+    /// account, which would turn N2's two independent warnings into two through the same server.
+    /// </summary>
+    [Fact]
+    public async Task An_unreadable_carried_account_fails_the_message_rather_than_using_the_current_one()
+    {
+        var store = new FakeStore();
+        store.Queue.Add(Claim(3, email: "old-copy@example.com") with { TransportOverrideProtected = "tampered" });
+        var transport = new FakeTransport();
+
+        await SweepAsync(store, transport);
+
+        Assert.Empty(transport.Sent);
+        var failed = Assert.Single(store.Failed);
+        Assert.Equal(3, failed.Id);
+        Assert.Contains("could not be decrypted", failed.Failure, StringComparison.Ordinal);
+    }
+
+    /// <summary>The real protector round-trips an account and refuses another purpose's ciphertext.</summary>
+    [Fact]
+    public void The_override_protector_round_trips_an_account_and_is_isolated_from_settings_secrets()
+    {
+        var provider = new EphemeralDataProtectionProvider();
+        var protector = new SmtpOverrideProtector(provider);
+
+        var ciphertext = protector.Protect(PreviousAccount);
+
+        Assert.DoesNotContain("old-password", ciphertext, StringComparison.Ordinal);
+        Assert.True(protector.TryUnprotect(ciphertext, out var back));
+        Assert.True(PreviousAccount.SameAccountAs(back));
+
+        var settingsSecret = provider.CreateProtector("SpencerDenim.Settings.v1").Protect("{}");
+        Assert.False(protector.TryUnprotect(settingsSecret, out _));
+        Assert.False(protector.TryUnprotect("not ciphertext", out _));
+        Assert.False(protector.TryUnprotect(null, out _));
     }
 
     /// <summary>The current account every configured sweep in this class reads.</summary>
