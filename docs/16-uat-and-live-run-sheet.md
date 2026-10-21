@@ -43,6 +43,7 @@ Everything else in this sheet was first written for a fresh server. **This one i
 | **A shared VPS**: Ubuntu **26.04.1**, nginx **1.28.3**, Docker 29.1.3, 7.9 GB RAM (about 6 GB free), **4 GB swap**, 96 GB disk (21% used) | Staging fits (preflight budgets 2,912 MB for it). Sudo needs a **password**: every step marked *root* is typed by a person at the terminal, not by an assistant |
 | **An earlier stack of this project already serves `colombowardrobecompany.com` and `www.`**: compose project `spencer-denim-development` under `/opt/apps/development`, built from `aed9480` (branch `feature/W0-15-docker-packaging`, 29 Sep, the "Spencer Denim" build), web on `127.0.0.1:18080`, nginx site `spencer-denim-development`, certbot lineage `colombowardrobecompany.com` (apex + www) | **Do not touch it** while UAT is built. Going Live is a **cut-over of that nginx site and certificate**, not a new install: see §D0b. The apex DNS record already points at this VPS |
 | **A second project** (`purchase-order-*`) with its own containers; `shop.colombowardrobecompany.com` proxies to **its** front end on `0.0.0.0:8080` | Never edit, stop or "tidy" anything of its. The firewall check in B0 will show port 8080 |
+| **Ubuntu 26.04's default coreutils is uutils** (`rust-coreutils` 0.8.0; `install`, `chown`, `stat`… come from it, GNU coreutils 9.7 is installed beside it but not first on `PATH`) | `install -o`/`-g` refuses a numeric id with no passwd/group entry, so the scripts set owners with `chown` instead (`owned_dir` in `lib.sh`). Any other GNU-only behaviour shows up on the first real run: report it, do not work round it on the server |
 | **One SQL Server container** (`sqlserver-development`, `127.0.0.1:1433`, 3 GB cap, about 1 GB used) holds the databases of **both** projects | The staging stack starts its **own** SQL Server (docs/15 §10 #2). Nothing here may connect to, provision into or restart `sqlserver-development` |
 | `/opt/server/database/{staging,production}` exist as **empty skeletons** (`compose config data scripts`, 0 files) and `/opt/apps/{staging,production}` hold only the other project's `purchase-order-app` | `install.sh` is safe on the skeletons; preflight now WARNs if any of those directories ever holds files |
 | nginx: the stock `default` site is `default_server` on **80 only**; nothing owns 443 by default, so an unknown host on 443 is answered by the first 443 block (today `shop.`, the other project) | Skip the catch-all (B12-b) here. Installing a 443-only copy would turn unknown-host requests into refused handshakes, a change to the other project's behaviour |
@@ -867,10 +868,10 @@ Fill in as you go; one line per step actually performed. **A blank row means "no
 
 | # | Step | Env | Who | Date / time (UTC) | Commit / tag | Result (OK / FAIL / skipped) | Pasted back? | Notes / deviation from this sheet |
 |---|---|---|---|---|---|---|---|---|
-| 1 | B1 preflight | staging | | | | | | |
-| 2 | B2 decisions taken (A4) | staging | | | | | | |
-| 3 | B3 code on server, preflight 2 | staging | | | | | | |
-| 4 | B4 install.sh | staging | | | | | | |
+| 1 | B1 preflight | staging | Tharanga | 2026-10-21 15:32 | (no checkout yet) | OK | yes | 23 PASS, 2 WARN (partial `default_server`; `/var/www/certbot` missing), 0 FAIL |
+| 2 | B2 decisions taken (A4) | staging | Tharanga | 2026-10-21 | | OK | | #9 no SMTP on UAT; #14 catch-all skipped and #16 certificate password in `app.env` taken as recommended, **owner still to confirm both**; #15 code by `git bundle`, not a deploy key; #12 basic auth and #2 per-environment SQL Server not yet decided/needed |
+| 3 | B3 code on server, preflight 2 | staging | Tharanga | 2026-10-21 | `ad122591f88c` | OK | yes | Cloned from `~/sd.bundle` into `/opt/apps/src/spencer-denim-ecommerce`; tree clean; contains `8bd27a7`. `/var/www/certbot` created here (B12-a). Preflight 2: 26 PASS, 1 WARN (partial `default_server`, expected), 0 FAIL |
+| 4 | B4 install.sh | staging | Tharanga | 2026-10-21 15:39 | `ad122591f88c` | **FAIL**, then fixed | yes | `install: invalid group: '1654'` (uutils coreutils on Ubuntu 26.04). Nothing sensitive was written; B5 refused to run because the templates were not copied. Fixed by `owned_dir` in `lib.sh` (see Deviations); re-run from the fixed commit |
 | 5 | B5 env files, check-env | staging | | | | | | |
 | 6 | B7 Data Protection certificate; copy kept off the server | staging | | | | | | |
 | 7 | B8 db-up | staging | | | | | | |
@@ -894,7 +895,8 @@ Deviations from this sheet (anything done differently, with the reason; docs/15 
 
 | Step | What was done instead | Why |
 |---|---|---|
-| | | |
+| B3 | The code reached the server as a `git bundle` of `main` (Route 2), copied with `scp` to `deploy1`'s home and cloned by root; `/var/www/certbot` was created in the same step | No deploy key was set up; preflight 1 warned about the missing directory |
+| B4 | `install.sh` and `deploy.sh` no longer call `install -d -o <uid> -g <gid>`; they call `owned_dir <mode> <owner:group> <dir>…` (`lib.sh`), which runs `install -d -m` and then `chown` | Ubuntu 26.04's default coreutils is **uutils** (rust-coreutils 0.8.0). Its `install` rejects a numeric `-o`/`-g` that has no passwd/group entry (`install: invalid group: '1654'`); the containers' users 1654 and 10001 have none on the host. GNU `install` accepted them, so neither the scripts' author nor the first tester run saw it. `chown`/`chgrp` accept numeric ids under uutils (probed on the server as `deploy1`: they got as far as "Operation not permitted"). New `tests/test-install-owners.sh` fails on the old code with the server's own message |
 
 ---
 

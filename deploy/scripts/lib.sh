@@ -31,6 +31,17 @@ require_env() {
   esac
 }
 
+# owned_dir <mode> <owner:group> <dir>...: create the directories with the mode, then give them the owner.
+# Not `install -d -o <uid> -g <gid>`: Ubuntu 26.04's default coreutils (uutils) refuses a numeric id that has no entry in
+# /etc/passwd or /etc/group ("install: invalid group: '1654'"), and the containers' users (1654, 10001) have none on the
+# host. GNU install took them. chown takes a numeric id in both, so the owner is set in a second step.
+owned_dir() {
+  local mode="$1" owner="$2"
+  shift 2
+  install -d -m "$mode" "$@"
+  chown "$owner" "$@"
+}
+
 app_root() { printf '%s/%s/spencer-denim-app' "$SD_APPS_BASE" "$1"; }
 db_root()  { printf '%s/%s' "$SD_DB_BASE" "$1"; }
 
