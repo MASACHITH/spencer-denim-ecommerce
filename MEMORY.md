@@ -6,6 +6,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Current state (keep this section up to date)
 
+- **2026-10-21 (later):** ADM-22 Settings verified end to end and the **email account made editable in admin** (Super Admin, `Settings.Security`; N2 dual send through old and new account; DB wins over `Email__Smtp__*`). Branch `feature/22-settings-smtp-verify`, not pushed, awaiting tester. Fixed: a bank-details change raised no sensitive-settings alert. **Gap for the owner: delivery fees have no admin screen**, so Settings is not marked Done on the tracker. Journal `docs/journal/2026-10-21-settings-smtp.md`.
 - **2026-10-21:** four more taken back from #187 and merged: **#189 reviews + moderation** (#216), **#191 campaign product targets + Sale banner** (#220), **#192 homepage/content editing** (#214), **#215 mega-menu promo cards** (#225). Follow-ups: #223 (media delete edge cases + lock order for product media/categories/department hero), #226 (dependency audit gate red on main — Angular dev-tooling advisories).
 - **2026-10-20:** the owner took four items back from #187 and Sachith's side built them: **#186 demo-style admin charts** (plus a Customers report chart), **#190 inventory screen + `InventoryMovements` ledger**, **#193 settings remainder**, and the sale-campaign test time-bomb. All are merged (#208–#212); the rest of #187 is still Tharanga's.
 - **Phase:** Development handed over to **Tharanga** on **2026-10-16** (owner's instruction). **All remaining work and every open issue (57) is his**, tracked in the pinned handover issue **#187**: remaining features, security fixes before Live, then **deploy UAT (`staging`) and Live (`production`), map the domain, run a full UAT round, and document it**. The original 15 Oct deadline passed with the core shop complete: browse, search, bag, wishlist, checkout, bank transfer, emails, customer accounts with order history and tracking, admin orders, promo codes and sale campaigns, customers, newsletter, dashboard, reports and traffic.
@@ -43,6 +44,24 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 ---
 
 ## Session log
+
+### 2026-10-21 — ADM-22: settings verified end to end, the email account editable in admin
+
+Branch `feature/22-settings-smtp-verify` (from `6cece38`), not pushed, developer side only (tester next). Owner: admin
+must be able to add and change the bank account, the email account and couriers at any time.
+
+- **Verified** bank (save/change/clear → order page, instructions email; withheld when empty; audited + alert), couriers
+  (add/edit/switch off/reorder, placeholder + https, link on order page, shipped email, account history), contact/social,
+  invoice, logo. New tests where a claim had none. **Defect:** bank changes raised no `SensitiveSettingsChanged` banner.
+- **Email account:** the seven `Email.Smtp.*` keys seeded empty and removed from `DeferredSettingKeys`; transport takes the
+  account per send; `SendEmails` reads it each sweep; complete valid DB account wins, else `Email__Smtp__*`, never mixed;
+  password write-only, encrypted, `[secret changed]`; N2 dual send via `TransportOverrideProtected` (sent even when no
+  current account exists); "Send test email" with safe messages. No migration.
+- **Open for the owner:** delivery fees have no admin screen (Settings left not Done); no SSL/465; bank/PayPal changes
+  still send no email (banner only).
+
+**Lessons:** the Write tool turns `\u2028` escapes into the literal character, which breaks a C# char literal — scan
+for U+2028/2029 after writing. Bash heredocs failed on some long Python edits; scripts in the scratchpad were reliable.
 
 ### 2026-10-20 to 2026-10-21 — reviews, campaigns, homepage editing, mega-menu cards
 

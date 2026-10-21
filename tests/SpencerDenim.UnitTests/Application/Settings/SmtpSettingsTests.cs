@@ -165,6 +165,8 @@ public sealed class SmtpSettingsTests
     [Theory]
     [InlineData("shop@example.lk", true)]
     [InlineData("Shop <shop@example.lk>", false)]
+    [InlineData("Shop<shop@example.lk>", false)]
+    [InlineData("\"Shop\"<shop@example.lk>", false)]
     [InlineData("shop", false)]
     [InlineData("shop@example.lk\r\nBcc: x@y.z", false)]
     [InlineData("a b@example.lk", false)]
@@ -497,6 +499,7 @@ public sealed class SmtpSettingsTests
         { new SmtpException("secret-detail", new SocketException(11001)), "Could not connect" },
         { new SmtpException("secret-detail", new AuthenticationException("secret-detail")), "secure connection" },
         { new TimeoutException("secret-detail"), "did not answer" },
+        { new SmtpException(SmtpStatusCode.ServiceNotAvailable, "421 secret-detail"), "refused the message (code 421)" },
         { new InvalidOperationException("secret-detail"), "could not be sent" },
     };
 

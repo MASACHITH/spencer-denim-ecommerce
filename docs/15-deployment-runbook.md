@@ -137,7 +137,7 @@ a `SD_SEED_ADMIN_PASSWORD` shorter than 10 characters, because the API would cre
 |---|---|---|
 | `config/app.env` | `SD_PUBLIC_HOSTS` | Public host name(s), comma-separated; the SSR engine renders only for these (`NG_ALLOWED_HOSTS`) |
 | | `SD_PUBLIC_ORIGIN` | `https://<host>`, scheme and host only. robots.txt, sitemap.xml, og:url (#86) and every link in an order email. Never derived from the request |
-| | `SD_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM_ADDRESS/FROM_NAME` | Optional until the client's SMTP account exists; unset, emails queue unsent and the admin banner says so |
+| | `SD_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM_ADDRESS/FROM_NAME` | Optional → `Email__Smtp__*`. **A fallback only** since 2026-10-21 — a Super Admin can enter the mail account in the admin (see "Email account" below), and a complete saved account wins. With neither, emails queue unsent and the log says so |
 | | `SD_TRAFFIC_RECORDING_ENABLED` | Optional, default `true` → `Traffic__RecordingEnabled`. `false` stops page views being recorded (the beacon still answers 204). Visits not recorded cannot be recovered later, so leave it on |
 | | `SD_TRAFFIC_INTERNAL_HOSTS` | Optional → `Traffic__InternalHosts`. The shop's own host names, comma-separated (e.g. `colombowardrobecompany.com,www.colombowardrobecompany.com`), so a click from one to the other is not counted as a traffic source. The host a page view was sent to is always internal; this is only for the second name |
 | | `SD_TRAFFIC_RAW_RETENTION_DAYS` / `SD_TRAFFIC_BOT_RETENTION_DAYS` | Optional, default `90` / `7` → `Traffic__RawRetentionDays` / `Traffic__BotRetentionDays`. **A fallback only** — see "Traffic retention" below. Start-up refuses anything outside 4–3,650 days, or bots longer than people |
@@ -176,6 +176,31 @@ The daily totals the Traffic page shows are never purged, whatever the periods s
 day the nightly rollup has not counted**: such a day keeps its raw page views and the purge logs a warning naming
 it (event 7134); it goes on the first night after the rollup has built it. Seeing 7134 more than once means the
 rollup is failing — check its log (events 7121–7123) before anything else.
+
+**Email account: the Settings screen wins, configuration is the fallback (ADM-22, 2026-10-21).** A Super Admin
+enters the mail account under **Settings → Email account** (`Settings.Security`: no other role sees or changes it):
+server, port, user name, password, send-from address and name, and STARTTLS on/off. The rows are `ops.Settings`
+`Email.Smtp.*`, seeded **empty** on a new and an existing database (nothing is invented; an unsaved STARTTLS switch
+counts as on). The `SendEmails` job reads the effective account **every sweep** (30 s), so a change needs no
+restart:
+- the saved account is used when it is complete and valid — a server name, a port 1–65535, a send-from address,
+  and never a user name with encryption off;
+- otherwise `Email__Smtp__*` from `app.env` is used, exactly as before this screen existed — so an existing
+  deployment keeps sending until somebody saves an account, and **clearing the server name on the screen hands
+  sending back to the environment**;
+- never a mixture of the two.
+
+The log says which source is in use when it changes (event 3412) and warns when a saved account was passed over and
+why, never its values (event 3413). The password is stored with Data Protection (purpose `SpencerDenim.Settings.v1`),
+never returned to the browser, and audited as `[secret changed]`; **keep the key ring volume and its backup** (§10
+row 8), or a restored database cannot decrypt it and the shop falls back to `Email__Smtp__*`. **Implicit SSL on port
+465 is not supported** (the transport speaks STARTTLS only); use the provider's port 587.
+
+Every change raises the `SensitiveSettingsChanged` banner and emails **every active Super Admin twice**: once through
+the new account and once through the account in use before the change (doc 08 §3.8 N2; the previous account travels
+encrypted on the outbox row and is wiped when the message is finished). If only one copy arrives, check the account.
+**Send test email** on the same panel sends one message to the signed-in Super Admin through the details as typed,
+saved or not; a failure is shown as a plain sentence and the server's own reply is not recorded.
 
 `Traffic__JobsEnabled` (default `true`) runs the nightly rollup and purge on this host; set it `false` only on a
 second API host, if there ever is one. `Traffic__QueueCapacity`, `Traffic__BatchSize` and `Traffic__FlushSeconds`
