@@ -228,7 +228,9 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                     @if (placed.delivery.pickupLocationName) {
                       <span class="order__block">{{ placed.delivery.pickupLocationName }}</span>
                     }
-                    <span class="order__block">{{ placed.delivery.districtName }}</span>
+                    @if (placed.delivery.districtName) {
+                      <span class="order__block">{{ placed.delivery.districtName }}</span>
+                    }
                   } @else {
                     @if (placed.delivery.recipientName) {
                       <span class="order__block">{{ placed.delivery.recipientName }}</span>
@@ -239,12 +241,23 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                     @if (placed.delivery.line2) {
                       <span class="order__block">{{ placed.delivery.line2 }}</span>
                     }
-                    <span class="order__block">
-                      {{ placed.delivery.city }}, {{ placed.delivery.districtName }}
-                      @if (placed.delivery.postalCode) {
-                        {{ placed.delivery.postalCode }}
-                      }
-                    </span>
+                    @if (isOverseas(placed)) {
+                      <!-- Owner decision 2026-10-21: an overseas address reads city, region and postcode,
+                           then the country, the order a parcel label is read in. -->
+                      <span class="order__block" data-testid="order-overseas-address">
+                        {{ overseasCityLine(placed) }}
+                      </span>
+                      <span class="order__block" data-testid="order-country">
+                        {{ placed.delivery.countryName ?? placed.delivery.countryCode }}
+                      </span>
+                    } @else {
+                      <span class="order__block">
+                        {{ placed.delivery.city }}, {{ placed.delivery.districtName }}
+                        @if (placed.delivery.postalCode) {
+                          {{ placed.delivery.postalCode }}
+                        }
+                      </span>
+                    }
                     @if (placed.delivery.landmark) {
                       <span class="order__block order__muted">{{ placed.delivery.landmark }}</span>
                     }
@@ -1583,6 +1596,19 @@ export class OrderPage {
 
   protected money(amount: number): string {
     return formatLkr(amount);
+  }
+
+  /** Whether the order is going abroad (owner decision 2026-10-21). An older payload reads as Sri Lanka. */
+  protected isOverseas(order: OrderConfirmationDto): boolean {
+    return (order.delivery.countryCode ?? 'LK') !== 'LK';
+  }
+
+  /** "Manchester, Greater Manchester M1 1AA": city, region and postcode, skipping what is missing. */
+  protected overseasCityLine(order: OrderConfirmationDto): string {
+    const { city, region, postalCode } = order.delivery;
+    const place = [city, region].filter((part): part is string => !!part && part.trim() !== '').join(', ');
+
+    return postalCode ? `${place} ${postalCode}`.trim() : place;
   }
 
   protected isPickup(order: OrderConfirmationDto): boolean {

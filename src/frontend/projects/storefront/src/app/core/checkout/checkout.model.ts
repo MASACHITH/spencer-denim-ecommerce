@@ -14,7 +14,8 @@ export type CheckoutBlocker =
   | 'EmptyBag'
   | 'LineNotPurchasable'
   | 'NoDeliveryMethod'
-  | 'NoPaymentMethod';
+  | 'NoPaymentMethod'
+  | 'CountryNotServed';
 
 /**
  * Why a promo code was not applied (ADM-13).
@@ -163,6 +164,14 @@ export interface CheckoutSessionDto {
   /** The threshold, set only alongside `MinimumSpend`, so the page can print the figure to reach. */
   readonly promoMinimumSpend: number | null;
   readonly blockers: readonly CheckoutBlocker[];
+  /**
+   * The country the quote is for (owner decision 2026-10-21): `LK` unless the request named another, and
+   * null when it named one that does not exist. Optional so a payload from before overseas delivery still
+   * reads as Sri Lanka.
+   */
+  readonly selectedCountryCode?: string | null;
+  /** True when a free-delivery code is applied to an overseas order, where it does not apply. */
+  readonly promoFreeDeliveryIgnored?: boolean;
 }
 
 /** One line of a placed order (CHK-04), read back from the order's own snapshot columns. */
@@ -192,11 +201,17 @@ export interface OrderDeliveryDto {
   readonly line1: string | null;
   readonly line2: string | null;
   readonly city: string | null;
-  readonly districtName: string;
+  /** Null for an overseas order (owner decision 2026-10-21). */
+  readonly districtName: string | null;
   readonly postalCode: string | null;
   readonly landmark: string | null;
   readonly estimatedDaysMin: number;
   readonly estimatedDaysMax: number;
+  /** An overseas address's state or region; null for Sri Lanka. */
+  readonly region?: string | null;
+  /** ISO 3166-1 alpha-2, `LK` for Sri Lanka. */
+  readonly countryCode?: string;
+  readonly countryName?: string;
 }
 
 /** A placed order (CHK-04). */
@@ -394,6 +409,8 @@ export interface CheckoutAddressInput {
   readonly city: string | null;
   readonly postalCode: string | null;
   readonly landmark: string | null;
+  /** State, province or region of an overseas address; null for Sri Lanka. */
+  readonly region: string | null;
 }
 
 /** Place order's body. */
@@ -420,6 +437,8 @@ export interface PlaceOrderRequest {
    * shopper agreed to included it.
    */
   readonly promoCode: string | null;
+  /** ISO 3166-1 alpha-2 of the destination; `LK` keeps the district flow. */
+  readonly countryCode: string;
 }
 
 /** A checkout page with nothing in it, so the page renders a form rather than nothing at all. */
@@ -450,6 +469,8 @@ export const EMPTY_CHECKOUT: CheckoutSessionDto = {
   promoRefusal: null,
   promoMinimumSpend: null,
   blockers: ['EmptyBag'],
+  selectedCountryCode: 'LK',
+  promoFreeDeliveryIgnored: false,
 };
 
 /**
@@ -459,8 +480,15 @@ export const EMPTY_CHECKOUT: CheckoutSessionDto = {
  * test can assert on it, and rather than on the server because it is wording, not a rule — the same
  * split `cartLineNotice` makes.
  */
-export function checkoutBlockerMessage(blocker: CheckoutBlocker): string {
+export function checkoutBlockerMessage(
+  blocker: CheckoutBlocker,
+  countryName: string | null = null,
+): string {
   switch (blocker) {
+    case 'CountryNotServed':
+      return countryName
+        ? `We cannot deliver to ${countryName} at the moment. Choose another country.`
+        : 'We cannot deliver to that country at the moment. Choose another country.';
     case 'EmptyBag':
       return 'Your bag is empty, so there is nothing to check out.';
     case 'LineNotPurchasable':
@@ -468,7 +496,7 @@ export function checkoutBlockerMessage(blocker: CheckoutBlocker): string {
     case 'NoDeliveryMethod':
       return 'We cannot deliver to that district at the moment. Choose another district.';
     case 'NoPaymentMethod':
-      return 'No payment method is available at the moment. Please try again shortly.';
+      return 'No payment method is available at the moment, so orders cannot be placed. Please try again later.';
     default:
       return 'Checkout is not available at the moment.';
   }
@@ -637,4 +665,64 @@ export function formatColomboDateTime(utc: string): string {
     `${local.getUTCDate()} ${MONTHS[local.getUTCMonth()]} ${local.getUTCFullYear()}` +
     ` at ${hours12}.${minutes} ${suffix}`
   );
+}
+
+/**
+ * The overseas address checks, mirroring the API's `DestinationRules` exactly (owner decision 2026-10-21): a
+ * state or region where the country always uses one (at most 80 characters), a postcode where the country
+ * always uses one (letters, digits, spaces and hyphens, starting and ending with a letter or digit, at most
+ * 10), and a delivery phone written with its country code (`+` or `00`). Never stricter than the server.
+ */
+export const MAX_REGION_LENGTH = 80;
+export const MAX_POSTAL_CODE_LENGTH = 10;
+
+export function looksLikePostalCode(candidate: string): boolean {
+  return /^[A-Za-z0-9](?:[A-Za-z0-9 -]*[A-Za-z0-9])?$/.test(candidate);
+}
+
+export function hasCountryCode(phone: string): boolean {
+  const trimmed = phone.trimStart();
+  return trimmed.startsWith('+') || trimmed.startsWith('00');
+}
+
+export interface OverseasAddressRules {
+  readonly name: string;
+  readonly regionRequired: boolean;
+  readonly postalCodeRequired: boolean;
+}
+
+/** Field errors for the overseas-only parts, keyed by the bare field name (`region`, `postalCode`, `phone`). */
+export function overseasAddressErrors(
+  country: OverseasAddressRules,
+  region: string,
+  postalCode: string,
+  phone: string,
+): Map<string, string> {
+  const errors = new Map<string, string>();
+  const trimmedRegion = region.trim();
+  const trimmedPostal = postalCode.trim();
+
+  if (!trimmedRegion) {
+    if (country.regionRequired) {
+      errors.set('region', 'Enter the state, province or region.');
+    }
+  } else if (trimmedRegion.length > MAX_REGION_LENGTH) {
+    errors.set('region', `This can be at most ${MAX_REGION_LENGTH} characters.`);
+  }
+
+  if (!trimmedPostal) {
+    if (country.postalCodeRequired) {
+      errors.set('postalCode', `Enter the postcode for ${country.name}.`);
+    }
+  } else if (trimmedPostal.length > MAX_POSTAL_CODE_LENGTH) {
+    errors.set('postalCode', `This can be at most ${MAX_POSTAL_CODE_LENGTH} characters.`);
+  } else if (!looksLikePostalCode(trimmedPostal)) {
+    errors.set('postalCode', 'A postcode can use only letters, numbers, spaces and hyphens.');
+  }
+
+  if (phone.trim() && !hasCountryCode(phone)) {
+    errors.set('phone', 'Include the country code, for example +44 20 7946 0958.');
+  }
+
+  return errors;
 }

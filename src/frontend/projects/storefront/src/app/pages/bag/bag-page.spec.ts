@@ -1,3 +1,4 @@
+import { provideTestDeliveryCountries } from '../../core/delivery/delivery-country.testing';
 import { provideHttpClient } from '@angular/common/http';
 import {
   HttpTestingController,
@@ -9,6 +10,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 
 import { BagPage } from './bag-page';
+import { DeliveryCountryService } from '../../core/delivery/delivery-country.service';
 import { CartApi } from '../../core/cart/cart-api';
 import { CartDto, CartLineDto, CartTotalsDto } from '../../core/cart/cart.model';
 import { PriceDto } from '../../core/catalog/catalog.model';
@@ -88,7 +90,7 @@ describe('BagPage (CART-01)', () => {
       providers: [
         provideRouter([]),
         provideHttpClient(),
-        provideHttpClientTesting(),
+        provideHttpClientTesting(), provideTestDeliveryCountries(),
         { provide: RESPONSE_INIT, useValue: response },
       ],
     });
@@ -655,6 +657,35 @@ describe('BagPage (CART-01)', () => {
 
       expect(checkoutLink()).toBeNull();
       expect(blockedButton()).toBeNull();
+    });
+  });
+
+  describe('the delivery destination (owner decision 2026-10-21)', () => {
+    const CART: CartDto = { lines: [line()], totals: totals() };
+
+    it('keeps the Sri Lankan sentence and nothing else for Sri Lanka', async () => {
+      await open(CART);
+
+      expect(text()).toContain('Delivery is worked out at checkout');
+      expect(element.querySelector('[data-testid="bag-overseas-estimate"]')).toBeNull();
+    });
+
+    it('prices delivery to the overseas country chosen in the header', async () => {
+      await open(CART);
+      TestBed.inject(DeliveryCountryService).select('GB');
+      await settle();
+
+      expect(
+        element.querySelector('[data-testid="bag-overseas-estimate"]')?.textContent?.replace(/\s+/g, ' '),
+      ).toContain('Delivery to United Kingdom: Rs. 9,500, 7–14 working days.');
+    });
+
+    it('says so for a country the shop does not deliver to', async () => {
+      await open(CART);
+      TestBed.inject(DeliveryCountryService).select('AQ');
+      await settle();
+
+      expect(text()).toContain('We cannot deliver to Antarctica at the moment.');
     });
   });
 });

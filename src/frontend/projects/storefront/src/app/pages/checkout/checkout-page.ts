@@ -35,8 +35,14 @@ import {
   isPricedLine,
   looksLikeEmail,
   looksLikePhone,
+  overseasAddressErrors,
   promoRefusalMessage,
 } from '../../core/checkout/checkout.model';
+import {
+  DeliveryCountry,
+  DeliveryCountryService,
+  SRI_LANKA_CODE,
+} from '../../core/delivery/delivery-country.service';
 import { DeliveryDistrictService } from '../../core/delivery/delivery-district.service';
 import { RobotsMeta } from '../../core/platform/robots-meta';
 import { ServerHandover } from '../../core/platform/server-handover';
@@ -55,6 +61,8 @@ interface CheckoutForm {
   line1: string;
   line2: string;
   city: string;
+  /** State, province or region: an overseas address only (owner decision 2026-10-21). */
+  region: string;
   postalCode: string;
   landmark: string;
   customerNote: string;
@@ -70,6 +78,7 @@ const EMPTY_FORM: CheckoutForm = {
   line1: '',
   line2: '',
   city: '',
+  region: '',
   postalCode: '',
   landmark: '',
   customerNote: '',
@@ -98,6 +107,7 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
   { field: 'lastName', elementId: 'co-lastName' },
   { field: 'email', elementId: 'co-email' },
   { field: 'phone', elementId: 'co-phone' },
+  { field: 'countryCode', elementId: 'co-country' },
   { field: 'districtId', elementId: 'co-district' },
   { field: 'deliveryMethodId', elementId: 'co-delivery' },
   { field: 'pickupLocationId', elementId: 'co-pickup' },
@@ -107,6 +117,7 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
   { field: 'address.line1', elementId: 'co-line1' },
   { field: 'address.line2', elementId: 'co-line2' },
   { field: 'address.city', elementId: 'co-city' },
+  { field: 'address.region', elementId: 'co-region' },
   { field: 'address.postalCode', elementId: 'co-postcode' },
   { field: 'address.landmark', elementId: 'co-landmark' },
   { field: 'paymentMethodCode', elementId: 'co-payment' },
@@ -394,6 +405,33 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
             <fieldset class="checkout__group">
               <legend class="checkout__legend">Where it is going</legend>
 
+              <!-- Owner decision 2026-10-21: the country first, and the rest of the form follows it. Sri
+                   Lanka keeps the district and the domestic options exactly as before; any other country
+                   has no district and one option, International delivery. -->
+              <div class="checkout__field">
+                <label class="checkout__label" for="co-country">Country</label>
+                <select
+                  class="checkout__input"
+                  id="co-country"
+                  name="countryCode"
+                  required
+                  data-testid="checkout-country"
+                  [attr.aria-invalid]="messageFor('countryCode') ? 'true' : null"
+                  [attr.aria-describedby]="messageFor('countryCode') ? 'co-country-error' : null"
+                  (change)="chooseCountry($event)"
+                >
+                  @for (country of countryOptions(); track country.code) {
+                    <option [value]="country.code" [selected]="country.code === countryCode()">
+                      {{ country.name }}
+                    </option>
+                  }
+                </select>
+                @if (messageFor('countryCode'); as message) {
+                  <p class="checkout__fielderror" id="co-country-error">{{ message }}</p>
+                }
+              </div>
+
+              @if (!isOverseas()) {
               <div class="checkout__field">
                 <label class="checkout__label" for="co-district">District</label>
                 <select
@@ -421,8 +459,9 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
                   <p class="checkout__fielderror" id="co-district-error">{{ message }}</p>
                 }
               </div>
+              }
 
-              @if (districtId() !== null) {
+              @if (districtId() !== null || isOverseas()) {
                 <!-- The group carries the error, because a radio group's message belongs to the group
                      and not to whichever option happens to be first. -->
                 <fieldset
@@ -433,7 +472,11 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
 
                   @if (deliveryOptions().length === 0) {
                     <p class="checkout__muted" role="status">
-                      No delivery option is available for that district.
+                      @if (isOverseas()) {
+                        No delivery option is available for that country.
+                      } @else {
+                        No delivery option is available for that district.
+                      }
                     </p>
                   }
 
@@ -518,6 +561,9 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
                     <div class="checkout__field">
                       <label class="checkout__label" for="co-address-phone">
                         Phone at this address
+                        @if (isOverseas()) {
+                          <span class="checkout__optional">(with country code, e.g. +44)</span>
+                        }
                       </label>
                       <input
                         class="checkout__input"
@@ -596,24 +642,63 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
                       }
                     </div>
 
+                    @if (isOverseas()) {
+                      <div class="checkout__field">
+                        <label class="checkout__label" for="co-region">
+                          State, province or region
+                          @if (!country()?.regionRequired) {
+                            <span class="checkout__optional">(optional)</span>
+                          }
+                        </label>
+                        <input
+                          class="checkout__input"
+                          id="co-region"
+                          name="address.region"
+                          type="text"
+                          autocomplete="shipping address-level1"
+                          maxlength="80"
+                          [attr.required]="country()?.regionRequired ? '' : null"
+                          [value]="form().region"
+                          [attr.aria-invalid]="messageFor('address.region') ? 'true' : null"
+                          [attr.aria-describedby]="messageFor('address.region') ? 'co-region-error' : null"
+                          (input)="set('region', $event)"
+                        />
+                        @if (messageFor('address.region'); as message) {
+                          <p class="checkout__fielderror" id="co-region-error">{{ message }}</p>
+                        }
+                      </div>
+                    }
+
                     <div class="checkout__field">
                       <label class="checkout__label" for="co-postcode">
-                        Postal code <span class="checkout__optional">(optional)</span>
+                        Postal code
+                        @if (!isOverseas() || !country()?.postalCodeRequired) {
+                          <span class="checkout__optional">(optional)</span>
+                        }
                       </label>
                       <input
                         class="checkout__input"
                         id="co-postcode"
                         name="address.postalCode"
                         type="text"
-                        inputmode="numeric"
+                        [attr.inputmode]="isOverseas() ? 'text' : 'numeric'"
                         autocomplete="shipping postal-code"
                         maxlength="10"
+                        [attr.required]="isOverseas() && country()?.postalCodeRequired ? '' : null"
                         [value]="form().postalCode"
+                        [attr.aria-invalid]="messageFor('address.postalCode') ? 'true' : null"
+                        [attr.aria-describedby]="
+                          messageFor('address.postalCode') ? 'co-postcode-error' : null
+                        "
                         (input)="set('postalCode', $event)"
                       />
+                      @if (messageFor('address.postalCode'); as message) {
+                        <p class="checkout__fielderror" id="co-postcode-error">{{ message }}</p>
+                      }
                     </div>
                   </div>
 
+                  @if (!isOverseas()) {
                   <div class="checkout__field">
                     <label class="checkout__label" for="co-landmark">
                       Landmark <span class="checkout__optional">(optional)</span>
@@ -628,6 +713,7 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
                       (input)="set('landmark', $event)"
                     />
                   </div>
+                  }
                 } @else if (deliveryMethodId() !== null) {
                   <!-- Store pickup (CHK-02). The list is empty until the client gives us a shop address
                        (doc 08 §9 seeds zero pickup locations, D8), and the method ships disabled for
@@ -830,6 +916,11 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
               >
                 {{ promoSaid() }}
               </p>
+              @if (session().promoFreeDeliveryIgnored) {
+                <p class="checkout__muted" data-testid="promo-free-delivery-ignored">
+                  Free-delivery codes cover Sri Lankan delivery only.
+                </p>
+              }
             </div>
 
             <!-- **The ladder has to add up, and this is the arithmetic:**
@@ -1247,6 +1338,15 @@ export class CheckoutPage {
    */
   private readonly headerDistrict = inject(DeliveryDistrictService);
 
+  /** The header's country (owner decision 2026-10-21), which this form follows and updates. */
+  private readonly destination = inject(DeliveryCountryService);
+
+  /** The destination country; Sri Lanka unless the shopper or the header chose another. */
+  private readonly chosenCountryCode = signal<string>(SRI_LANKA_CODE);
+
+  /** Whether an unknown country has already been dropped back to Sri Lanka once. */
+  private countryRecovered = false;
+
   private readonly current = signal<CheckoutSessionDto>(EMPTY_CHECKOUT);
   private readonly loading = signal(false);
   private readonly placing = signal(false);
@@ -1353,6 +1453,12 @@ export class CheckoutPage {
       this.chosenDistrictId.set(stated.id);
     }
 
+    // The header's country, likewise before the first read (owner decision 2026-10-21).
+    const country = this.destination.chosenCode();
+    if (country) {
+      this.chosenCountryCode.set(country);
+    }
+
     // From the constructor, so the request is in flight before the first change detection and the server
     // renders the bag and the form rather than a spinner. The browser reads again even when it was handed
     // a session: the handover is a snapshot of the stock and prices at the moment the server rendered,
@@ -1366,6 +1472,25 @@ export class CheckoutPage {
   protected readonly error = this.failure.asReadonly();
   protected readonly form = this.values.asReadonly();
   protected readonly districtId = this.chosenDistrictId.asReadonly();
+  protected readonly countryCode = this.chosenCountryCode.asReadonly();
+
+  /** Whether the order is going abroad: no district, one International delivery option. */
+  protected readonly isOverseas = computed(() => this.chosenCountryCode() !== SRI_LANKA_CODE);
+
+  /** The chosen country's facts (postcode and region rules, name), once the list has them. */
+  protected readonly country = computed<DeliveryCountry | null>(
+    () => this.destination.find(this.chosenCountryCode()) ?? null,
+  );
+
+  /** The country select's options: the list, with the chosen code kept even while the list is loading. */
+  protected readonly countryOptions = computed<readonly DeliveryCountry[]>(() => {
+    const countries = this.destination.countries();
+    const code = this.chosenCountryCode();
+
+    return countries.some((candidate) => candidate.code === code)
+      ? countries
+      : [...countries, { ...countries[0], code, name: code, isDomestic: false }];
+  });
   protected readonly deliveryMethodId = this.chosenDeliveryMethodId.asReadonly();
   protected readonly pickupLocationId = this.chosenPickupLocationId.asReadonly();
   protected readonly paymentMethodCode = this.chosenPaymentMethodCode.asReadonly();
@@ -1428,7 +1553,7 @@ export class CheckoutPage {
     }
 
     if (option.requiresAddress) {
-      if (this.chosenDistrictId() === null) {
+      if (!this.isOverseas() && this.chosenDistrictId() === null) {
         return false;
       }
     } else if (this.chosenPickupLocationId() === null) {
@@ -1491,7 +1616,7 @@ export class CheckoutPage {
 
     const option = this.selectedOption();
 
-    if (this.chosenDistrictId() === null) {
+    if (!this.isOverseas() && this.chosenDistrictId() === null) {
       return 'Choose the district your order is going to.';
     }
 
@@ -1500,7 +1625,9 @@ export class CheckoutPage {
     }
 
     if (!option.isAvailable) {
-      return 'That delivery option is not available for your district. Choose another.';
+      return this.isOverseas()
+        ? 'That delivery option is not available for your country. Choose another.'
+        : 'That delivery option is not available for your district. Choose another.';
     }
 
     if (!option.requiresAddress && this.chosenPickupLocationId() === null) {
@@ -1528,7 +1655,7 @@ export class CheckoutPage {
    * a zone and a rate, so there are two things it can be waiting for and it now says which.
    */
   protected readonly pendingFeeReason = computed(() => {
-    if (this.districtId() === null) {
+    if (!this.isOverseas() && this.districtId() === null) {
       return 'Choose a district';
     }
 
@@ -1576,7 +1703,7 @@ export class CheckoutPage {
   }
 
   protected blockerMessage(blocker: CheckoutSessionDto['blockers'][number]): string {
-    return checkoutBlockerMessage(blocker);
+    return checkoutBlockerMessage(blocker, this.country()?.name ?? null);
   }
 
   /** What a summary line says about itself, or null. */
@@ -1640,6 +1767,32 @@ export class CheckoutPage {
     this.chosenDeliveryMethodId.set(null);
     this.chosenPickupLocationId.set(null);
     this.clearError('districtId');
+    this.read();
+  }
+
+  /**
+   * The country changed (owner decision 2026-10-21). The header follows, as it does for the district, and
+   * the delivery choice is dropped: Sri Lankan options and International delivery never overlap.
+   */
+  protected chooseCountry(event: Event): void {
+    const code = (event.target as HTMLSelectElement).value.trim().toUpperCase();
+
+    if (!/^[A-Z]{2}$/.test(code) || code === this.chosenCountryCode()) {
+      return;
+    }
+
+    this.chosenCountryCode.set(code);
+    this.destination.select(code);
+    this.countryRecovered = false;
+
+    this.chosenDeliveryMethodId.set(null);
+    this.chosenPickupLocationId.set(null);
+    this.clearError('countryCode');
+    this.clearError('districtId');
+    this.clearError('address.region');
+    this.clearError('address.postalCode');
+    this.clearError('address.phone');
+    this.localErrors.set(new Map());
     this.read();
   }
 
@@ -1770,8 +1923,9 @@ export class CheckoutPage {
         deliveryMethodId: this.chosenDeliveryMethodId(),
 
         // Store pickup takes its district from the location (doc 08 §3.5 R7), so sending one would be
-        // sending a field the shopper never chose.
-        districtId: option?.requiresAddress ? this.chosenDistrictId() : null,
+        // sending a field the shopper never chose. An overseas address has no district at all.
+        districtId: option?.requiresAddress && !this.isOverseas() ? this.chosenDistrictId() : null,
+        countryCode: this.chosenCountryCode(),
         pickupLocationId: option?.requiresAddress ? null : this.chosenPickupLocationId(),
         address: option?.requiresAddress
           ? {
@@ -1781,7 +1935,8 @@ export class CheckoutPage {
               line2: trimmed(form.line2),
               city: trimmed(form.city),
               postalCode: trimmed(form.postalCode),
-              landmark: trimmed(form.landmark),
+              landmark: this.isOverseas() ? null : trimmed(form.landmark),
+              region: this.isOverseas() ? trimmed(form.region) : null,
             }
           : null,
         paymentMethodCode: this.chosenPaymentMethodCode(),
@@ -1943,7 +2098,7 @@ export class CheckoutPage {
       // blocking the order was never named. So with no district the district is the error, and the
       // address fields are reported as well rather than held back for a second press, because
       // `needsAddress()` is true in this state and they are on screen.
-      if (this.chosenDistrictId() === null) {
+      if (!this.isOverseas() && this.chosenDistrictId() === null) {
         // Nothing below the District select is on screen yet — the whole "Where it is going" block is
         // gated on a district — so the district is the only honest error to report here.
         errors.set('districtId', 'Choose the district your order is going to.');
@@ -1966,7 +2121,7 @@ export class CheckoutPage {
       return errors;
     }
 
-    if (this.chosenDistrictId() === null) {
+    if (!this.isOverseas() && this.chosenDistrictId() === null) {
       errors.set('districtId', 'Choose the district your order is going to.');
     }
 
@@ -1996,6 +2151,23 @@ export class CheckoutPage {
     if (blank(form.city)) {
       errors.set('address.city', 'Enter the town or city.');
     }
+
+    // Overseas (owner decision 2026-10-21): the API's DestinationRules, no stricter. Known only once the
+    // country list has the country; until then the server is the check.
+    const country = this.country();
+    if (this.isOverseas() && country) {
+      for (const [field, message] of overseasAddressErrors(
+        country,
+        form.region,
+        form.postalCode,
+        form.addressPhone,
+      )) {
+        const key = `address.${field}`;
+        if (!errors.has(key)) {
+          errors.set(key, message);
+        }
+      }
+    }
   }
 
   /** The API's field name for one of this form's keys. */
@@ -2011,6 +2183,8 @@ export class CheckoutPage {
         return 'address.line2';
       case 'city':
         return 'address.city';
+      case 'region':
+        return 'address.region';
       case 'postalCode':
         return 'address.postalCode';
       case 'landmark':
@@ -2038,7 +2212,12 @@ export class CheckoutPage {
     this.loading.set(true);
 
     this.api
-      .get(this.chosenDistrictId(), this.chosenDeliveryMethodId(), this.chosenPromoCode())
+      .get(
+        this.isOverseas() ? null : this.chosenDistrictId(),
+        this.chosenDeliveryMethodId(),
+        this.chosenPromoCode(),
+        this.chosenCountryCode(),
+      )
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (session) => {
@@ -2164,7 +2343,20 @@ export class CheckoutPage {
 
     // The server echoes back what it priced, so the controls follow the quote rather than the other way
     // round: if a method was dropped because it is unavailable in the new zone, the radio clears too.
-    if (session.selectedDistrictId !== null) {
+    // A country the server does not know comes back as null: back to Sri Lanka, once, and ask again.
+    if (session.selectedCountryCode === null && this.isOverseas() && !this.countryRecovered) {
+      this.countryRecovered = true;
+      this.chosenCountryCode.set(SRI_LANKA_CODE);
+      this.chosenDeliveryMethodId.set(null);
+      this.read();
+      return;
+    }
+
+    const overseas = this.isOverseas();
+
+    if (overseas) {
+      // No district abroad; nothing to recover.
+    } else if (session.selectedDistrictId !== null) {
       this.chosenDistrictId.set(session.selectedDistrictId);
     } else if (this.chosenDistrictId() !== null && !this.districtRecovered) {
       // We asked for a district and the server priced nothing, so the id was not one it knows.
@@ -2172,6 +2364,13 @@ export class CheckoutPage {
     }
 
     this.chosenDeliveryMethodId.set(session.selectedDeliveryMethodId);
+
+    // Overseas there is one option, International delivery: chosen for the shopper, and priced at once.
+    const only = session.deliveryOptions.length === 1 ? session.deliveryOptions[0] : null;
+    if (overseas && session.selectedDeliveryMethodId === null && only?.isAvailable) {
+      this.chosenDeliveryMethodId.set(only.id);
+      this.read();
+    }
 
     this.applyPromoEcho(session);
 

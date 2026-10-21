@@ -111,11 +111,14 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
               @if (doc.delivery.line2) {
                 <p>{{ doc.delivery.line2 }}</p>
               }
-              <p>{{ doc.delivery.city }}@if (doc.delivery.postalCode) {, {{ doc.delivery.postalCode }}}</p>
+              <p>{{ doc.delivery.city }}@if (doc.delivery.region) {, {{ doc.delivery.region }}}@if (doc.delivery.postalCode) {, {{ doc.delivery.postalCode }}}</p>
               @if (doc.delivery.landmark) {
                 <p>Near {{ doc.delivery.landmark }}</p>
               }
-              <p>{{ doc.delivery.districtName }}</p>
+              @if (doc.delivery.districtName) {
+                <p>{{ doc.delivery.districtName }}</p>
+              }
+              <p data-testid="invoice-country">{{ doc.delivery.countryName }}</p>
             }
           </div>
         </section>

@@ -183,6 +183,14 @@ const PAGE_SIZE = 25;
               <dd>{{ when(row.placedAtUtc) }}</dd>
               <dt>Delivery</dt>
               <dd>{{ row.deliveryMethodName }}</dd>
+              <dt>Destination</dt>
+              <dd [attr.data-testid]="'destination-' + row.orderNumber">
+                @if (row.countryCode === 'LK') {
+                  {{ row.districtName ?? 'Sri Lanka' }}
+                } @else {
+                  {{ row.countryName }} <span class="adm-pill">Overseas</span>
+                }
+              </dd>
               @if (row.trackingNumber) {
                 <dt>Tracking</dt>
                 <dd>{{ row.courierName }} · {{ row.trackingNumber }}</dd>

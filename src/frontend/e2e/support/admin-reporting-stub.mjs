@@ -331,11 +331,12 @@ function dashboardBody(state, period) {
     // The fixture's three buyers (see `fixtures`), by the district their orders were delivered to.
     buyersByDistrict: {
       distinctBuyers: some ? 3 : 0,
+      // Owner decision 2026-10-21: an overseas row has no district and is named by its country.
       districts: some
         ? [
-            { districtId: 2, name: 'Gampaha', buyers: 1, paidOrders: 2, revenue: 18400 },
-            { districtId: 4, name: 'Kandy', buyers: 1, paidOrders: 1, revenue: 6600 },
-            { districtId: 10, name: 'Jaffna', buyers: 1, paidOrders: 1, revenue: 3200 },
+            { districtId: 2, name: 'Gampaha', buyers: 1, paidOrders: 2, revenue: 18400, countryCode: 'LK' },
+            { districtId: 4, name: 'Kandy', buyers: 1, paidOrders: 1, revenue: 6600, countryCode: 'LK' },
+            { districtId: 10, name: 'Jaffna', buyers: 1, paidOrders: 1, revenue: 3200, countryCode: 'LK' },
           ]
         : [],
     },

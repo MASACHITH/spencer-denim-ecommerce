@@ -18,6 +18,11 @@ import { CartLineDto, cartLineNotice, isBuyable } from '../../core/cart/cart.mod
 import { CartStore } from '../../core/cart/cart.store';
 import { formatLkr } from '../../core/catalog/money';
 import { RobotsMeta } from '../../core/platform/robots-meta';
+import {
+  DeliveryCountryService,
+  OverseasEstimate,
+  workingDays,
+} from '../../core/delivery/delivery-country.service';
 
 /**
  * The bag page (CART-01).
@@ -290,6 +295,20 @@ import { RobotsMeta } from '../../core/platform/robots-meta';
             <p class="bag__muted bag__fineprint">
               Delivery is worked out at checkout, so this covers the items only.
             </p>
+
+            <!-- Owner decision 2026-10-21: an overseas destination chosen in the header gets its fee and
+                 estimate here. Sri Lanka keeps the sentence above and nothing else. -->
+            @if (overseas(); as estimate) {
+              <p class="bag__muted bag__fineprint" data-testid="bag-overseas-estimate">
+                @if (estimate.isAvailable) {
+                  Delivery to {{ estimate.country.name }}: {{ money(estimate.fee ?? 0) }}{{
+                    days(estimate) ? ', ' + days(estimate) : ''
+                  }}.
+                } @else {
+                  We cannot deliver to {{ estimate.country.name }} at the moment.
+                }
+              </p>
+            }
           </section>
         </div>
       }
@@ -525,6 +544,13 @@ import { RobotsMeta } from '../../core/platform/robots-meta';
 })
 export class BagPage {
   private readonly cart = inject(CartStore);
+
+  /** The header's overseas destination, or null for Sri Lanka (owner decision 2026-10-21). */
+  protected readonly overseas = inject(DeliveryCountryService).overseasEstimate;
+
+  protected days(estimate: OverseasEstimate): string | null {
+    return workingDays(estimate.estimatedDaysMin, estimate.estimatedDaysMax);
+  }
 
   protected readonly lines = this.cart.lines;
   protected readonly totals = this.cart.totals;

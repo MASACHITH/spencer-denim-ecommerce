@@ -198,6 +198,16 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/settings/settings-page').then((m) => m.SettingsPage),
   },
   {
+    // Owner decision 2026-10-21: overseas regions, countries and the International delivery switch. Session
+    // guard only, like every admin route; the API enforces Settings.View / Settings.Edit and the page says so
+    // to a role without them.
+    path: 'settings/overseas-delivery',
+    title: `Overseas delivery — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/settings/overseas-delivery-page').then((m) => m.OverseasDeliveryPage),
+  },
+  {
     // ADM-17 / GLB-10 (W2-11). Like every other admin route the guard only asks for a session: the API
     // is the security boundary (doc 03 §3a), and a user without Content.View is shown the refusal rather
     // than bounced from a page that then cannot explain itself.

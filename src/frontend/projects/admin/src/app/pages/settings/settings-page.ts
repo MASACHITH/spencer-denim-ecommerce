@@ -8,6 +8,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 import { BRAND } from '@spencer-denim/shared';
 
 import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catalog-api';
@@ -27,6 +28,7 @@ import {
   TRAFFIC_BOUNDS,
   TrafficValues,
 } from '../../core/settings/admin-settings.model';
+import { PaymentMethodsPanel } from './payment-methods-panel';
 
 /** The largest logo file this screen will send. The media library's own limit is higher. */
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
@@ -59,11 +61,12 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
  */
 @Component({
   selector: 'sda-settings-page',
-  imports: [FormsModule, EmailAccountPanel],
+  imports: [FormsModule, RouterLink, EmailAccountPanel, PaymentMethodsPanel],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="settings">
       <h1 class="settings__title">Settings</h1>
+      <p><a class="adm-link" routerLink="/settings/overseas-delivery" data-testid="settings-overseas-link">Overseas delivery: regions, countries and fees</a></p>
       <p class="sr-only" role="status" data-testid="announcement">{{ announcement() }}</p>
 
       @if (failure(); as problem) {
@@ -303,6 +306,8 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
         }
 
         @if (canEditBank()) {
+          <!-- Owner decision 2026-10-21: the Payment methods switch, under the same permission as the bank panel. -->
+          <sda-payment-methods-panel />
           <section class="adm-panel" aria-labelledby="bank-title">
             <h2 class="adm-panel__title" id="bank-title">Bank transfer</h2>
             <p class="adm-panel__hint">

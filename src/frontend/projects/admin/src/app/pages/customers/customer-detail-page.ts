@@ -110,11 +110,12 @@ const ORDER_PAGE_SIZE = 10;
                   @if (address.line2) {
                     {{ address.line2 }}<br />
                   }
-                  {{ address.city }}, {{ address.districtName }}
+                  {{ address.city }}@if (address.districtName) {, {{ address.districtName }}}@if (address.region) {, {{ address.region }}}
                   @if (address.postalCode) {
                     {{ address.postalCode }}
                   }
                   <br />
+                  <span [attr.data-testid]="'address-country-' + address.addressId">{{ address.countryName }}</span><br />
                   @if (address.landmark) {
                     Near {{ address.landmark }}<br />
                   }

@@ -35,6 +35,9 @@ function row(overrides: Partial<AdminOrderListRow> = {}): AdminOrderListRow {
     placedAtUtc: '2026-10-05T04:30:00Z',
     paidAtUtc: '2026-10-05T09:00:00Z',
     secondsUntilExpiry: null,
+    countryCode: 'LK',
+    countryName: 'Sri Lanka',
+    districtName: 'Colombo',
     ...overrides,
   };
 }
@@ -374,5 +377,32 @@ describe('OrdersListPage (ADM-09)', () => {
     await settle();
 
     expect(element.querySelector('[role="alert"]')?.textContent).toContain('permission');
+  });
+
+  it('shows the district for a Sri Lankan order and the country, marked overseas, for one abroad', async () => {
+    await open(
+      page({
+        rows: [
+          row(),
+          row({
+            orderPublicId: '55555555-5555-4555-8555-555555555555',
+            orderNumber: 'SD-2026-000124',
+            countryCode: 'GB',
+            countryName: 'United Kingdom',
+            districtName: null,
+            deliveryMethodName: 'International delivery',
+          }),
+        ],
+        totalCount: 2,
+      }),
+    );
+
+    const home = element.querySelector('[data-testid="destination-SD-2026-000123"]')?.textContent ?? '';
+    const abroad = element.querySelector('[data-testid="destination-SD-2026-000124"]')?.textContent ?? '';
+
+    expect(home).toContain('Colombo');
+    expect(home).not.toContain('Overseas');
+    expect(abroad).toContain('United Kingdom');
+    expect(abroad).toContain('Overseas');
   });
 });

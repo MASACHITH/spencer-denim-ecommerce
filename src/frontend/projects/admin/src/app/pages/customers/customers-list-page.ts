@@ -141,6 +141,8 @@ const PAGE_SIZE = 25;
               <dd>{{ row.phone ?? 'Not given' }}</dd>
               <dt>District</dt>
               <dd [attr.data-testid]="'district-' + row.customerId">{{ row.districtName ?? 'Not chosen' }}</dd>
+              <dt>Country</dt>
+              <dd [attr.data-testid]="'country-' + row.customerId">{{ row.countryName ?? 'No saved address' }}</dd>
               <dt>Orders</dt>
               <dd [attr.data-testid]="'orders-' + row.customerId">{{ row.orderCount }}</dd>
               <dt>Lifetime spend</dt>

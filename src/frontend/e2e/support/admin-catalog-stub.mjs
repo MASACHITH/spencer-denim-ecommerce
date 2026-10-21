@@ -39,6 +39,7 @@ import { freshReportingState, handleReportingRoute } from './admin-reporting-stu
 import { freshInventoryState, handleInventoryRoute } from './admin-inventory-stub.mjs';
 import { freshReviewState, handleReviewRoute } from './admin-review-stub.mjs';
 import { addManyProducts, freshProductState, handleProductRoute } from './admin-product-stub.mjs';
+import { handleDeliveryRoute } from './admin-delivery-stub.mjs';
 
 const PORT = Number(process.env.E2E_ADMIN_PORT ?? 4430);
 const DIST = resolve(process.env.E2E_ADMIN_DIST ?? 'dist/admin/browser');
@@ -218,6 +219,11 @@ function adminOrder(overrides) {
     customerNote: 'Please leave it with the security desk.',
     internalNote: null,
     cancelReason: null,
+
+    // Owner decision 2026-10-21: where in the world it is going. Sri Lanka keeps its district.
+    countryCode: 'LK',
+    countryName: 'Sri Lanka',
+    districtName: 'Colombo',
     ...overrides,
     actions,
   };
@@ -245,6 +251,9 @@ function orderRow(order) {
     placedAtUtc: order.placedAtUtc,
     paidAtUtc: order.paidAtUtc,
     secondsUntilExpiry: order.secondsUntilExpiry,
+    countryCode: order.countryCode,
+    countryName: order.countryName,
+    districtName: order.districtName,
   };
 }
 
@@ -310,8 +319,34 @@ function orderDetail(state, order) {
           city: null,
           postalCode: null,
           landmark: null,
+          region: null,
+          countryCode: 'LK',
+          countryName: 'Sri Lanka',
         }
-      : {
+      : order.countryCode !== 'LK'
+        ? {
+            // Owner decision 2026-10-21: an overseas order has no district and no zone (`Overseas`), and its
+            // address carries a region, a postcode and the country.
+            methodCode: 'INTERNATIONAL',
+            methodName: order.deliveryMethodName,
+            isPickup: false,
+            pickupLocationName: null,
+            districtName: null,
+            zone: 'Overseas',
+            estimatedDaysMin: 7,
+            estimatedDaysMax: 14,
+            recipientName: order.customerName,
+            recipientPhone: '+1 512 555 0142',
+            line1: '500 Congress Avenue',
+            line2: 'Suite 200',
+            city: 'Austin',
+            postalCode: '78701',
+            landmark: null,
+            region: 'TX',
+            countryCode: order.countryCode,
+            countryName: order.countryName,
+          }
+        : {
           methodCode: 'STANDARD',
           methodName: order.deliveryMethodName,
           isPickup: false,
@@ -327,6 +362,9 @@ function orderDetail(state, order) {
           city: 'Kollupitiya',
           postalCode: '00300',
           landmark: 'Opposite the temple',
+          region: null,
+          countryCode: 'LK',
+          countryName: 'Sri Lanka',
         },
     money: {
       currency: 'LKR',
@@ -2229,6 +2267,33 @@ const server = createServer(async (request, response) => {
     return json(response, 200, { count: state.products.length });
   }
 
+  // Owner decision 2026-10-21: an overseas order beside the Sri Lankan ones, only when a test asks, so the
+  // existing suites' counts stay as they were.
+  if (path === '/__test__/overseas-order') {
+    if (!state.orders.some((order) => order.orderNumber === 'SD-2026-000130')) {
+      state.orders.push(
+        adminOrder({
+          orderPublicId: '99999999-9999-4999-8999-999999999999',
+          orderNumber: 'SD-2026-000130',
+          status: 'Paid',
+          statusLabel: 'Paid',
+          customerName: 'Amaya Silva',
+          customerEmail: 'amaya@example.com',
+          grandTotal: 25596.6,
+          paymentProviderCode: 'PayPal',
+          deliveryMethodName: 'International delivery',
+          invoiceNumber: 'INV-2026-000050',
+          paidAtUtc: '2026-10-06T09:00:00Z',
+          countryCode: 'US',
+          countryName: 'United States',
+          districtName: null,
+        }),
+      );
+    }
+
+    return json(response, 200, { ok: true });
+  }
+
   if (path === '/__test__/store-legal-details') {
     state.storeLegalDetails = url.searchParams.get('set') === 'yes'
       ? {
@@ -3206,6 +3271,24 @@ const server = createServer(async (request, response) => {
       problem,
       noContent,
       readBody,
+    })
+  ) {
+    return undefined;
+  }
+
+  // ---- overseas delivery and the payment methods switch (owner decision 2026-10-21) -------------
+  if (
+    await handleDeliveryRoute({
+      path,
+      method: request.method,
+      url,
+      request,
+      response,
+      state,
+      json,
+      problem,
+      readBody,
+      suppliedRowVersion,
     })
   ) {
     return undefined;

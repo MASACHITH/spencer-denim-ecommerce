@@ -1,3 +1,4 @@
+import { provideTestDeliveryCountries } from '../../core/delivery/delivery-country.testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ApplicationRef } from '@angular/core';
@@ -67,7 +68,7 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
           { path: 'account', children: [] },
         ]),
         provideHttpClient(),
-        provideHttpClientTesting(),
+        provideHttpClientTesting(), provideTestDeliveryCountries(),
       ],
     });
 
@@ -101,7 +102,7 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
           { path: 'account', children: [] },
         ]),
         provideHttpClient(),
-        provideHttpClientTesting(),
+        provideHttpClientTesting(), provideTestDeliveryCountries(),
       ],
     });
 

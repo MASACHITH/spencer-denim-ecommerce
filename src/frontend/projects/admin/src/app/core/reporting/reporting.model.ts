@@ -73,8 +73,12 @@ export interface BuyersByDistrict {
 }
 
 export interface DistrictBuyersRow {
-  readonly districtId: number;
+  /** The Sri Lankan district, or null for an overseas country's row (owner decision 2026-10-21). */
+  readonly districtId: number | null;
+  /** The district's name, or the overseas country's name. */
   readonly name: string;
+  /** ISO 3166-1 alpha-2: `LK` for a district, the country for an overseas row. */
+  readonly countryCode: string;
   readonly buyers: number;
   readonly paidOrders: number;
   readonly revenue: number;
