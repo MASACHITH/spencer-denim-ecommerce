@@ -383,7 +383,7 @@ terminal only, once** — a boxed password. It refuses if a `.pfx` or a key ring
 
 **A key ring that already exists** (the script refuses without `--allow-existing-keyring`). Only two honest ways out:
 (a) nothing was saved through the admin Settings yet: stop the API (`$C stop api`), move the ring aside
-(`sudo mv "$APP"/data/dataprotection-keys "$APP"/data/dataprotection-keys.old-$(date +%F)` and recreate it empty, owner 1654, mode 700),
+(`sudo mv "$APP"/data/dataprotection-keys "$APP"/data/dataprotection-keys.old-$(date +%F)` and recreate it empty with `sudo install -d -m 700 "$APP"/data/dataprotection-keys && sudo chown 1654:1654 "$APP"/data/dataprotection-keys`, or just re-run `install.sh`; not `install -d -o 1654`, which uutils refuses, §A0),
 run `make-dp-cert.sh`, start the API; every admin session is signed out, nothing else is lost. (b) Secrets are already saved:
 leave the ring alone, or rebuild it and re-enter each secret afterwards; do not do this on Live without the owner.
 Either way the old ring may still hold clear-text keys: delete the `.old-…` copy once you are sure.
