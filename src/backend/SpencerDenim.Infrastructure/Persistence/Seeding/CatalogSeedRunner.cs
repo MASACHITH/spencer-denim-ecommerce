@@ -95,6 +95,7 @@ public sealed partial class CatalogSeedRunner(
         counts.AnnouncementMessages = content.Announcements;
         counts.MegaMenuCards = content.MegaMenuCards;
         counts.ContentPages = content.ContentPages;
+        counts.PolicyPages = content.PolicyPages;
 
         // ops.Settings (ADM-22). These rows are the *shape* of the settings screen rather than sample data,
         // their values are all null, and a production database without them has a settings screen with no

@@ -36,11 +36,21 @@ public sealed record SaveCourierCommand(
 /// Validates a courier and saves it.
 /// </summary>
 /// <remarks>
-/// <b>Nothing here invents a courier name or a tracking URL.</b> Not a seeded row, not a default, and
-/// <b>not a form placeholder that renders</b> — W3-03 shipped a real bank's name and the client's own
-/// legal name as placeholder text and both were Major findings. Which carriers the client uses is the
-/// client's information; the only example this code is allowed to show is an obviously-fake shape, which
-/// is why <see cref="TemplateExample"/> says <c>{trackingNumber}</c> and nothing around it.
+/// <para>
+/// <b>Nothing here invents a courier name or a tracking URL</b> — not a default and <b>not a form
+/// placeholder that renders</b>. W3-03 shipped a real bank's name and the client's own legal name as
+/// placeholder text and both were Major findings, so the only example this code shows is an obviously-fake
+/// shape, which is why <see cref="TemplateExample"/> says <c>{trackingNumber}</c> and nothing around it.
+/// </para>
+/// <para>
+/// <b>Couriers are seeded, by the owner's decision of 2026-10-21 (issue #33)</b>, which replaced the earlier
+/// rule that no courier row was seeded. The owner asked for the best Sri Lankan couriers to be seeded, all
+/// editable here; <c>SalesReferenceData.Couriers</c> lists them, each name, telephone number and tracking
+/// pattern checked on the courier's own site (<c>docs/research/2026-10-21-sri-lanka-delivery-returns-couriers.md</c>).
+/// They are offered once by version (<c>Seed.CouriersVersion</c>), so one deleted here stays deleted, and the
+/// seeder never changes a courier that already exists. This handler is unchanged by that decision: a seeded row
+/// is edited through exactly the same rules as one typed in.
+/// </para>
 /// </remarks>
 public sealed class SaveCourierCommandHandler(ICourierAdminStore store, IClock clock)
     : ICommandHandler<SaveCourierCommand, SaveCourierResult>

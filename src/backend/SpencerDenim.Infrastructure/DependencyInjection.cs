@@ -292,6 +292,9 @@ public static class DependencyInjection
         services.AddSingleton<IHomePageCache, HomePageCache>();
         services.AddSingleton<IContentPageLinksCache, ContentPageLinksCache>();
 
+        // The product page's delivery and returns texts (issue #33): a read-only port for an anonymous page.
+        services.AddScoped<IProductPageTextReader, ProductPageTextReader>();
+
         // The bag (W2-09, CART-01/02). The store writes with doc 08 §3.5's item-level upserts and the
         // reader reprices every line from the catalogue on each read (doc 08 §6).
         services.AddScoped<ICartStore, CartStore>();

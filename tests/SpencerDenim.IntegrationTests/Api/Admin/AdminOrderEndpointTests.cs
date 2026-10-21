@@ -562,9 +562,9 @@ public sealed class AdminOrderEndpointTests(SqlServerDatabaseFixture sqlServer)
     /// <b>With no courier configured, the screen is told so in words and the action is false.</b>
     /// </summary>
     /// <remarks>
-    /// <c>sales.Couriers</c> is seeded empty on purpose — which carriers the client uses is their
-    /// information — so this is the normal state of a new installation and the honest answer is a sentence
-    /// saying what to go and do, not a disabled control with no explanation.
+    /// Couriers are seeded since issue #33 (owner decision 2026-10-21), but an owner can delete every one, and
+    /// the honest answer then is a sentence saying what to go and do, not a disabled control with no
+    /// explanation. The test deletes them first, so it is about that state and not about the seed.
     /// </remarks>
     [Fact]
     public async Task With_no_courier_configured_the_blocked_reason_says_what_to_do()
@@ -1008,15 +1008,15 @@ public sealed class AdminOrderEndpointTests(SqlServerDatabaseFixture sqlServer)
     // ---- the couriers ---------------------------------------------------------------------------
 
     /// <summary>
-    /// <b>Nothing is seeded, which is the whole point of the screen.</b>
+    /// <b>From an empty list, a courier is added, edited and deactivated.</b>
     /// </summary>
     /// <remarks>
-    /// Which carriers the client uses is their information, so a fresh database has no courier and no
-    /// delivery order can be marked as shipped. Asserted here rather than left to the seeder's own tests
-    /// because this is the list a staff member actually sees.
+    /// Issue #33 seeds the shop's starting couriers (owner decision 2026-10-21; see
+    /// <c>DeliveryReturnsSeedTests</c>), so this deletes every courier first: the screen must still work for
+    /// an owner who removed them all.
     /// </remarks>
     [Fact]
-    public async Task A_courier_is_added_edited_and_deactivated_and_none_is_seeded()
+    public async Task A_courier_is_added_edited_and_deactivated_from_an_empty_list()
     {
         await using var host = await StartAsync();
         await DeleteEveryCourierAsync();
@@ -1692,9 +1692,9 @@ public sealed class AdminOrderEndpointTests(SqlServerDatabaseFixture sqlServer)
     /// Removes every courier, so a test about "none configured" is about that and not about a neighbour.
     /// </summary>
     /// <remarks>
-    /// <b>Safe because <c>sales.Couriers</c> is seeded empty on purpose</b> — doc 08 §9 seeds none, and
-    /// which carriers the client uses is their information — so there is no seeded row for this to
-    /// destroy. The orders that point at one have their <c>CourierId</c> nulled first, because the FK
+    /// <b>It also removes the couriers seeded since issue #33</b> from the shared database, which is harmless:
+    /// <c>Seed.CouriersVersion</c> records that they were offered, so they are not re-created, and no other test
+    /// relies on them (the seed's own tests run on throwaway databases). The orders that point at one have their <c>CourierId</c> nulled first, because the FK
     /// would otherwise refuse; the <c>CourierName</c> snapshot, which is what a dispatch note shows,
     /// stays.
     /// </remarks>

@@ -166,6 +166,8 @@ public sealed class SettingCatalogTests
             SettingKeys.Social.InstagramUrl,
             SettingKeys.Social.TikTokUrl,
             SettingKeys.Social.YouTubeUrl,
+            SettingKeys.Content.PdpDeliveryInfoHtml,
+            SettingKeys.Content.PdpReturnsInfoHtml,
             SettingKeys.Bank.BankName,
             SettingKeys.Bank.Branch,
             SettingKeys.Bank.AccountName,
@@ -264,9 +266,12 @@ public sealed class SettingCatalogTests
         Assert.Equal(SettingValueType.String, instructions.ValueType);
         Assert.NotEqual(SettingValueType.TextHtml, instructions.ValueType);
 
-        // And nothing else in the catalogue is TextHtml either, for the same reason — including the five
-        // Contact keys W2-11 added, which the test below pins from the other direction.
-        Assert.DoesNotContain(SettingValueType.TextHtml, SettingCatalog.All.Select(d => d.ValueType));
+        // And nothing else in the catalogue is TextHtml either — including the five Contact keys W2-11 added, which
+        // the test below pins from the other direction — except the two product-page texts issue #33 added, which
+        // doc 08 §3.8 gives that type and which are sanitised on save and on read (IHtmlSanitiser now exists).
+        Assert.Equal(
+            [SettingKeys.Content.PdpDeliveryInfoHtml, SettingKeys.Content.PdpReturnsInfoHtml],
+            SettingCatalog.All.Where(d => d.ValueType == SettingValueType.TextHtml).Select(d => d.Key));
     }
 
     /// <summary>
@@ -362,7 +367,7 @@ public sealed class SettingCatalogTests
         // `Store` appears once although W3-04 added four more keys to it further down the list: Groups is
         // distinct, and that is what the "once each" in the name is about.
         Assert.Equal(
-            ["Store", "Contact", "Social", "Bank", "Orders", "Payments.PayPal", "Traffic", "Reviews", "Email.Smtp"],
+            ["Store", "Contact", "Social", "Content", "Bank", "Orders", "Payments.PayPal", "Traffic", "Reviews", "Email.Smtp"],
             SettingCatalog.Groups);
     }
 

@@ -207,8 +207,28 @@ public sealed class SettingKeySpecificationTests
     {
         var documented = SpecifiedDefaults();
 
+        // Issue #33: the two product-page texts are seeded with the shop's starting terms by the owner's decision of
+        // 2026-10-21 — policy wording in our own words, not a client fact — and doc 08 §3.8's Content row says so.
+        // They are the only exception, they are pinned to their constants, and the document must still name the
+        // decision, so a third "exception" cannot slip in without a document change somebody reviews.
+        var ownerWording = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [SettingKeys.Content.PdpDeliveryInfoHtml] = ContentSettingDefinitions.DeliveryInfoSeed,
+            [SettingKeys.Content.PdpReturnsInfoHtml] = ContentSettingDefinitions.ReturnsInfoSeed,
+        };
+
+        var contentRow = ReadRepositoryFile("docs/08-database-design.md")
+            .Split('\n')
+            .Single(line => line.StartsWith("| `Content` |", StringComparison.Ordinal));
+        Assert.Contains("#33", contentRow, StringComparison.Ordinal);
+
+        foreach (var (key, wording) in ownerWording)
+        {
+            Assert.Equal(wording, SettingCatalog.Find(key)!.SeedValue);
+        }
+
         var seededWithAValue = SettingCatalog.All
-            .Where(definition => definition.SeedValue is not null)
+            .Where(definition => definition.SeedValue is not null && !ownerWording.ContainsKey(definition.Key))
             .ToList();
 
         foreach (var definition in seededWithAValue)

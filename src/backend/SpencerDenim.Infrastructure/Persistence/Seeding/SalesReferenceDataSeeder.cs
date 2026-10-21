@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Domain.Reference;
 using SpencerDenim.Domain.Sales;
+using SpencerDenim.Domain.Settings;
 
 namespace SpencerDenim.Infrastructure.Persistence.Seeding;
 
@@ -19,6 +20,9 @@ public sealed class SalesSeedCounts
     public int DeliveryMethodZoneRates { get; set; }
 
     public int PaymentProviders { get; set; }
+
+    /// <summary><c>sales.Couriers</c> offered by the courier seed version (issue #33).</summary>
+    public int Couriers { get; set; }
 }
 
 /// <summary>
@@ -58,6 +62,7 @@ public sealed class SalesReferenceDataSeeder(AppDbContext dbContext)
         counts.DeliveryMethods = await SeedDeliveryMethodsAsync(cancellationToken);
         counts.DeliveryMethodZoneRates = await SeedZoneRatesAsync(cancellationToken);
         counts.PaymentProviders = await SeedPaymentProvidersAsync(cancellationToken);
+        counts.Couriers = await SeedCouriersAsync(cancellationToken);
 
         return counts;
     }
@@ -242,6 +247,61 @@ public sealed class SalesReferenceDataSeeder(AppDbContext dbContext)
         {
             await dbContext.SaveChangesAsync(cancellationToken);
         }
+
+        return added;
+    }
+
+    /// <summary>
+    /// Issue #33: the couriers the shop starts with (<see cref="SalesReferenceData.Couriers"/>), <b>offered once by
+    /// version</b> through <c>Seed.CouriersVersion</c>.
+    /// <para>
+    /// A courier is the kind of row an owner is expected to delete (a carrier the shop never books), and "insert
+    /// what is missing" would put a deleted one back on every deployment — so only seeds introduced after the
+    /// recorded version are considered, and the new version is recorded in the same save. <b>Never over an existing
+    /// row:</b> a courier already holding the name (UX_Couriers_Name, case-insensitive like the collation) is left
+    /// exactly as the admin set it — its template, telephone number and switch included.
+    /// </para>
+    /// </summary>
+    private async Task<int> SeedCouriersAsync(CancellationToken cancellationToken)
+    {
+        var (marker, recorded) = await SeedVersionMarker.ReadAsync(
+            dbContext, SettingKeys.Seed.CouriersVersion, cancellationToken);
+
+        if (recorded >= SalesReferenceData.CourierSeedVersion)
+        {
+            return 0;
+        }
+
+        var taken = (await dbContext.Couriers.Select(courier => courier.Name).ToListAsync(cancellationToken))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var added = 0;
+        foreach (var seed in SalesReferenceData.Couriers.Where(seed => seed.IntroducedIn > recorded))
+        {
+            if (!taken.Add(seed.Name))
+            {
+                continue;
+            }
+
+            dbContext.Couriers.Add(new Courier
+            {
+                Name = seed.Name,
+                Phone = seed.Phone,
+                TrackingUrlTemplate = seed.TrackingUrlTemplate,
+                IsActive = seed.IsActive,
+                SortOrder = seed.SortOrder,
+            });
+            added++;
+        }
+
+        SeedVersionMarker.Record(
+            dbContext,
+            marker,
+            SettingKeys.Seed.CouriersVersion,
+            SalesReferenceData.CourierSeedVersion,
+            "The highest courier seed version applied to this database (#33). Written by the seeder; not editable.");
+
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         return added;
     }

@@ -63,14 +63,29 @@ public sealed class SystemPageCopyTests
 
         Assert.NotEmpty(assignments);
 
+        // Issue #33 (owner decision 2026-10-21): the Shipping and Returns pages are seeded with the shop's starting
+        // terms, from PolicyPageContent and nowhere else. That is the one permitted non-empty right-hand side, and
+        // PolicyPageWritesOnlyShippingAndReturns below pins which pages it can reach — About, Privacy and Terms
+        // still wait for the client's words and a PDPA review.
         Assert.All(
             assignments,
             value => Assert.True(
-                value is "string.Empty" or "\"\"",
+                value is "string.Empty" or "\"\"" or "PolicyPageContent.Bodies[page.SystemKey!]",
                 $"{SeederFile} assigns a content-page body: BodyHtml = {value}. The six system pages ship "
                 + "with empty bodies because the copy is the client's — a returns policy, a privacy policy "
                 + "and terms of business carry legal weight, and Privacy and Terms need a PDPA review. "
                 + "Seed the title, never the body."));
+    }
+
+    /// <summary>
+    /// The policy copy the seeder may write reaches the Shipping and Returns pages and no other (issue #33).
+    /// </summary>
+    [Fact]
+    public void PolicyPageWritesOnlyShippingAndReturns()
+    {
+        Assert.Equal(
+            [ContentPageKeys.Returns, ContentPageKeys.Shipping],
+            SpencerDenim.Infrastructure.Persistence.Seeding.PolicyPageContent.Bodies.Keys.Order(StringComparer.Ordinal));
     }
 
     /// <summary>
