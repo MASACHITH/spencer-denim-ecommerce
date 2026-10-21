@@ -24,7 +24,7 @@
       "advisory": "GHSA-587h-7wmj-h5pm",
       "package": "vite",
       "severity": "high",
-      "reason": "Dev server only; launch-editor; not shipped. vite is used by @angular/build for `ng serve` on a developer machine and never runs in the storefront, admin or API that shoppers and staff use. Waiting for an @angular/build 21.x release that ships vite >=7.3.7 (21.2.27 pins 7.3.6); Angular 22 is a major upgrade, planned separately.",
+      "reason": "Dev server only; launch-editor; not shipped. vite is used by @angular/build for `ng serve` and by Vitest for `ng test` (developer machines and CI), and never runs in the storefront, admin or API that shoppers and staff use. Waiting for an @angular/build 21.x release that ships vite >=7.3.7 (21.2.27 pins 7.3.6); Angular 22 is a major upgrade, planned separately.",
       "acceptedBy": "MASACHITH",
       "acceptedOn": "2026-10-21",
       "reviewBy": "2026-11-20",
