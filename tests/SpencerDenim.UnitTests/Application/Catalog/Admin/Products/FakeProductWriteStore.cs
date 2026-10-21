@@ -181,19 +181,43 @@ internal sealed class FakeProductWriteStore : IProductWriteStore
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Asset ids the locked re-check of the next media save should find unusable (#223): a picture a
+    /// media-library delete got to first. Only SQL Server can decide that race; the real proof is in
+    /// <c>CatalogMediaLockRaceTests</c>.
+    /// </summary>
+    public HashSet<int> UnusableAssetIds { get; } = [];
+
+    /// <summary>The claim the last media save was handed, so a test can assert what it would lock.</summary>
+    public CatalogMediaClaim? LastMediaClaim { get; private set; }
+
+    private bool Refuses(CatalogMediaClaim media)
+    {
+        LastMediaClaim = media;
+        media.Unavailable = media.Slots.Where(slot => UnusableAssetIds.Contains(slot.MediaAssetId)).ToList();
+        return media.Unavailable.Count > 0;
+    }
+
     public async Task<CatalogSaveOutcome> AddProductAsync(
         Product product,
         Func<Product, CancellationToken, Task> afterInsert,
+        CatalogMediaClaim media,
         int? actingUserId,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(product);
         ArgumentNullException.ThrowIfNull(afterInsert);
+        ArgumentNullException.ThrowIfNull(media);
 
         if (NextSaveOutcome is { } forced)
         {
             NextSaveOutcome = null;
             return forced;
+        }
+
+        if (Refuses(media))
+        {
+            return CatalogSaveOutcome.MediaUnavailable;
         }
 
         AssignIdentityValues(product);
@@ -228,6 +252,21 @@ internal sealed class FakeProductWriteStore : IProductWriteStore
         RemovedVariants.AddRange(variants);
 
         return Task.FromResult(variants.Count * CartLinesPerRemovedVariant);
+    }
+
+    public Task<CatalogSaveOutcome> SaveWithMediaAsync(
+        CatalogMediaClaim media,
+        int? actingUserId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(media);
+
+        if (NextSaveOutcome is null && Refuses(media))
+        {
+            return Task.FromResult(CatalogSaveOutcome.MediaUnavailable);
+        }
+
+        return SaveAsync(actingUserId, cancellationToken);
     }
 
     public Task<CatalogSaveOutcome> SaveAsync(int? actingUserId, CancellationToken cancellationToken)

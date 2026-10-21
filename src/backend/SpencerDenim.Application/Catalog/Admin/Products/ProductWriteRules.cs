@@ -1,5 +1,6 @@
 using System.Globalization;
 using SpencerDenim.Application.Abstractions.Results;
+using SpencerDenim.Application.Catalog.Admin.Abstractions;
 using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Media;
@@ -305,6 +306,52 @@ internal static class ProductWriteRules
         }
 
         return desired.ToList();
+    }
+
+    /// <summary>
+    /// The product's pictures and video as a <see cref="CatalogMediaClaim"/>, for the store to lock and re-check
+    /// inside the save's transaction (#223). One slot per <see cref="DesiredMediaUsages"/> row, each against the
+    /// request field that carried the asset, so a refusal names it the way the handler's own check does: a gallery
+    /// row's <c>media[i].assetPublicId</c>, or a colourway's <c>colours[i].swatchAssetPublicId</c>. An asset the
+    /// request did not name (a request that left <c>media</c> out keeps the rows it has) is reported on
+    /// <c>media</c>.
+    /// <para>
+    /// A video's poster is not claimed. The media library refuses to delete a poster while its video is live (the
+    /// <c>PosterAssetId</c> check in <c>MediaService.DeleteAsync</c>), and the video's own row is locked here, so
+    /// the poster cannot be deleted out from under this save either.
+    /// </para>
+    /// </summary>
+    public static CatalogMediaClaim MediaClaim(Product product, ProductFormInput form, ProductReferenceData references)
+    {
+        ArgumentNullException.ThrowIfNull(product);
+        ArgumentNullException.ThrowIfNull(form);
+        ArgumentNullException.ThrowIfNull(references);
+
+        var fields = new Dictionary<int, string>();
+
+        void Name(Guid? publicId, string field)
+        {
+            if (publicId is { } id && references.MediaAssets.TryGetValue(id, out var asset))
+            {
+                fields.TryAdd(asset.Id, field);
+            }
+        }
+
+        for (var index = 0; index < (form.Media?.Count ?? 0); index++)
+        {
+            Name(form.Media![index].AssetPublicId, string.Create(CultureInfo.InvariantCulture, $"media[{index}].assetPublicId"));
+        }
+
+        for (var index = 0; index < (form.Colours?.Count ?? 0); index++)
+        {
+            Name(form.Colours![index].SwatchAssetPublicId, string.Create(CultureInfo.InvariantCulture, $"colours[{index}].swatchAssetPublicId"));
+        }
+
+        return new CatalogMediaClaim(DesiredMediaUsages(product)
+            .Select(usage => new CatalogMediaSlot(
+                usage.MediaAssetId,
+                usage.UsageRole,
+                fields.TryGetValue(usage.MediaAssetId, out var field) ? field : "media")));
     }
 
     private static string RoleName(ProductMediaRole role) => role switch

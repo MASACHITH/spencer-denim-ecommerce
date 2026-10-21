@@ -201,7 +201,7 @@ public sealed class ContentLockWorkloadTests(SqlServerDatabaseFixture sqlServer)
                 // 200 with nothing written.
                 if (roundCodes.TryGetValue("delete-contested", out var deleteCode) && deleteCode == 204)
                 {
-                    foreach (var actor in new[] { "card", "item", "guide", "campaign" })
+                    foreach (var actor in new[] { "card", "item", "guide", "campaign", "department" })
                     {
                         if (roundCodes.TryGetValue(actor, out var saveCode) && saveCode is >= 200 and < 300)
                         {
@@ -210,12 +210,13 @@ public sealed class ContentLockWorkloadTests(SqlServerDatabaseFixture sqlServer)
                     }
                 }
 
-                // Whoever won, no content owner may be left on a deleted picture. (The department is left out:
-                // the admin department edit writes no usage row and takes no lock — a pre-existing ADM-11 gap.)
+                // Whoever won, no owner may be left on a deleted picture — the department included since #223, which
+                // gave the admin department edit its usage row and its lock.
                 if (await DeletedAsync(host, pictureId))
                 {
                     var holders = await WithDbAsync(host, async db => new[]
                     {
+                        await db.Departments.CountAsync(row => row.HeroImageAssetId == pictureId, Token),
                         await db.MegaMenuPromoCards.CountAsync(row => row.ImageAssetId == pictureId, Token),
                         await db.HomeSectionItems.CountAsync(row => row.ImageAssetId == pictureId, Token),
                         await db.SizeGuides.CountAsync(row => row.ImageAssetId == pictureId, Token),
@@ -225,7 +226,7 @@ public sealed class ContentLockWorkloadTests(SqlServerDatabaseFixture sqlServer)
 
                     if (holders.Any(count => count > 0))
                     {
-                        orphaned.Add(string.Create(CultureInfo.InvariantCulture, $"round {round}: card/item/guide/campaign/usages = {string.Join('/', holders)}"));
+                        orphaned.Add(string.Create(CultureInfo.InvariantCulture, $"round {round}: department/card/item/guide/campaign/usages = {string.Join('/', holders)}"));
                     }
                 }
             }
@@ -381,12 +382,28 @@ public sealed class ContentLockWorkloadTests(SqlServerDatabaseFixture sqlServer)
 
     private static string? Base64(byte[]? version) => version is null ? null : Convert.ToBase64String(version);
 
-    private sealed record DepartmentRow(string? Description, int? HeroImageAssetId, string? SeoTitle, string? SeoDescription);
+    private sealed record DepartmentRow(string? Description, int? HeroImageAssetId, string? SeoTitle, string? SeoDescription)
+    {
+        /// <summary>The department's own usage rows when the test began (#223 writes them), to put back afterwards.</summary>
+        public List<(int AssetId, string Role)> Usages { get; init; } = [];
+    }
 
     private static Task<DepartmentRow> DepartmentRowAsync(MediaTestHost host, int id) =>
-        WithDbAsync(host, db => db.Departments.AsNoTracking().Where(row => row.Id == id)
-            .Select(row => new DepartmentRow(row.Description, row.HeroImageAssetId, row.SeoTitle, row.SeoDescription))
-            .SingleAsync(Token));
+        WithDbAsync(host, async db =>
+        {
+            var owner = id.ToString(CultureInfo.InvariantCulture);
+            var usages = await db.MediaUsages.AsNoTracking()
+                .Where(usage => usage.OwnerType == MediaUsageOwnerTypes.Department && usage.OwnerId == owner)
+                .Select(usage => new { usage.MediaAssetId, usage.UsageRole })
+                .ToListAsync(Token);
+
+            return await db.Departments.AsNoTracking().Where(row => row.Id == id)
+                .Select(row => new DepartmentRow(row.Description, row.HeroImageAssetId, row.SeoTitle, row.SeoDescription))
+                .SingleAsync(Token) with
+            {
+                Usages = usages.Select(usage => (usage.MediaAssetId, usage.UsageRole)).ToList(),
+            };
+        });
 
     /// <summary>Leaves the shared database as found: owners and their usage rows removed, Kids' hero put back.</summary>
     private static async Task CleanUpAsync(MediaTestHost host, int cardId, int itemId, int guideId, int campaignId, int kids, DepartmentRow original)
@@ -414,9 +431,22 @@ public sealed class ContentLockWorkloadTests(SqlServerDatabaseFixture sqlServer)
             await db.SaleCampaigns.Where(row => row.Id == campaignId).ExecuteDeleteAsync(Token);
         }
 
-        // The admin department edit writes no usage row (only the client-asset importer does), so the hero is
-        // the one thing to put back.
+        // Since #223 the admin department edit rewrites its usage row with its hero, so both go back as they were.
+        await Usages(MediaUsageOwnerTypes.Department, kids);
         await db.Departments.Where(row => row.Id == kids)
             .ExecuteUpdateAsync(set => set.SetProperty(row => row.HeroImageAssetId, original.HeroImageAssetId), Token);
+
+        foreach (var (assetId, role) in original.Usages)
+        {
+            db.MediaUsages.Add(new MediaUsage
+            {
+                MediaAssetId = assetId,
+                OwnerType = MediaUsageOwnerTypes.Department,
+                OwnerId = kids.ToString(CultureInfo.InvariantCulture),
+                UsageRole = role,
+            });
+        }
+
+        await db.SaveChangesAsync(Token);
     }
 }

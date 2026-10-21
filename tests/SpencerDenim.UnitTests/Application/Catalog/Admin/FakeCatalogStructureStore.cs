@@ -99,17 +99,53 @@ internal sealed class FakeCatalogStructureStore : ICatalogStructureStore
     public Task<bool> ReadyImageAssetExistsAsync(int assetId, CancellationToken cancellationToken) =>
         Task.FromResult(ReadyImageAssetIds.Contains(assetId));
 
+    /// <summary>
+    /// Asset ids the locked re-check of the next media save should find unusable (#223): a picture a
+    /// media-library delete got to first. Only SQL Server can decide that race; the real proof is in
+    /// <c>CatalogMediaLockRaceTests</c>.
+    /// </summary>
+    public HashSet<int> UnusableAssetIds { get; } = [];
+
+    /// <summary>The claim the last media save was handed, and the owner id it was for.</summary>
+    public (int OwnerId, CatalogMediaClaim Claim)? LastMediaSave { get; private set; }
+
+    /// <summary>The usage rows each owner holds after its saves, keyed by (owner type, owner id).</summary>
+    public Dictionary<(string OwnerType, int OwnerId), List<CatalogMediaSlot>> Usages { get; } = [];
+
+    private bool Refuses(int ownerId, CatalogMediaClaim media)
+    {
+        LastMediaSave = (ownerId, media);
+        media.Unavailable = media.Slots.Where(slot => UnusableAssetIds.Contains(slot.MediaAssetId)).ToList();
+        return media.Unavailable.Count > 0;
+    }
+
+    private void RecordUsages(int ownerId, CatalogMediaClaim media)
+    {
+        if (media.UsageOwnerType is { } ownerType)
+        {
+            Usages[(ownerType, ownerId)] = media.Slots.ToList();
+        }
+    }
+
     public Task<CatalogSaveOutcome> AddCategoryAsync(
         Category category,
         string? parentPath,
         Action<Category> enlistAuditRow,
+        CatalogMediaClaim media,
         int? actingUserId,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(media);
+
         if (NextSaveOutcome is { } forced)
         {
             NextSaveOutcome = null;
             return Task.FromResult(forced);
+        }
+
+        if (Refuses(0, media))
+        {
+            return Task.FromResult(CatalogSaveOutcome.MediaUnavailable);
         }
 
         category.Id = _nextCategoryId++;
@@ -120,9 +156,32 @@ internal sealed class FakeCatalogStructureStore : ICatalogStructureStore
 
         // The real store calls this inside its transaction, once the identity value exists.
         enlistAuditRow(category);
+        LastMediaSave = (category.Id, media);
+        RecordUsages(category.Id, media);
 
         Saves++;
         return Task.FromResult(CatalogSaveOutcome.Saved);
+    }
+
+    public Task<CatalogSaveOutcome> SaveWithMediaAsync(
+        int ownerId,
+        CatalogMediaClaim media,
+        int? actingUserId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(media);
+
+        if (NextSaveOutcome is null)
+        {
+            if (Refuses(ownerId, media))
+            {
+                return Task.FromResult(CatalogSaveOutcome.MediaUnavailable);
+            }
+
+            RecordUsages(ownerId, media);
+        }
+
+        return SaveAsync(actingUserId, cancellationToken);
     }
 
     public Task<CatalogSaveOutcome> SaveAsync(int? actingUserId, CancellationToken cancellationToken)

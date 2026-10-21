@@ -355,6 +355,13 @@ public sealed class AdminCatalogWriteShapeTests(SqlServerDatabaseFixture sqlServ
         await using var scope = _factory!.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
+        // Since #223 a category's save writes MediaUsages rows for its pictures. Left behind, they would name a
+        // category that no longer exists against a shared seeded image (MediaLifecycleTests reads its usages).
+        var owner = categoryId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        await dbContext.MediaUsages
+            .Where(usage => usage.OwnerType == MediaUsageOwnerTypes.Category && usage.OwnerId == owner)
+            .ExecuteDeleteAsync(CancellationToken.None);
+
         await dbContext.Categories
             .IgnoreQueryFilters()
             .Where(category => category.Id == categoryId)

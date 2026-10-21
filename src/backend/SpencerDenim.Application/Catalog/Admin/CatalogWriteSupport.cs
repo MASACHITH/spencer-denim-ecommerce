@@ -1,3 +1,4 @@
+using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Catalog.Admin.Abstractions;
 using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 
@@ -60,6 +61,30 @@ internal static class CatalogWriteSupport
 
         _ => throw new InvalidOperationException($"Unhandled save outcome '{outcome}'."),
     };
+
+    /// <summary>
+    /// The same, for a save that locked and re-checked its pictures (#223): a
+    /// <see cref="CatalogSaveOutcome.MediaUnavailable"/> answer becomes a 400 on each field whose picture failed
+    /// the re-check, the shape the handler's own media check already uses.
+    /// </summary>
+    public static CatalogWriteResult ToResult(CatalogSaveOutcome outcome, int entityId, CatalogMediaClaim media)
+    {
+        ArgumentNullException.ThrowIfNull(media);
+
+        if (outcome != CatalogSaveOutcome.MediaUnavailable)
+        {
+            return ToResult(outcome, entityId);
+        }
+
+        return new CatalogWriteResult.Invalid(media.Unavailable
+            .Select(slot => slot.Field)
+            .Distinct(StringComparer.Ordinal)
+            .Select(field => new ValidationError(
+                field,
+                "That picture was removed from the media library, or is no longer a ready image, while this was "
+                + "being saved. Nothing was saved. Choose another picture and save again."))
+            .ToList());
+    }
 
     /// <summary>
     /// Re-applies doc 08 §6 step 3 to the product a save has just written, once the save has committed.

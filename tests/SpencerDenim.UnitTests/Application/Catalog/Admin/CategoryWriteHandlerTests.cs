@@ -4,6 +4,7 @@ using SpencerDenim.Application.Catalog.Admin.Abstractions;
 using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Catalog;
+using SpencerDenim.Domain.Media;
 
 namespace SpencerDenim.UnitTests.Application.Catalog.Admin;
 
@@ -522,6 +523,73 @@ public sealed class CategoryWriteHandlerTests
 
         Assert.Equal(CatalogConflictCodes.StaleRowVersion, conflict.Code);
         Assert.False(_store.Categories.Single(candidate => candidate.Id == 12).IsDeleted);
+    }
+
+    // ---- #223: pictures claimed under the lock, and recorded as usage rows -------------------------
+
+    [Fact]
+    public async Task A_new_category_claims_its_tile_and_banner_and_records_them_as_usage_rows()
+    {
+        _store.ReadyImageAssetIds.UnionWith([51, 52]);
+
+        var result = await Create(new CreateCategoryCommand(
+            1, null, "Knitwear", "knitwear", null, 51, 52, null, null, null, true, 2, null, null, Actor));
+
+        var created = Assert.IsType<CatalogWriteResult.Succeeded>(result);
+        var (ownerId, claim) = _store.LastMediaSave!.Value;
+
+        Assert.Equal(created.EntityId, ownerId);
+        Assert.Null(claim.LockDepartmentId);
+        Assert.Equal(MediaUsageOwnerTypes.Category, claim.UsageOwnerType);
+        Assert.Equal(
+            [new CatalogMediaSlot(51, MediaUsageRoles.Image, "imageAssetId"), new CatalogMediaSlot(52, MediaUsageRoles.Banner, "bannerAssetId")],
+            claim.Slots);
+        Assert.Equal(2, _store.Usages[(MediaUsageOwnerTypes.Category, created.EntityId)].Count);
+    }
+
+    [Fact]
+    public async Task A_picture_deleted_before_the_create_could_lock_it_is_a_field_error_and_nothing_is_created()
+    {
+        _store.ReadyImageAssetIds.UnionWith([51, 52]);
+        _store.UnusableAssetIds.Add(52);
+        var before = _store.Categories.Count;
+
+        var result = await Create(new CreateCategoryCommand(
+            1, null, "Knitwear", "knitwear", null, 51, 52, null, null, null, true, 2, null, null, Actor));
+
+        var error = Assert.Single(Assert.IsType<CatalogWriteResult.Invalid>(result).Errors);
+        Assert.Equal("bannerAssetId", error.Field);
+        Assert.Equal(before, _store.Categories.Count);
+    }
+
+    [Fact]
+    public async Task An_edit_that_sets_a_tile_image_claims_it_and_a_lost_race_is_a_field_error()
+    {
+        _store.ReadyImageAssetIds.Add(51);
+        var jeans = _store.Categories.Single(category => category.Id == 13);
+
+        Assert.IsType<CatalogWriteResult.Succeeded>(await Update(Edit(jeans) with { ImageAssetId = 51 }));
+        Assert.Equal(new CatalogMediaSlot(51, MediaUsageRoles.Image, "imageAssetId"), Assert.Single(_store.LastMediaSave!.Value.Claim.Slots));
+        Assert.Single(_store.Usages[(MediaUsageOwnerTypes.Category, 13)]);
+
+        _store.UnusableAssetIds.Add(51);
+        var shirts = _store.Categories.Single(category => category.Id == 20);
+        var refused = await Update(Edit(shirts) with { ImageAssetId = 51 });
+
+        Assert.Equal("imageAssetId", Assert.Single(Assert.IsType<CatalogWriteResult.Invalid>(refused).Errors).Field);
+    }
+
+    [Fact]
+    public async Task Removing_a_category_releases_its_usage_rows()
+    {
+        _store.ReadyImageAssetIds.Add(51);
+        var jeans = _store.Categories.Single(category => category.Id == 13);
+        Assert.IsType<CatalogWriteResult.Succeeded>(await Update(Edit(jeans) with { ImageAssetId = 51 }));
+
+        Assert.IsType<CatalogWriteResult.Succeeded>(await Remove(13, jeans.RowVersion));
+
+        Assert.Empty(_store.Usages[(MediaUsageOwnerTypes.Category, 13)]);
+        Assert.Empty(_store.LastMediaSave!.Value.Claim.Slots);
     }
 
     // ---- helpers --------------------------------------------------------------------------------

@@ -131,6 +131,11 @@ public sealed class CreateProductCommandHandler(
             return refusal;
         }
 
+        // #223: every picture and video the new product points at, locked and re-checked inside the store's
+        // transaction before the insert, so a media-library delete racing this create cannot leave the product on
+        // a deleted asset (doc 08 §5.3).
+        var media = ProductWriteRules.MediaClaim(product, command.Form, references);
+
         var outcome = await store.AddProductAsync(
             product,
 
@@ -153,11 +158,12 @@ public sealed class CreateProductCommandHandler(
 
                 await store.EnsureStockRowsAsync(inserted.Id, token);
             },
+            media,
             command.Actor.UserId,
             cancellationToken);
 
         return await CatalogWriteSupport.WithCampaignPricingAsync(
-            CatalogWriteSupport.ToResult(outcome, product.Id),
+            CatalogWriteSupport.ToResult(outcome, product.Id, media),
             campaigns,
             cancellationToken);
     }
@@ -306,10 +312,16 @@ public sealed class UpdateProductCommandHandler(
         await store.SyncProductMediaUsagesAsync(
             product.Id, ProductWriteRules.DesiredMediaUsages(product), cancellationToken);
 
+        // #223: the save locks every asset the product will point at (ascending id) and re-checks it inside its
+        // transaction, the lock MediaService.DeleteAsync takes first, so a save and a delete of the same picture
+        // cannot both succeed (doc 08 §5.3).
+        var media = ProductWriteRules.MediaClaim(product, command.Form, references);
+
         return await CatalogWriteSupport.WithCampaignPricingAsync(
             CatalogWriteSupport.ToResult(
-                await store.SaveAsync(command.Actor.UserId, cancellationToken),
-                product.Id),
+                await store.SaveWithMediaAsync(media, command.Actor.UserId, cancellationToken),
+                product.Id,
+                media),
             campaigns,
             cancellationToken);
     }
