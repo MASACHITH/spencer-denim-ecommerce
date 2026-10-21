@@ -120,3 +120,52 @@ server {
         proxy_pass http://spencer_denim_production;
     }
 }
+
+# =====================================================================================================================
+# OPTIONAL, COMMENTED OUT: send www.<domain> to <domain> (301). Off by default; read all of this before switching on.
+# (#195, docs/16 §D "www and the canonical host".) Nothing above depends on it, and nothing here is needed to go live.
+#
+# The shop's one canonical address is the apex (SD_PUBLIC_ORIGIN, the sitemap, robots.txt, og:url, every email link).
+# Without this block a visitor who types www.<domain> gets whatever the host nginx does for an unknown name: nothing
+# useful (the catch-all, or another site). With it, www answers 301 -> https://<domain>/ and keeps the path and query.
+#
+# What switching it on requires, in this order:
+#   1. DNS: an A (and AAAA if the apex has one) record for www.<domain> pointing at this server, or a CNAME to the
+#      apex. certbot cannot issue for a name that does not resolve here.
+#   2. The certificate must name www as well, because the TLS handshake happens BEFORE the redirect and a browser
+#      refuses a certificate that does not cover the name it asked for:
+#         certbot certonly --webroot -w /var/www/certbot -d <domain> -d www.<domain>
+#      (or --expand on the existing certificate). Both names live in ONE certificate, in the directory named after
+#      the first -d, which is what ssl_certificate below points at.
+#   3. SD_PUBLIC_HOSTS in config/app.env stays the apex ALONE, and so does the server_name of the two main server
+#      blocks above. The redirect never reaches the storefront, so the storefront never sees a www request; adding www to
+#      SD_PUBLIC_HOSTS would make it render a second, duplicate copy of the shop for search engines.
+#   4. Uncomment the two blocks, replace every <domain>, nginx -t, reload, then
+#         scripts/verify-public.sh production https://<domain> --www-redirect
+#
+# server {
+#     listen 80;
+#     listen [::]:80;
+#     server_name www.<domain>;
+#
+#     location ^~ /.well-known/acme-challenge/ {
+#         root /var/www/certbot;
+#         default_type text/plain;
+#     }
+#     location / {
+#         return 301 https://<domain>$request_uri;
+#     }
+# }
+#
+# server {
+#     listen 443 ssl http2;
+#     listen [::]:443 ssl http2;
+#     server_name www.<domain>;
+#
+#     ssl_certificate     /etc/letsencrypt/live/<domain>/fullchain.pem;
+#     ssl_certificate_key /etc/letsencrypt/live/<domain>/privkey.pem;
+#     include /etc/letsencrypt/options-ssl-nginx.conf;
+#     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+#
+#     return 301 https://<domain>$request_uri;
+# }

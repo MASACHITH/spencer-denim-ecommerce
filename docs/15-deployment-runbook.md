@@ -4,6 +4,8 @@ Task **W0-15** (issue #41). How the platform is packaged and run on the Hostinge
 **staging** and **production**. Files live in [`deploy/`](../deploy/). Nothing here has been run on the server
 yet; §10 lists what the owner still has to confirm.
 
+> **First bring-up of UAT (staging) and Live (production):** follow the ordered run sheet [16 · UAT and Live run sheet](16-uat-and-live-run-sheet.md) (#195); it also wires the Data Protection certificate of §4 / §10 #8 and corrects the order of §5 step 5 for a new host.
+
 ## 1. What runs where
 
 ```
