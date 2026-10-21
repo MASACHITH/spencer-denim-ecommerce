@@ -785,6 +785,100 @@ test.describe('the suggestions overlay (SRCH-01)', () => {
   });
 });
 
+/**
+ * #118: "search suggestions never render at 768 px" — and why it was never about 768 px.
+ *
+ * **The mechanism, measured.** On a server-rendered load the header is hydrated and live before the
+ * router's first navigation has finished (it waits for the lazy route chunks). `SiteHeader` closed every
+ * panel on each `NavigationEnd`, so a shopper who opened the search panel in that window had it shut
+ * under them by the *first* navigation's end: the panel took `hidden`, the field lost focus, the popup
+ * closed on `focusout`, and the rest of their typing went nowhere. On `a3490d3` a cold run logged it
+ * exactly — click 815 ms, first keystrokes 915–945 ms, the first navigation's `replaceState` 936 ms, panel
+ * hidden 994 ms, `focusout` 1019 ms, and one suggestion request for "je". 768 px was the only width the
+ * suite drove the **panel** at; every other suggestion test uses the results page's own box or the inline
+ * box from 1280 px, which no navigation closes.
+ *
+ * **Why it was intermittent:** the window is the time between hydration and the first navigation's end,
+ * which depends on how fast the chunks arrive. These tests hold the route chunks back until the shopper
+ * has opened the box and seen suggestions, so the first navigation ends **after** that every time — the
+ * worst case, deterministically, rather than a timing that a busy machine produces 2 runs in 3.
+ *
+ * W3-01 fixed `/` with `event.id > 1`; `/account` is the case that still failed (3 of 3), because a
+ * signed-out visitor's first navigation is redirected by `signedInGuard` and the first one to *succeed*
+ * is navigation 2.
+ */
+test.describe('a search box opened during start-up keeps its suggestions (#118)', () => {
+  for (const path of ['/', '/account']) {
+    for (const width of BREAKPOINTS) {
+      test(`${path} at ${width} px`, async ({ page }) => {
+        let release!: () => void;
+        const routeChunks = new Promise<void>((resolve) => (release = resolve));
+
+        // Every script asked for after the app's own start-up request is a lazy chunk the first
+        // navigation is waiting on; the header is already rendered and hydrated by then.
+        let bootstrapped = false;
+        page.on('request', (request) => {
+          if (new URL(request.url()).pathname === '/api/cart') {
+            bootstrapped = true;
+          }
+        });
+        await page.route(/\.js$/, async (route) => {
+          if (bootstrapped) {
+            await routeChunks;
+          }
+          await route.continue();
+        });
+
+        // The router writes the first navigation's state with `replaceState` when it ends.
+        await page.addInitScript(() => {
+          const replace = history.replaceState.bind(history);
+          history.replaceState = (...args: Parameters<History['replaceState']>) => {
+            (window as unknown as { __firstNavigationEnded: boolean }).__firstNavigationEnded = true;
+            return replace(...args);
+          };
+        });
+
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(path);
+
+        // Below 1280 px the header's box is in a panel the search button opens; from 1280 it is inline.
+        const usesPanel = width < 1280;
+        const scope = usesPanel
+          ? page.locator('#header-search-panel')
+          : page.locator('.site-header__search-inline');
+
+        if (usesPanel) {
+          await page.getByTestId('search-toggle').click();
+          await expect(scope).toBeVisible();
+        }
+
+        const box = scope.locator('input[role="combobox"]');
+        await box.click();
+        await box.pressSequentially('jeans', { delay: 20 });
+        await expect(scope.locator('[role="option"]').first()).toContainText('Test Product 1');
+
+        // The precondition that makes this a test of the window and not of a page already settled.
+        expect(
+          await page.evaluate(
+            () => (window as unknown as { __firstNavigationEnded?: boolean }).__firstNavigationEnded === true,
+          ),
+        ).toBe(false);
+
+        release();
+        await page.waitForFunction(
+          () => (window as unknown as { __firstNavigationEnded?: boolean }).__firstNavigationEnded === true,
+        );
+
+        await expect(scope).toBeVisible();
+        await expect(box).toBeFocused();
+        await expect(box).toHaveValue('jeans');
+        await expect(box).toHaveAttribute('aria-expanded', 'true');
+        await expect(scope.locator('[role="option"]').first()).toContainText('Test Product 1');
+      });
+    }
+  }
+});
+
 test.describe('responsive and accessible', () => {
   for (const width of BREAKPOINTS) {
     test(`no horizontal scroll at ${width} px, with the overlay open`, async ({ page }) => {

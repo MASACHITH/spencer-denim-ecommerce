@@ -14,7 +14,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { DOCUMENT } from '@angular/common';
-import { NavigationEnd, Router, RouterLink } from '@angular/router';
+import { Navigation, NavigationEnd, Router, RouterLink } from '@angular/router';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { filter } from 'rxjs';
 import { BRAND, Icon } from '@spencer-denim/shared';
@@ -523,9 +523,22 @@ export class SiteHeader {
     // start-up request to answer — and `search.e2e.ts` "one Escape" went from 1 in 10 failing on the base
     // commit to 10 in 10 (round-2 independent tester, measured: the initial `replaceState` landed
     // 1–100 ms after the hydrated click on every run of the branch, and 46–322 ms before it on base).
+    //
+    // **"The first navigation" is the first one to succeed, not navigation id 1 (#118).** W3-01's
+    // `event.id > 1` was right for `/` and wrong for any first page whose guard redirects: `/account`
+    // signed out is navigation 1, cancelled by `signedInGuard`'s UrlTree, then navigation 2 to the sign-in
+    // page — and navigation 2's NavigationEnd closed the panel exactly as navigation 1's used to (measured
+    // in `search.e2e.ts` "a panel opened during start-up survives the first navigation", 3 of 3 at 768 px
+    // on `/account` before this line, with the route chunks held back so the window is deterministic).
+    // The router knows the answer directly: a navigation that started with no successful navigation behind
+    // it has `previousNavigation === null`, whatever its id, however many redirects led to it, and
+    // `lastSuccessfulNavigation` is set to it just before its NavigationEnd is emitted.
     this.router.events
       .pipe(
-        filter((event) => event instanceof NavigationEnd && event.id > 1),
+        filter(
+          (event) =>
+            event instanceof NavigationEnd && isNavigationAway(this.router.lastSuccessfulNavigation()),
+        ),
         takeUntilDestroyed(),
       )
       .subscribe(() => {
@@ -688,4 +701,14 @@ export class SiteHeader {
       root.style.removeProperty('--header-height');
     });
   }
+}
+
+/**
+ * Whether the navigation that has just succeeded took the shopper **away** from a page they were already on,
+ * which is when the header tidies its panels up. False for the application's first successful navigation —
+ * the page the server already rendered and the shopper may already be using — however many cancelled or
+ * redirected attempts preceded it (#118). Exported for the unit test of that rule.
+ */
+export function isNavigationAway(succeeded: Navigation | null): boolean {
+  return succeeded !== null && succeeded.previousNavigation !== null;
 }

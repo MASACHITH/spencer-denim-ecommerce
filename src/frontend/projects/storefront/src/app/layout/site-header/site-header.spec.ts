@@ -1,11 +1,11 @@
 import { provideTestDeliveryCountries } from '../../core/delivery/delivery-country.testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { ApplicationRef } from '@angular/core';
+import { ApplicationRef, inject } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { Router, provideRouter } from '@angular/router';
+import { Navigation, Router, provideRouter } from '@angular/router';
 
-import { SiteHeader } from './site-header';
+import { SiteHeader, isNavigationAway } from './site-header';
 import { AccountApi } from '../../core/account/account-api';
 import { CustomerSessionDto } from '../../core/account/account.model';
 import { CartApi } from '../../core/cart/cart-api';
@@ -66,6 +66,13 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
           { path: 'bag', children: [] },
           { path: 'wishlist', children: [] },
           { path: 'account', children: [] },
+          // A first page whose guard redirects, as `/account` does for a visitor who is not signed in
+          // (#118): navigation 1 is cancelled and navigation 2 is the first to succeed.
+          {
+            path: 'guarded',
+            canActivate: [() => inject(Router).createUrlTree(['/account'])],
+            children: [],
+          },
         ]),
         provideHttpClient(),
         provideHttpClientTesting(), provideTestDeliveryCountries(),
@@ -343,6 +350,36 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
     await router.navigateByUrl('/wishlist');
     await settle();
     expect(header.searchOpen()).toBe(false);
+  });
+
+  // #118, the case `event.id > 1` missed: the first navigation to *succeed* is navigation 2 when the first
+  // page's guard redirects, and its NavigationEnd closed the panel exactly as navigation 1's used to.
+  it('leaves an open panel alone when the first navigation is redirected by a guard', async () => {
+    const router = TestBed.inject(Router);
+    const header = fixture.componentInstance;
+
+    header.toggleSearch();
+    header.openMenu();
+    await settle();
+
+    await router.navigateByUrl('/guarded');
+    await settle();
+    expect(router.url).toBe('/account');
+    expect(header.searchOpen()).toBe(true);
+    expect(header.menuOpen()).toBe(true);
+
+    await router.navigateByUrl('/wishlist');
+    await settle();
+    expect(header.searchOpen()).toBe(false);
+    expect(header.menuOpen()).toBe(false);
+  });
+
+  it('counts a navigation as "away" only when a successful one came before it', () => {
+    expect(isNavigationAway(null)).toBe(false);
+    expect(isNavigationAway({ previousNavigation: null } as unknown as Navigation)).toBe(false);
+    expect(
+      isNavigationAway({ previousNavigation: { id: 1 } } as unknown as Navigation),
+    ).toBe(true);
   });
 
   it('shows the five main navigation entries', () => {
