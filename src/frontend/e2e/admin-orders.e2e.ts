@@ -665,6 +665,72 @@ test.describe('the couriers screen', () => {
 
     await expect(page.locator('[data-testid="courier-1"]')).toContainText('Not in use');
   });
+
+  // ---- ADM-22 verification (2026-10-21): edit, reorder and switch off, end to end on the screen --------
+
+  test('edits a courier and shows the saved name, telephone and tracking address', async ({ page }) => {
+    await addCourier(page, 'xunit-edit-me');
+
+    await page.locator('[data-testid="edit-1"]').click();
+    await page.locator('[data-testid="courier-name"]').fill('xunit-edited');
+    await page.locator('[data-testid="courier-phone"]').fill('011 234 5678');
+    await page
+      .locator('[data-testid="courier-template"]')
+      .fill('https://track.example.test/v2?no={trackingNumber}');
+    await page.locator('[data-testid="courier-save"]').click();
+
+    const row = page.locator('[data-testid="courier-1"]');
+    await expect(row).toContainText('xunit-edited');
+    await expect(row).toContainText('011 234 5678');
+    await expect(row).toContainText('https://track.example.test/v2?no={trackingNumber}');
+    await expect(page.locator('[data-testid="couriers-said"]')).toContainText('xunit-edited is saved.');
+
+    // The form is back to "Add a courier", so the next save cannot overwrite this one by accident.
+    await expect(page.locator('[data-testid="courier-name"]')).toHaveValue('');
+    await expect(page.getByRole('heading', { level: 2, name: 'Add a courier' })).toBeVisible();
+  });
+
+  test('reorders couriers by "Order in the list", and a switched-off one drops below the active ones', async ({
+    page,
+  }) => {
+    await open(page, '/orders/couriers');
+
+    for (const [name, sort] of [
+      ['xunit-sort-five', '5'],
+      ['xunit-sort-one', '1'],
+    ] as const) {
+      await page.locator('[data-testid="courier-name"]').fill(name);
+      await page.locator('[data-testid="courier-sort"]').fill(sort);
+      await page.locator('[data-testid="courier-save"]').click();
+      await expect(page.locator('[data-testid="couriers"]')).toContainText(name);
+    }
+
+    const names = page.locator('[data-testid="couriers"] .couriers-row__name');
+    await expect(names).toHaveText([/xunit-sort-one/, /xunit-sort-five/]);
+
+    // Courier 1 ("five") gets 0 and moves to the top.
+    await page.locator('[data-testid="edit-1"]').click();
+    await page.locator('[data-testid="courier-sort"]').fill('0');
+    await page.locator('[data-testid="courier-save"]').click();
+    await expect(names).toHaveText([/xunit-sort-five/, /xunit-sort-one/]);
+
+    // Switched off, it goes below every active courier whatever its number.
+    await page.locator('[data-testid="edit-1"]').click();
+    await page.locator('[data-testid="courier-active"]').uncheck();
+    await page.locator('[data-testid="courier-save"]').click();
+    await expect(names).toHaveText([/xunit-sort-one/, /xunit-sort-five[\s\S]*Not in use/]);
+  });
+
+  test('refuses a tracking address that is not https, naming the box', async ({ page }) => {
+    await open(page, '/orders/couriers');
+
+    await page.locator('[data-testid="courier-name"]').fill('xunit-plain-http');
+    await page.locator('[data-testid="courier-template"]').fill('http://example.test/{trackingNumber}');
+    await page.locator('[data-testid="courier-save"]').click();
+
+    await expect(page.locator('[data-testid="error-template"]')).toContainText('https://');
+    await expect(page.locator('[data-testid="couriers-empty"]')).toBeVisible();
+  });
 });
 
 test.describe('the screens themselves', () => {

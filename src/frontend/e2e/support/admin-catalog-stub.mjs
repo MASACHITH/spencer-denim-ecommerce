@@ -977,6 +977,17 @@ function withSeconds(value) {
 }
 
 
+/** The API's Clean(): trimmed, and blank is null. */
+function cleanCourierText(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const text = String(value).trim();
+
+  return text.length === 0 ? null : text;
+}
+
 function courierErrors(state, body, selfId) {
   const errors = {};
 
@@ -992,17 +1003,34 @@ function courierErrors(state, body, selfId) {
 
   const name = String(body.name ?? '').trim();
 
+  // The same bounds as SaveCourierCommandHandler (name 80, template 500, phone 20 printable ASCII) and the
+  // same case-insensitive uniqueness as the column's collation, so the stub is never more permissive than
+  // the API it stands in for (#126).
   if (name.length === 0) {
     errors.name = ['Give the courier a name.'];
+  } else if (name.length > 80) {
+    errors.name = ['Keep the courier\u2019s name to 80 characters or fewer.'];
   } else if (
-    state.couriers.some((candidate) => candidate.id !== selfId && candidate.name === name)
+    state.couriers.some(
+      (candidate) => candidate.id !== selfId && candidate.name.toLowerCase() === name.toLowerCase(),
+    )
   ) {
     errors.name = [`There is already a courier called \u201c${name}\u201d.`];
   }
 
+  const phone = body.phone === null ? '' : String(body.phone).trim();
+
+  if (phone.length > 20) {
+    errors.phone = ['Keep the telephone number to 20 characters or fewer.'];
+  } else if (phone.length > 0 && !/^[\x20-\x7E]+$/.test(phone)) {
+    errors.phone = ['Use ordinary digits and punctuation.'];
+  }
+
   const template = body.trackingUrlTemplate === null ? null : String(body.trackingUrlTemplate).trim();
 
-  if (template !== null && template.length > 0) {
+  if (template !== null && template.length > 500) {
+    errors.trackingUrlTemplate = ['Keep the tracking address to 500 characters or fewer.'];
+  } else if (template !== null && template.length > 0) {
     if (!template.includes('{trackingNumber}')) {
       errors.trackingUrlTemplate = [
         'The tracking address must contain {trackingNumber} where the tracking number goes.',
@@ -2325,7 +2353,15 @@ const server = createServer(async (request, response) => {
   }
 
   if (path === '/api/admin/couriers' && request.method === 'GET') {
-    return json(response, 200, state.couriers);
+    // AdminOrderReader.ReadCouriersAsync's order: active first, then "Order in the list", then name.
+    const ordered = [...state.couriers].sort(
+      (a, b) =>
+        Number(b.isActive) - Number(a.isActive)
+        || a.sortOrder - b.sortOrder
+        || a.name.localeCompare(b.name),
+    );
+
+    return json(response, 200, ordered);
   }
 
   if (path === '/api/admin/couriers' && request.method === 'POST') {
@@ -2343,8 +2379,8 @@ const server = createServer(async (request, response) => {
     const courier = {
       id: state.couriers.length + 1,
       name: String(body.name).trim(),
-      trackingUrlTemplate: body.trackingUrlTemplate ?? null,
-      phone: body.phone ?? null,
+      trackingUrlTemplate: cleanCourierText(body.trackingUrlTemplate),
+      phone: cleanCourierText(body.phone),
       isActive: body.isActive === true,
       sortOrder: Number(body.sortOrder ?? 0),
       ordersShipped: 0,
@@ -2374,8 +2410,8 @@ const server = createServer(async (request, response) => {
     }
 
     courier.name = String(body.name).trim();
-    courier.trackingUrlTemplate = body.trackingUrlTemplate ?? null;
-    courier.phone = body.phone ?? null;
+    courier.trackingUrlTemplate = cleanCourierText(body.trackingUrlTemplate);
+    courier.phone = cleanCourierText(body.phone);
     courier.isActive = body.isActive === true;
     courier.sortOrder = Number(body.sortOrder ?? 0);
 
