@@ -128,6 +128,63 @@ if [ "$(id -u)" -ne 0 ]; then
   untouched "$b" "without sudo"
 fi
 
+echo "== links to production are refused, whatever the text of the path says (re-check of #219, F1)"
+# mklink <link> <target>: a Windows junction (no admin rights needed; Git Bash treats it as a symlink), else ln -s.
+mklink() {
+  if command -v cygpath >/dev/null 2>&1 && command -v powershell >/dev/null 2>&1; then
+    powershell -NoProfile -Command "New-Item -ItemType Junction -Path '$(cygpath -w "$1")' -Target '$(cygpath -w "$2")' | Out-Null" >/dev/null 2>&1
+  else
+    ln -s "$2" "$1"
+  fi
+  [ -L "$1" ] || [ "$(readlink -f -- "$1")" != "$1" ]
+}
+prod_intact() {   # base label -> production's files all still there
+  local b="$1" n=0 d
+  for d in "$b/db/production/data" "$b/db/production/backups" "$b/apps/production/spencer-denim-app/data"; do
+    [ -f "$d/file.mdf" ] && [ -f "$d/.dotfile" ] && [ -f "$d/sub/deeper/f" ] && n=$((n + 1))
+  done
+  [ "$n" = 3 ] && ok "$2: production's files are all still there" || bad "$2: PRODUCTION FILES WERE DELETED ($n of 3 directories intact)"
+}
+# A: the whole staging base is a junction to production, and there is no db.env to give it away.
+b="$(new_layout linkA)"
+rm -rf "$b/db/staging" "$b/apps/staging"; rm -f "$b/db/production/config/db.env"
+if mklink "$b/db/staging" "$b/db/production" && mklink "$b/apps/staging" "$b/apps/production"; then
+  wipe "$b"
+  [ "$RC" != 0 ] && ok "A (staging base -> production, no db.env): refused" || bad "A: went ahead"
+  expect_in "A: ... saying it resolves elsewhere" "$OUT" "resolves to"
+  expect_not_in_out() { printf '%s\n' "$OUT" | grep -qF -- "$1" && bad "A: output says '$1'" || ok "A: does not claim '$1'"; }
+  expect_not_in_out "Staging wiped"
+  prod_intact "$b" "A"
+  grep -q 'down' "$b/log" && bad "A: a stack was stopped" || ok "A: no stack was stopped"
+  grep -q '^install' "$b/log" && bad "A: install.sh ran" || ok "A: install.sh did not run"
+else
+  bad "A: could not create the junction/link for the test"
+fi
+# C: only staging's data directory is a junction to production's.
+b="$(new_layout linkC)"
+rm -rf "$b/db/staging/data"
+if mklink "$b/db/staging/data" "$b/db/production/data"; then
+  wipe "$b"
+  [ "$RC" != 0 ] && ok "C (staging/data -> production/data): refused" || bad "C: went ahead"
+  expect_in "C: ... saying it resolves elsewhere" "$OUT" "resolves to"
+  printf '%s\n' "$OUT" | grep -qF "Verified empty" && bad "C: claimed 'Verified empty'" || ok "C: does not claim 'Verified empty'"
+  prod_intact "$b" "C"
+  left=0; for d in "$b/db/staging/backups" "$b/apps/staging/spencer-denim-app/data"; do [ -f "$d/.dotfile" ] && left=$((left + 1)); done
+  [ "$left" = 2 ] && ok "C: the real staging directories were not touched either" || bad "C: staging files deleted before the refusal"
+  grep -q 'down\|^install' "$b/log" && bad "C: a stack was stopped or install.sh ran" || ok "C: no stack stopped, install.sh not run"
+else
+  bad "C: could not create the junction/link for the test"
+fi
+# A missing db.env (no link involved) is now refused instead of skipped.
+b="$(new_layout nodbenv)"; rm -f "$b/db/staging/config/db.env"; wipe "$b"
+[ "$RC" != 0 ] && ok "a missing staging db.env: refused" || bad "a missing db.env went ahead"
+expect_in "... saying so" "$OUT" "is missing: cannot prove this is staging"; untouched "$b" "missing db.env"
+# A relative base (an override) is refused.
+b="$(new_layout relbase)"
+OUT="$(cd "$b" && SD_APPS_BASE=apps SD_DB_BASE=db SD_WIPE_ALLOW_NONROOT=1 SD_WIPE_TTY="$b/tty" SD_WIPE_INSTALL="$work/fake-install.sh" FAKE_LOG="$b/log" PATH="$stubs:$PATH" bash "$script" 2>&1 </dev/null)"; RC=$?
+[ "$RC" != 0 ] && ok "a relative SD_APPS_BASE/SD_DB_BASE: refused" || bad "relative bases accepted"
+expect_in "... saying so" "$OUT" "is not an absolute path"; untouched "$b" "relative base"
+
 echo "== a deletion that silently does nothing is caught (the M1 failure mode)"
 b="$(new_layout lazy)"; EXTRA_PATH="$lazy" wipe "$b"
 [ "$RC" != 0 ] && ok "exits non-zero when files are left" || bad "exit 0 although nothing was deleted"

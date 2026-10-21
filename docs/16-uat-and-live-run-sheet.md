@@ -845,8 +845,8 @@ stops with an error, naming what is left, if one is not**; only then runs `insta
 owners. *Expect:* `Verified empty: …` and `Staging wiped.` Anything else: stop and paste the output.
 
 Why it cannot touch Live: it takes **no** environment argument (`staging` is a literal in the script, and any argument is refused);
-every directory it deletes in is checked to lie under `…/staging/…`; it stops the database stack only if staging's own `db.env` says
-`SD_ENV=staging`; and it waits for the typed confirmation. The shell variables of a session that also did Live (D1) point at
+every directory it deletes in (and each base above it) must **resolve to** itself under `…/staging/…`, so a symbolic link or
+junction anywhere in the path, e.g. `staging` -> `production`, is refused; staging's own `db.env` must exist and say `SD_ENV=staging`; and it waits for the typed confirmation. The shell variables of a session that also did Live (D1) point at
 production, which is why none of them is used.
 
 (The earlier version of this block ran `sudo rm -rf -- "$DB"/data/* …` from `deploy1`'s shell. `deploy1` cannot list the mode-770

@@ -14,7 +14,9 @@
 #
 # It can never touch production:
 #   * it takes NO environment argument: "staging" is a literal below, and any argument at all is refused;
-#   * every path it deletes in is checked to sit under .../staging/... ;
+#   * every path it deletes in is checked to sit under .../staging/... AND to resolve to exactly itself (absolute, no
+#     symbolic link or junction in any component, the bases included), so a link to production is refused;
+#   * staging's own db.env must exist and say SD_ENV=staging;
 #   * the database stack is stopped with an explicit project name (sd-staging-database), and only if staging's own
 #     db.env says SD_ENV=staging (so a db.env copied from production cannot make it stop production's SQL Server);
 #   * a person has to type "wipe staging" at the terminal.
@@ -51,11 +53,24 @@ for d in "${targets[@]}"; do
   [ -d "$d" ] || die "$d does not exist: is staging installed here? Nothing was changed"
 done
 
+# The text checks above are not enough: a symbolic link (or a Windows junction) ANYWHERE along a path, e.g.
+# /opt/server/database/staging -> production, is followed by the kernel, and find would delete production's files.
+# So every base, and every directory deleted in, must resolve to exactly itself: absolute, no link in any component.
+for b in "$SD_APPS_BASE" "$SD_DB_BASE"; do
+  case "$b" in /*) ;; *) die "refusing: base directory '$b' is not an absolute path. Nothing was changed" ;; esac
+  real="$(readlink -f -- "$b")" || die "refusing: cannot resolve $b. Nothing was changed"
+  [ "$real" = "$b" ] || die "refusing: base directory $b resolves to $real (a symbolic link somewhere in it). Nothing was changed"
+done
 db_env="$db/config/db.env"
-if [ -f "$db_env" ]; then
-  db_sd_env="$(env_value "$db_env" SD_ENV)"
-  [ "$db_sd_env" = staging ] || die "$db_env says SD_ENV=$db_sd_env, not staging: refusing to stop that database stack. Nothing was changed"
-fi
+for d in "${targets[@]}" "$db_env"; do
+  real="$(readlink -f -- "$d")" || die "refusing: cannot resolve $d. Nothing was changed"
+  [ "$real" = "$d" ] || die "refusing: $d resolves to $real (a symbolic link or junction somewhere in it). Nothing was changed"
+done
+
+# Staging's own db.env must exist and say staging: without it there is no proof that this tree is staging.
+[ -f "$db_env" ] || die "$db_env is missing: cannot prove this is staging. Nothing was changed"
+db_sd_env="$(env_value "$db_env" SD_ENV)"
+[ "$db_sd_env" = staging ] || die "$db_env says SD_ENV=$db_sd_env, not staging: refusing to stop that database stack. Nothing was changed"
 
 # --- confirmation -------------------------------------------------------------------------------------------------
 tty="${SD_WIPE_TTY:-/dev/tty}"
