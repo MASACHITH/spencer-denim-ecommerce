@@ -370,6 +370,57 @@ public sealed class MediaLockTesterTests(SqlServerDatabaseFixture sqlServer)
         }
     }
 
+    // ================================================================== category usage rows on create
+
+    /// <summary>
+    /// A new category with a tile image and a banner writes both usage rows in its create, so the library's
+    /// "used in…" panel names it. The delete would refuse anyway through its direct foreign-key check, which is
+    /// why only the rows themselves, and the detail endpoint that reads them, can show they were written.
+    /// </summary>
+    [Fact]
+    public async Task A_new_category_records_its_image_and_banner_as_usage_rows_the_library_lists()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
+
+        await using var host = MediaTestHost.Create(sqlServer.ConnectionString);
+        using var client = await host.SignInAsync(Everything);
+
+        var assets = new List<int>();
+        var categories = new List<int>();
+
+        try
+        {
+            var image = await AddImageAsync(host, assets);
+            var banner = await AddImageAsync(host, assets);
+            var women = await ScalarAsync(host, $"SELECT Id FROM catalog.Departments WHERE Slug = 'women'");
+
+            var categoryId = await CreatedIdAsync(await SendAsync(client, HttpMethod.Post, CategoriesUrl, new Dictionary<string, object?>
+            {
+                ["departmentId"] = women,
+                ["parentCategoryId"] = null,
+                ["name"] = "T223T usage on create",
+                ["slug"] = "t223t-usage-on-create",
+                ["imageAssetId"] = image.Id,
+                ["bannerAssetId"] = banner.Id,
+                ["showInMegaMenu"] = false,
+            }));
+            categories.Add(categoryId);
+
+            Assert.Equal(1, await ScalarAsync(host, $"SELECT COUNT(*) FROM media.MediaUsages WHERE OwnerType = 'Category' AND OwnerId = CAST({categoryId} AS varchar(100)) AND MediaAssetId = {image.Id} AND UsageRole = 'Image'"));
+            Assert.Equal(1, await ScalarAsync(host, $"SELECT COUNT(*) FROM media.MediaUsages WHERE OwnerType = 'Category' AND OwnerId = CAST({categoryId} AS varchar(100)) AND MediaAssetId = {banner.Id} AND UsageRole = 'Banner'"));
+
+            using var detail = await client.GetAsync(new Uri($"/api/admin/media/{image.PublicId}", UriKind.Relative), Token);
+            var body = await detail.Content.ReadAsStringAsync(Token);
+            Assert.True(detail.StatusCode == HttpStatusCode.OK, $"{(int)detail.StatusCode}: {body}");
+            Assert.Contains("T223T usage on create", body, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await CleanUpAsync(host, [], categories, assets);
+        }
+    }
+
     // ================================================================== a save retried after a failed commit
 
     /// <summary>
