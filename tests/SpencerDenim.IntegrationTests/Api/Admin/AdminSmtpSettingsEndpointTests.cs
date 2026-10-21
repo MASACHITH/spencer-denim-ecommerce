@@ -136,6 +136,36 @@ public sealed class AdminSmtpSettingsEndpointTests(SqlServerDatabaseFixture sqlS
         }
     }
 
+    /// <summary>
+    /// A valid Super Admin session is not enough: both routes require the antiforgery header as every other admin
+    /// write does (independent tester, 2026-10-21 — the developer's own tests always sent it, so a header the
+    /// handlers require but the test suite never withheld was unproven).
+    /// </summary>
+    [Fact]
+    public async Task Both_routes_refuse_a_super_admin_session_with_no_antiforgery_header()
+    {
+        await using var world = await StartAsync();
+        var (client, _) = await SignInSuperAdminAsync(world);
+
+        try
+        {
+            Assert.True(client.DefaultRequestHeaders.Remove(MediaTestHost.AntiforgeryHeader));
+
+            using var save = await client.PutAsJsonAsync(new Uri(SmtpUrl, UriKind.Relative), AccountA(await VersionAsync(world)), JsonOptions, Token);
+            using var test = await client.PostAsJsonAsync(new Uri(TestUrl, UriKind.Relative), AccountA(null), JsonOptions, Token);
+
+            Assert.Equal(HttpStatusCode.BadRequest, save.StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest, test.StatusCode);
+            Assert.Null(await ValueAsync(world, SettingKeys.Smtp.Host));
+            Assert.Empty(world.Sink.Sent);
+        }
+        finally
+        {
+            await ClearAccountAsync(world);
+            client.Dispose();
+        }
+    }
+
     // ---- save, read, audit, alert, dual send -----------------------------------------------------------------
 
     [Fact]

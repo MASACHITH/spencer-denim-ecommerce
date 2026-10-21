@@ -145,6 +145,28 @@ public sealed class SmtpSettingsTests
         Assert.Null(SmtpSettings.FromOptions(new SmtpOptions { Host = "h.test", FromAddress = "a@b.test", Port = 0 }));
     }
 
+    /// <summary>
+    /// A user name saved with <i>no</i> password (encryption still on) is not one of the cross-field rules
+    /// (<c>SmtpSettingRules</c> and <c>UpdateSmtpSettingsCommandHandler.CrossFieldErrors</c> only refuse a user name
+    /// with encryption <i>off</i>), so the resolver takes the rows as complete and valid — it does not silently fall
+    /// back to configuration. A server that actually requires that password fails loudly at send time (the sweep's
+    /// ladder, then <c>EmailDeliveryFailed</c>), which is this codebase's stated preference over a quiet swap to a
+    /// channel nobody chose. Independent tester, 2026-10-21: pinning the behaviour because the attack scenario
+    /// ("a valid host with a half-filled account") was otherwise unproven for this specific combination.
+    /// </summary>
+    [Fact]
+    public void A_username_saved_with_no_password_is_still_a_complete_account_not_a_fallback()
+    {
+        var effective = SmtpSettingsResolver.Resolve(
+            CompleteRows(username: "rows-user", password: null, startTls: "true"),
+            ConfiguredOptions);
+
+        Assert.Equal(SmtpSettingsSource.Settings, effective.Source);
+        Assert.Equal("rows-user", effective.Settings!.Username);
+        Assert.Null(effective.Settings.Password);
+        Assert.Null(effective.IgnoredStoredReason);
+    }
+
     // ---- rules ------------------------------------------------------------------------------------------------
 
     [Theory]
@@ -312,6 +334,7 @@ public sealed class SmtpSettingsTests
     [InlineData("fromName", "Shop\nBcc: x@y.test")]
     [InlineData("username", "a\rb")]
     [InlineData("password", "pass\nword")]
+    [InlineData("password", "pass\0word")]
     public async Task A_bad_field_is_refused_on_that_field(string field, string value)
     {
         var world = new World();
@@ -321,6 +344,33 @@ public sealed class SmtpSettingsTests
         var invalid = Assert.IsType<SettingsWriteResult.Invalid>(result);
         Assert.Contains(invalid.Errors, error => error.Field == field);
         Assert.Equal(0, world.Store.Saves);
+    }
+
+    /// <summary>
+    /// A password one character over <c>PasswordMaxLength</c> is refused, exactly as a shorter bad password is, and
+    /// the error does not echo it back (the validation error carries a field name and a fixed sentence, never the
+    /// value). A password made entirely of the limit's length, with <c>%</c> and other SQL-metacharacter-looking
+    /// text in it, is accepted untouched: the password is never interpolated into SQL (EF parameterises it; the
+    /// secret protector only ever sees it as a .NET string).
+    /// </summary>
+    [Fact]
+    public async Task A_huge_password_is_refused_without_being_echoed_and_SQL_looking_text_is_accepted()
+    {
+        var world = new World();
+
+        var tooLong = new string('x', SettingKeys.Smtp.PasswordMaxLength + 1);
+        var refused = await world.Save([("password", tooLong)]);
+
+        var invalid = Assert.IsType<SettingsWriteResult.Invalid>(refused);
+        var error = Assert.Single(invalid.Errors, item => item.Field == "password");
+        Assert.DoesNotContain(tooLong, error.Message, StringComparison.Ordinal);
+        Assert.Equal(0, world.Store.Saves);
+
+        var sqlLooking = "p@ss%word' OR '1'='1";
+        var accepted = await world.Save([("password", sqlLooking)]);
+
+        Assert.IsType<SettingsWriteResult.Succeeded>(accepted);
+        Assert.Equal("protected:" + sqlLooking, world.Store.Rows[SettingKeys.Smtp.Password].Value);
     }
 
     [Fact]
