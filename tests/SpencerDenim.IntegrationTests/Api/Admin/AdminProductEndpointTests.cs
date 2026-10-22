@@ -1056,6 +1056,8 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
         var (_, created) = await client.PostAsync(ProductsUrl, body, Token);
         var productId = created.GetProperty("id").GetInt32();
         var orderId = 0;
+        var deliveryMethodId = 0;
+        string? providerCode = null;
 
         try
         {
@@ -1073,7 +1075,7 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
                 // The sales reference data is not in the shared seed — `SalesSchemaTestBase` creates its
                 // own per run, with codes nothing else uses, and so does this. An order has real foreign
                 // keys to both, so there is no way to make a real order line without them.
-                var providerCode = SalesRowWriter.Unique("W103Prov");
+                providerCode = SalesRowWriter.Unique("W103Prov");
                 await writer.InsertWithoutIdentityAsync(
                     "sales.PaymentProviders",
                     new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -1087,7 +1089,7 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
                     Token);
 
                 var deliveryRow = SalesRowWriter.DeliveryMethodRow();
-                var deliveryMethodId = await writer.InsertAsync("sales.DeliveryMethods", deliveryRow, Token);
+                deliveryMethodId = await writer.InsertAsync("sales.DeliveryMethods", deliveryRow, Token);
 
                 orderId = await writer.InsertAsync(
                     "sales.Orders",
@@ -1128,13 +1130,30 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
         }
         finally
         {
+            await using var cleanup = factory.Services.CreateAsyncScope();
+            var dbContext = cleanup.ServiceProvider.GetRequiredService<AppDbContext>();
+
             if (orderId != 0)
             {
-                await using var cleanup = factory.Services.CreateAsyncScope();
-                var dbContext = cleanup.ServiceProvider.GetRequiredService<AppDbContext>();
                 await dbContext.Database.ExecuteSqlRawAsync(
                     "DELETE FROM sales.OrderLines WHERE OrderId = {0}; DELETE FROM sales.Orders WHERE Id = {0};",
                     [orderId],
+                    Token);
+            }
+
+            if (deliveryMethodId != 0)
+            {
+                await dbContext.Database.ExecuteSqlRawAsync(
+                    "DELETE FROM sales.DeliveryMethods WHERE Id = {0};",
+                    [deliveryMethodId],
+                    Token);
+            }
+
+            if (providerCode is not null)
+            {
+                await dbContext.Database.ExecuteSqlRawAsync(
+                    "DELETE FROM sales.PaymentProviders WHERE Code = {0};",
+                    [providerCode],
                     Token);
             }
 
