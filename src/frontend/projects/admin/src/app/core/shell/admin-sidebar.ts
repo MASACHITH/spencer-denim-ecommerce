@@ -233,9 +233,10 @@ const GROUPS: readonly NavGroup[] = [
         max-width: 85vw;
         transform: translateX(-100%);
         visibility: hidden;
+        pointer-events: none;
         transition: transform 200ms ease, visibility 0s linear 200ms;
       }
-      :host(.is-open) .sidebar { transform: none; visibility: visible; transition: transform 200ms ease; }
+      :host(.is-open) .sidebar { transform: none; visibility: visible; pointer-events: auto; transition: transform 200ms ease; }
       :host(.is-open) .sidebar__backdrop { display: block; position: fixed; inset: 0; z-index: 39; background: var(--color-scrim); }
     }
     @media (prefers-reduced-motion: reduce) {
