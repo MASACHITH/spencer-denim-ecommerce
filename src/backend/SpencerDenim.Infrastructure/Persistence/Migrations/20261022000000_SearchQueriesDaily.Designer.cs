@@ -13,7 +13,7 @@ using SpencerDenim.Infrastructure.Persistence;
 namespace SpencerDenim.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261021112032_SearchQueriesDaily")]
+    [Migration("20261022000000_SearchQueriesDaily")]
     partial class SearchQueriesDaily
     {
         /// <inheritdoc />
