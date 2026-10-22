@@ -15,8 +15,8 @@ namespace SpencerDenim.UnitTests.Privacy;
 /// not to the code, or the reverse, fails here with the line that differs.
 /// </para>
 /// <para>
-/// <b>It skips while the gateway has no such map</b> (the gateway change, #179, is its own pull request) and runs
-/// by itself the day it has.
+/// <b>It fails, rather than skips, when the gateway has no such map</b>: #179 is merged, so a missing map means it
+/// was renamed or moved, and a skip would switch the parity check off silently (#207 review).
 /// </para>
 /// </summary>
 public sealed class GatewayLogMapParityTests
@@ -74,13 +74,15 @@ public sealed class GatewayLogMapParityTests
     private static string ReadMap()
     {
         var path = Path.Combine(FindRepositoryRoot(), GatewayConfig);
-        Assert.SkipUnless(File.Exists(path), $"{GatewayConfig} is not in this branch.");
+        // Hard assertions since #179 merged: a skip here would let a renamed `$sd_log_path` (or a moved
+        // nginx.conf) switch the whole parity check off without anybody noticing.
+        Assert.True(File.Exists(path), $"{GatewayConfig} is missing, so the gateway's log rule cannot be compared.");
 
         var text = File.ReadAllText(path);
         var start = text.IndexOf("map $uri $sd_log_path {", StringComparison.Ordinal);
-        Assert.SkipUnless(
+        Assert.True(
             start >= 0,
-            $"{GatewayConfig} has no `map $uri $sd_log_path` block yet (the gateway logging change, #179), so there is no rule to compare. The parity check runs when it has.");
+            $"{GatewayConfig} has no `map $uri $sd_log_path` block. If it was renamed, rename it here too: this test is what keeps the gateway's rule and RequestPathRedaction the same.");
 
         var end = text.IndexOf("\n    }", start, StringComparison.Ordinal);
 

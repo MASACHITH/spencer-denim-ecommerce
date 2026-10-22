@@ -41,6 +41,13 @@ public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncD
 
     protected SqlServerDatabaseFixture SqlServer { get; } = sqlServer;
 
+    /// <summary>
+    /// The host every client of this suite talks to, built once on first use. A derived suite that needs a
+    /// different host (another environment, a log sink, its own interceptor) overrides this.
+    /// </summary>
+    protected virtual ApiFactory CreateFactory() =>
+        new(SqlServer.ConnectionString, commandInterceptor: CommandCounter);
+
     protected static CancellationToken Token => TestContext.Current.CancellationToken;
 
     /// <summary>
@@ -51,7 +58,7 @@ public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncD
     {
         SqlServer.SkipIfUnavailable();
 
-        _factory ??= new ApiFactory(SqlServer.ConnectionString, commandInterceptor: CommandCounter);
+        _factory ??= CreateFactory();
         var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = BaseAddress,
@@ -71,7 +78,7 @@ public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncD
     {
         SqlServer.SkipIfUnavailable();
 
-        _factory ??= new ApiFactory(SqlServer.ConnectionString, commandInterceptor: CommandCounter);
+        _factory ??= CreateFactory();
         var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = BaseAddress,
@@ -113,7 +120,7 @@ public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncD
         get
         {
             SqlServer.SkipIfUnavailable();
-            return _factory ??= new ApiFactory(SqlServer.ConnectionString, commandInterceptor: CommandCounter);
+            return _factory ??= CreateFactory();
         }
     }
 
@@ -126,7 +133,7 @@ public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncD
     protected IServiceScope CreateApplicationScope()
     {
         SqlServer.SkipIfUnavailable();
-        _factory ??= new ApiFactory(SqlServer.ConnectionString, commandInterceptor: CommandCounter);
+        _factory ??= CreateFactory();
         return _factory.Services.CreateScope();
     }
 

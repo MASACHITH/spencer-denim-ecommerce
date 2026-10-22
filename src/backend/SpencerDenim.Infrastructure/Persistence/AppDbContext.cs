@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging;
 using SpencerDenim.Domain.Analytics;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Catalog;
@@ -300,16 +301,53 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     /// every child would put an extra join to Products inside each <c>EXISTS</c> of the listing query
     /// (doc 08 §7.1) for no behavioural gain.
     /// </para>
+    /// <para>
+    /// <b>The events that print a database error's text are Debug, not Error</b> (<see cref="DatabaseErrorEvents"/>).
+    /// </para>
     /// </summary>
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
         ArgumentNullException.ThrowIfNull(optionsBuilder);
 
-        optionsBuilder.ConfigureWarnings(warnings =>
-            warnings.Ignore(CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning));
+        optionsBuilder.ConfigureWarnings(warnings => warnings
+            .Ignore(CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning)
+            .Log(DatabaseErrorEvents));
 
         base.OnConfiguring(optionsBuilder);
     }
+
+    /// <summary>
+    /// The EF Core events that write a failed command's <b>exception text</b>, moved from their default (Error)
+    /// to Debug (#207 review).
+    /// <para>
+    /// <b>Why.</b> <c>SaveChangesFailed</c> and <c>CommandError</c> are written at Error, under
+    /// <c>Microsoft.EntityFrameworkCore.Update</c> / <c>.Database.Command</c>, and both print the exception. SQL
+    /// Server's duplicate-key message (2601, 2627) ends <c>The duplicate key value is (…)</c>, and a truncation
+    /// (2628) quotes the value, so the value itself reached the log Docker keeps: a checkout double-submit wrote
+    /// the checkout key, which <c>POST /api/checkout/orders</c> answers with the whole order (address, phone,
+    /// e-mail), and a registration race wrote the shopper's e-mail. The failures are written <i>before</i> the
+    /// store that expects them (<c>OrderPlacementStore</c>, <c>CustomerRegistrationStore</c>, every
+    /// <c>IsDuplicateKey</c>) has caught them, so a handled, expected race printed like an outage.
+    /// </para>
+    /// <para>
+    /// A failure nobody handles is still logged: <c>UseExceptionHandler</c> writes it at Error, and so does every
+    /// background service's own catch, and on the way out <c>SqlErrorRedactingSink</c> replaces the exception's
+    /// text with the error number and the index name (the net under this, for anything that logs a
+    /// <c>SqlException</c> some other way). Production logs EF Core at Warning and above
+    /// (<c>appsettings.json</c>), so these are not written there at all.
+    /// </para>
+    /// <para>
+    /// <c>QueryIterationFailed</c> is in the list because a failed query's conversion error (245) quotes the value
+    /// it could not convert. <c>ExecutionStrategyRetrying</c> (Information, a transient error being retried) is
+    /// not: its errors are the network's and the server's, never a row's, and the sink covers it anyway.
+    /// </para>
+    /// </summary>
+    internal static readonly (EventId Id, LogLevel Level)[] DatabaseErrorEvents =
+    [
+        (CoreEventId.SaveChangesFailed, LogLevel.Debug),
+        (CoreEventId.QueryIterationFailed, LogLevel.Debug),
+        (RelationalEventId.CommandError, LogLevel.Debug),
+    ];
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

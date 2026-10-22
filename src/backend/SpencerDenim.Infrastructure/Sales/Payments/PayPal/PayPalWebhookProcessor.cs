@@ -4,6 +4,7 @@ using SpencerDenim.Application.Sales.Payments;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Payments.PayPal;
 using SpencerDenim.Domain.Sales;
+using SpencerDenim.Infrastructure.Persistence;
 
 namespace SpencerDenim.Infrastructure.Sales.Payments.PayPal;
 
@@ -166,7 +167,7 @@ internal sealed partial class PayPalWebhookProcessor(
 
             await events.MarkFailedAsync(
                 eventId,
-                $"{exception.GetType().Name}: {Clip(exception.Message)}",
+                $"{exception.GetType().Name}: {Clip(SqlErrorRedaction.SafeMessage(exception))}",
                 PaymentEventRetryPolicy.NextAttemptAtUtc(attemptsCounted + 1, now),
                 CancellationToken.None);
         }

@@ -1,4 +1,6 @@
 using Serilog;
+using Serilog.Configuration;
+using Serilog.Core;
 using Serilog.Events;
 using Serilog.Formatting.Compact;
 using SpencerDenim.Api.Health;
@@ -22,10 +24,15 @@ internal static class SerilogSetup
         {
             configuration
                 .ReadFrom.Configuration(builder.Configuration)
-                .ReadFrom.Services(services)
                 .Enrich.FromLogContext()
-                .Enrich.WithProperty("Application", builder.Environment.ApplicationName)
+                .Enrich.WithProperty("Application", builder.Environment.ApplicationName);
 
+            // What ReadFrom.Services(services) did, except the sinks: those go inside the SQL error redaction
+            // below with the console, so a sink registered in the container (the tests' capture) sees exactly
+            // what the console prints.
+            ReadServicesExceptSinks(configuration, services);
+
+            configuration
                 // ASP.NET Core's hosting scope puts the raw request path on EVERY event written during a
                 // request, and a guest's order token is a path segment (issue #201). Last, so it sees the
                 // properties every other enricher and the scope added.
@@ -35,19 +42,60 @@ internal static class SerilogSetup
                 // configuration asks for: see IsAspNetCoreBelowWarning.
                 .Filter.ByExcluding(IsAspNetCoreBelowWarning);
 
-            if (useJson)
-            {
-                configuration.WriteTo.Console(new RenderedCompactJsonFormatter());
-            }
-            else
-            {
-                configuration.WriteTo.Console(
-                    outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}",
-                    formatProvider: System.Globalization.CultureInfo.InvariantCulture);
-            }
+            // A database error's text can quote the row (a duplicate checkout key, an e-mail address): every
+            // sink gets the event with that text replaced by the error number and index (#207 review). See
+            // SqlErrorRedactingSink for why this is a wrapping sink rather than an enricher.
+            configuration.WriteTo.Sink(LoggerSinkConfiguration.Wrap(
+                sink => new SqlErrorRedactingSink(sink),
+                writeTo =>
+                {
+                    if (useJson)
+                    {
+                        writeTo.Console(new RenderedCompactJsonFormatter());
+                    }
+                    else
+                    {
+                        writeTo.Console(
+                            outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}",
+                            formatProvider: System.Globalization.CultureInfo.InvariantCulture);
+                    }
+
+                    foreach (var sink in services.GetServices<ILogEventSink>())
+                    {
+                        writeTo.Sink(sink);
+                    }
+                }));
         });
 
         return builder;
+    }
+
+    /// <summary>
+    /// Serilog's <c>ReadFrom.Services</c> without its sinks: the level switch, filters, destructuring policies
+    /// and enrichers registered in the container. Nothing in the application registers any today; the sinks a
+    /// test registers are added inside the redacting wrapper instead.
+    /// </summary>
+    private static void ReadServicesExceptSinks(LoggerConfiguration configuration, IServiceProvider services)
+    {
+        if (services.GetService<LoggingLevelSwitch>() is { } levelSwitch)
+        {
+            configuration.MinimumLevel.ControlledBy(levelSwitch);
+        }
+
+        foreach (var filter in services.GetServices<ILogEventFilter>())
+        {
+            configuration.Filter.With(filter);
+        }
+
+        foreach (var policy in services.GetServices<IDestructuringPolicy>())
+        {
+            configuration.Destructure.With(policy);
+        }
+
+        foreach (var enricher in services.GetServices<ILogEventEnricher>())
+        {
+            configuration.Enrich.With(enricher);
+        }
     }
 
     /// <summary>
