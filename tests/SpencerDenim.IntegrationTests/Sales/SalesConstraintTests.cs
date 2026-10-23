@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.IntegrationTests.Infrastructure;
 
