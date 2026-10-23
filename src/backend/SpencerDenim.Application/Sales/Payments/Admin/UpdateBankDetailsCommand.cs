@@ -3,6 +3,7 @@ using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Admin.CurrentUser;
+using SpencerDenim.Application.Ops.Alerts.Abstractions;
 using SpencerDenim.Application.Settings;
 using SpencerDenim.Application.Settings.Abstractions;
 using SpencerDenim.Domain.Auditing;
@@ -62,20 +63,20 @@ public sealed record UpdateBankDetailsCommand(
 /// </description></item>
 /// </list>
 /// <para>
-/// <b>What this does not do, and it is specified.</b> Doc 08 §3.8 DB2 requires any change to a
-/// <c>Bank.*</c> key to insert an <c>ops.AdminAlerts</c> <c>SensitiveSettingsChanged</c> row and email
-/// every active GrantsAll holder, in the same transaction. Neither <c>ops.AdminAlerts</c> nor
-/// <c>ops.EmailOutbox</c> exists in any migration, so neither can be written and this task does not create
-/// another milestone's tables. The <b>audit rows are written</b>, so the change is not invisible — it is
-/// in the audit log with the actor, the time, the IP and the before and after values — but a Super Admin is
-/// not told, and doc 11 P7's last exception ("Bank details changed by a Super Admin → all Super Admins
-/// receive a security email and a dashboard banner") is therefore not honoured yet. It is in the task
-/// report as owed.
+/// <b>The sensitive-change alert (doc 08 §3.8 DB2, doc 11 P7's last exception).</b> Any change to a
+/// <c>Bank.*</c> key enlists a <c>SensitiveSettingsChanged</c> <c>ops.AdminAlerts</c> row in the same
+/// transaction as the values and their audit rows, so a Super Admin sees a banner naming the changed keys
+/// (never their values) until one of them acknowledges it. A save that changed nothing raises nothing.
+/// <i>History:</i> when this handler was written neither <c>ops.AdminAlerts</c> nor <c>ops.EmailOutbox</c>
+/// existed, so only the audit rows were written; #138 built the alerts table and the PayPal handler used it,
+/// but this handler was not revisited until the ADM-22 verification of 2026-10-21 found the banner missing.
+/// The <i>email</i> half of DB2 (to every active GrantsAll holder) is not sent for any settings group yet.
 /// </para>
 /// </summary>
 public sealed class UpdateBankDetailsCommandHandler(
     ISettingsStore store,
     IAuditLogWriter auditLog,
+    IAdminAlertWriter alerts,
     IEffectivePermissionsProvider permissionsProvider,
     IClock clock)
     : ICommandHandler<UpdateBankDetailsCommand, SettingsWriteResult>
@@ -204,6 +205,9 @@ public sealed class UpdateBankDetailsCommandHandler(
         {
             auditLog.Enlist(audit);
         }
+
+        // Doc 08 §3.8 DB2: the account customers pay into changed. Key names only, in the same transaction.
+        alerts.Enlist(SensitiveSettingsChangedAlert.For("Bank details", changed, command.Actor.UserId, now));
 
         var outcome = await store.SaveAsync(command.Actor.UserId, cancellationToken);
 

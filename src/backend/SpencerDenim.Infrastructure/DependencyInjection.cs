@@ -116,9 +116,8 @@ public static class DependencyInjection
 
         services.AddSingleton(provider => provider.GetRequiredService<IOptions<BankTransferOptions>>().Value);
 
-        // Email (W3-06, ACC-03). Doc 08 §3.8 files the SMTP keys under `Settings.Security`, which needs
-        // the sensitive-change alert, ops.AdminAlerts and the GrantsAll-only permission — none of which
-        // exists — so they are configuration for now, under doc 08's own key names (see EmailOptions).
+        // Email (W3-06, ACC-03). Email__Smtp__* is the fallback account since 2026-10-21: the Email.Smtp settings
+        // rows win when they make a complete, valid account (SmtpSettingsResolver, docs/15 "Email").
         services.AddOptions<EmailOptions>()
             .BindConfiguration(EmailOptions.SectionName)
             .Validate(
@@ -158,9 +157,19 @@ public static class DependencyInjection
         // The four account emails of doc 11 P11 (W3-01, ACC-01). Pure over the same bound options.
         services.AddSingleton<AccountEmailComposer>();
 
-        // The SMTP boundary. A singleton over the options; it builds a fresh SmtpClient per message,
-        // because SmtpClient is not thread-safe (see SmtpEmailTransport).
+        // The SMTP boundary. Stateless — the account is passed per send — so one instance; it builds a fresh
+        // SmtpClient per message, because SmtpClient is not thread-safe (see SmtpEmailTransport).
         services.AddSingleton<IEmailTransport, SmtpEmailTransport>();
+
+        // The effective mail account, read per sweep from ops.Settings with configuration as the fallback
+        // (2026-10-21). Scoped: it reads through the scope's AppDbContext.
+        services.AddScoped<ISmtpSettingsReader, SmtpSettingsReader>();
+
+        // Doc 08 §3.8 N2's previous-account ciphertext for ops.EmailOutbox.TransportOverrideProtected.
+        services.AddSingleton<ISmtpOverrideProtector, SmtpOverrideProtector>();
+
+        // Who security emails go to: every active GrantsAll holder, read at the moment of the change.
+        services.AddScoped<ISecurityAlertRecipients, SecurityAlertRecipients>();
 
         // Scoped, because both write through the request's own AppDbContext: that is what makes the
         // outbox row commit in the same transaction as the order it is about (doc 08 §3.8).

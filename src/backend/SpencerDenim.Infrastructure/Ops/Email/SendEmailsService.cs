@@ -71,6 +71,9 @@ internal sealed partial class SendEmailsService(
     /// </summary>
     private DateTime _unconfiguredWarnedAtUtc = DateTime.MinValue;
 
+    /// <summary>The last account source reported, so the line is written on a change and not every sweep.</summary>
+    private string? _lastSourceSignature;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // The first sweep waits one interval rather than running at startup, for ExpireUnpaidOrders'
@@ -118,12 +121,41 @@ internal sealed partial class SendEmailsService(
             var store = scope.ServiceProvider.GetRequiredService<IEmailOutboxStore>();
             var transport = scope.ServiceProvider.GetRequiredService<IEmailTransport>();
             var alerts = scope.ServiceProvider.GetRequiredService<IDeadEmailAlerts>();
+            var accounts = scope.ServiceProvider.GetRequiredService<ISmtpSettingsReader>();
+            var overrides = scope.ServiceProvider.GetRequiredService<ISmtpOverrideProtector>();
 
             var now = clock.UtcNow.UtcDateTime;
 
-            if (!transport.IsConfigured)
+            // **The account is read every sweep** (2026-10-21): the Email.Smtp rows when they make a complete,
+            // valid account, otherwise Email__Smtp__*. A Super Admin's change reaches the very next sweep.
+            var effective = await accounts.ReadEffectiveAsync(stoppingToken);
+            ReportSource(effective);
+
+            if (!effective.IsConfigured)
             {
                 await ReportUnsendableAsync(store, now, stoppingToken);
+
+                // **Doc 08 §3.8 N2: the previous-account copy of a mail-settings alert still goes out.** A hijacker
+                // who clears the account leaves the shop with nothing to send through, and the one message that
+                // must not wait for a working account is the warning carried on its own previous one. Only rows
+                // with an override are claimed; every ordinary message stays exactly as it was found.
+                var carried = await store.ClaimAsync(
+                    options.BatchSize,
+                    now,
+                    now.AddMinutes(options.LeaseMinutes),
+                    overridesOnly: true,
+                    stoppingToken);
+
+                foreach (var claim in carried)
+                {
+                    if (stoppingToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
+                    await SendOneAsync(store, transport, alerts, overrides, effective, claim, stoppingToken);
+                }
+
                 _consecutiveFailures = 0;
                 return;
             }
@@ -156,6 +188,7 @@ internal sealed partial class SendEmailsService(
                 options.BatchSize,
                 now,
                 now.AddMinutes(options.LeaseMinutes),
+                overridesOnly: false,
                 stoppingToken);
 
             if (claims.Count == 0)
@@ -183,7 +216,7 @@ internal sealed partial class SendEmailsService(
                 // sweep: a batch of twenty against a slow mail server can take long enough that the
                 // backoff of the last one would be measured from a stale instant, and
                 // `NextAttemptAtUtc` has to be in the real future.
-                var outcome = await SendOneAsync(store, transport, alerts, claim, stoppingToken);
+                var outcome = await SendOneAsync(store, transport, alerts, overrides, effective, claim, stoppingToken);
 
                 switch (outcome)
                 {
@@ -243,6 +276,8 @@ internal sealed partial class SendEmailsService(
         IEmailOutboxStore store,
         IEmailTransport transport,
         IDeadEmailAlerts alerts,
+        ISmtpOverrideProtector overrides,
+        EffectiveSmtpSettings effective,
         EmailOutboxClaim claim,
         CancellationToken stoppingToken)
     {
@@ -250,6 +285,7 @@ internal sealed partial class SendEmailsService(
         {
             await transport.SendAsync(
                 new OutboundEmail(claim.ToEmail, claim.ToName, claim.Subject, claim.BodyHtml, claim.BodyText),
+                AccountFor(claim, effective, overrides),
                 stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -302,6 +338,61 @@ internal sealed partial class SendEmailsService(
         }
 
         return SendOutcome.Sent;
+    }
+
+    /// <summary>
+    /// The account one message goes through: the one carried on its row when it has one (doc 08 §3.8 N2's
+    /// previous-account copy), otherwise the effective account this sweep read.
+    /// </summary>
+    /// <remarks>
+    /// <b>A carried account that cannot be decrypted is a failure of that message, never a fallback to the current
+    /// account.</b> Sending the old-channel copy through the new channel would quietly turn N2's two independent
+    /// warnings into two through the same server, the one a hijacker controls. The row retries and, if the key never
+    /// comes back, goes Dead and raises the <c>EmailDeliveryFailed</c> banner, which is the right signal.
+    /// </remarks>
+    internal static SmtpSettings AccountFor(
+        EmailOutboxClaim claim,
+        EffectiveSmtpSettings effective,
+        ISmtpOverrideProtector overrides)
+    {
+        if (claim.TransportOverrideProtected is { Length: > 0 } carried)
+        {
+            return overrides.TryUnprotect(carried, out var previous) && previous is not null
+                ? previous
+                : throw new InvalidOperationException(
+                    "The previous mail account carried on this message could not be decrypted, so it was not sent "
+                    + "through the current account instead (doc 08 §3.8 N2).");
+        }
+
+        return effective.Settings
+            ?? throw new InvalidOperationException(
+                "No mail account is configured, so this message cannot be sent. Fill in Settings, Email account, "
+                + "or set Email__Smtp__Host and Email__Smtp__FromAddress.");
+    }
+
+    /// <summary>
+    /// Logs where the account comes from when that changes, and why the saved account was passed over if it was,
+    /// once per change rather than once per sweep. Never a value.
+    /// </summary>
+    private void ReportSource(EffectiveSmtpSettings effective)
+    {
+        var signature = $"{effective.Source}|{effective.IgnoredStoredReason}";
+
+        if (string.Equals(signature, _lastSourceSignature, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastSourceSignature = signature;
+
+        if (effective.IgnoredStoredReason is { } reason)
+        {
+            LogStoredAccountIgnored(logger, reason, effective.Source);
+        }
+        else
+        {
+            LogAccountSource(logger, effective.Source);
+        }
     }
 
     /// <summary>
@@ -385,12 +476,26 @@ internal sealed partial class SendEmailsService(
     private static partial void LogSwept(ILogger logger, int sent, int failed, int dead);
 
     [LoggerMessage(
+        EventId = 3412,
+        Level = LogLevel.Information,
+        Message = "Email is sent through the account from {Source} (Settings = the admin's Email account form, "
+            + "Configuration = Email__Smtp__*, None = no account).")]
+    private static partial void LogAccountSource(ILogger logger, SmtpSettingsSource source);
+
+    [LoggerMessage(
+        EventId = 3413,
+        Level = LogLevel.Warning,
+        Message = "The email account saved in Settings is not used because {Reason}; email is sent through the "
+            + "account from {Source} instead. Correct it on the admin's Settings screen, Email account.")]
+    private static partial void LogStoredAccountIgnored(ILogger logger, string reason, SmtpSettingsSource source);
+
+    [LoggerMessage(
         EventId = 3402,
         Level = LogLevel.Warning,
-        Message = "{Due} email(s) are queued and cannot be sent, because this host has no SMTP "
-            + "configuration. Nothing has been lost: the messages are untouched and will go out as soon "
-            + "as Email__Smtp__Host and Email__Smtp__FromAddress are set (doc 08 §3.8's Email.Smtp "
-            + "group). This is repeated periodically for as long as the queue is not empty.")]
+        Message = "{Due} email(s) are queued and cannot be sent, because no email account is configured. "
+            + "Nothing has been lost: the messages are untouched and will go out as soon as a Super Admin fills in "
+            + "Settings, Email account, or Email__Smtp__Host and Email__Smtp__FromAddress are set (doc 08 §3.8's "
+            + "Email.Smtp group). This is repeated periodically for as long as the queue is not empty.")]
     private static partial void LogNotConfigured(ILogger logger, int due);
 
     [LoggerMessage(

@@ -107,6 +107,14 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
         + "it lost its database connection. The attempt was counted, no attempt is left, and the message "
         + "will not be sent.";
 
+    /// <summary>
+    /// The claim's extra predicate when no current account is configured (doc 08 §3.8 N2): only rows that carry their
+    /// own previous account. A constant, appended to the statement text, never a parameter; the rows it selects are
+    /// at most a few per Super Admin per mail-settings change, so the residual read on the due range costs nothing.
+    /// </summary>
+    internal const string OverridesOnlyPredicate =
+        "\n                       AND TransportOverrideProtected IS NOT NULL";
+
     public async Task<int> CountDueAsync(DateTime nowUtc, CancellationToken cancellationToken) =>
         await dbContext.EmailOutbox
             .AsNoTracking()
@@ -302,6 +310,7 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
         int batchSize,
         DateTime nowUtc,
         DateTime leaseUntilUtc,
+        bool overridesOnly,
         CancellationToken cancellationToken)
     {
         if (batchSize <= 0)
@@ -324,13 +333,14 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
         var strategy = dbContext.Database.CreateExecutionStrategy();
 
         return await strategy.ExecuteAsync(() =>
-            ClaimOnceAsync(batchSize, nowUtc, leaseUntilUtc, cancellationToken));
+            ClaimOnceAsync(batchSize, nowUtc, leaseUntilUtc, overridesOnly, cancellationToken));
     }
 
     private async Task<IReadOnlyList<EmailOutboxClaim>> ClaimOnceAsync(
         int batchSize,
         DateTime nowUtc,
         DateTime leaseUntilUtc,
+        bool overridesOnly,
         CancellationToken cancellationToken)
     {
         var connection = dbContext.Database.GetDbConnection();
@@ -358,7 +368,7 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
                     SELECT TOP ({batchSize}) *
                       FROM ops.EmailOutbox WITH (ROWLOCK, READPAST, UPDLOCK)
                      WHERE Status IN ({(byte)EmailOutboxStatus.Pending}, {(byte)EmailOutboxStatus.Failed})
-                       AND NextAttemptAtUtc <= @now
+                       AND NextAttemptAtUtc <= @now{(overridesOnly ? OverridesOnlyPredicate : string.Empty)}
                      ORDER BY NextAttemptAtUtc, Id
                 )
                 UPDATE due
@@ -374,7 +384,8 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
                        inserted.BodyText,
                        inserted.AttemptCount,
                        inserted.MaxAttempts,
-                       inserted.RelatedEntityId;
+                       inserted.RelatedEntityId,
+                       inserted.TransportOverrideProtected;
                 """;
 
             AddParameter(command, "@now", nowUtc);
@@ -396,7 +407,8 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
                     reader.IsDBNull(6) ? null : reader.GetString(6),
                     reader.GetInt16(7),
                     reader.GetInt16(8),
-                    reader.IsDBNull(9) ? null : reader.GetString(9)));
+                    reader.IsDBNull(9) ? null : reader.GetString(9),
+                    reader.IsDBNull(10) ? null : reader.GetString(10)));
             }
 
             return claims;

@@ -12,6 +12,7 @@ import { BRAND } from '@spencer-denim/shared';
 
 import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catalog-api';
 import { AdminSettingsApi } from '../../core/settings/admin-settings-api';
+import { EmailAccountPanel } from './email-account-panel';
 import {
   AdminLogo,
   AdminSettings,
@@ -56,7 +57,7 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
  */
 @Component({
   selector: 'sda-settings-page',
-  imports: [FormsModule],
+  imports: [FormsModule, EmailAccountPanel],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="settings">
@@ -662,9 +663,13 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
           </section>
         }
 
+        @if (smtpGroup(); as smtp) {
+          <sda-email-account-panel [group]="smtp" (saved)="onEmailAccountSaved()" />
+        }
+
         @if (
           !canEditStore() && !canEditContact() && !canEditBank() && !canEditInvoice() && !canEditPayPal()
-          && !canEditTraffic() && !canEditReviews()
+          && !canEditTraffic() && !canEditReviews() && !smtpGroup()
         ) {
           <p class="adm-state" data-testid="nothing-to-edit">
             There are no settings you can change here.
@@ -1210,6 +1215,11 @@ export class SettingsPage {
   /** Whether the server sent the `Reviews` group (issue #189, `Settings.Edit`). */
   protected readonly canEditReviews = computed(() => this.hasGroup(SETTING_GROUPS.reviews));
 
+  /** The email account group, sent to a Super Admin only (`Settings.Security`). */
+  protected readonly smtpGroup = computed(
+    () => this.loaded()?.groups.find((group) => group.groupKey === SETTING_GROUPS.smtp) ?? null,
+  );
+
   /**
    * The approval switch as the server sent it, or as the checkbox now says. Anything but a readable "false"
    * reads as on, the server's own rule (`ReviewSettingsReader`), so the box never shows off while reviews wait.
@@ -1702,6 +1712,11 @@ export class SettingsPage {
     if (input) {
       input.value = '';
     }
+  }
+
+  /** The email account panel saved: its token has moved, so re-read without taking the screen down. */
+  protected onEmailAccountSaved(): void {
+    this.refresh();
   }
 
   private hasGroup(groupKey: string): boolean {

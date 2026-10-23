@@ -111,6 +111,7 @@ app.MapContentEndpoints();
 app.MapSiteSettingsEndpoints();
 app.MapAdminSettingsEndpoints();
 app.MapAdminPayPalSettingsEndpoints();
+app.MapAdminSmtpSettingsEndpoints();
 app.MapAdminBankTransferEndpoints();
 app.MapAdminOrderEndpoints();
 app.MapAdminCustomerEndpoints();

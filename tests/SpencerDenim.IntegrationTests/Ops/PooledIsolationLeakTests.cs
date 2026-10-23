@@ -39,7 +39,7 @@ public sealed class PooledIsolationLeakTests(SqlServerDatabaseFixture sqlServer)
         {
             var past = new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
             await scope.ServiceProvider.GetRequiredService<IEmailOutboxStore>()
-                .ClaimAsync(1, past, past.AddMinutes(5), TestContext.Current.CancellationToken);
+                .ClaimAsync(1, past, past.AddMinutes(5), overridesOnly: false, TestContext.Current.CancellationToken);
         }
     }
 }

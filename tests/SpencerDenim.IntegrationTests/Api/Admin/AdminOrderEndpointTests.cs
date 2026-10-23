@@ -1101,6 +1101,139 @@ public sealed class AdminOrderEndpointTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
+    /// <b>Reordering is the "Order in the list" number</b> (ADM-22 verification, 2026-10-21): the list a staff
+    /// member picks from is active couriers first, then by that number, and changing it moves the courier.
+    /// </summary>
+    [Fact]
+    public async Task Couriers_are_listed_active_first_then_by_their_order_in_the_list_and_an_edit_reorders_them()
+    {
+        await using var host = await StartAsync();
+        await DeleteEveryCourierAsync();
+
+        using var client = await host.SignInAsync(Permissions.Settings.Edit, Permissions.Orders.View);
+
+        var later = await CreateCourierAsync(client, "xunit-order-later", sortOrder: 5);
+        var first = await CreateCourierAsync(client, "xunit-order-first", sortOrder: 1);
+        var retired = await CreateCourierAsync(client, "xunit-order-retired", sortOrder: 0, isActive: false);
+
+        Assert.Equal([first, later, retired], await CourierIdsAsync(client));
+
+        // Move "later" to the top by giving it a lower number than "first".
+        using (var moved = await client.PutAsJsonAsync(
+            new Uri($"{CouriersUrl}/{later}", UriKind.Relative),
+            new
+            {
+                name = "xunit-order-later",
+                trackingUrlTemplate = "https://track.example.test/{trackingNumber}",
+                phone = (string?)null,
+                isActive = true,
+                sortOrder = 0,
+            },
+            JsonOptions,
+            Token))
+        {
+            Assert.Equal(HttpStatusCode.OK, moved.StatusCode);
+        }
+
+        Assert.Equal([later, first, retired], await CourierIdsAsync(client));
+    }
+
+    /// <summary>
+    /// <b>A courier added on the admin screen reaches the customer</b> (ADM-22 verification, 2026-10-21): after a
+    /// dispatch, the order page a shopper opens by their link and the <c>OrderShipped</c> email both carry the
+    /// courier's name and a link built from its template; an edited template moves the order page's link (doc 08
+    /// §3.5 renders from the current template); and switching the courier off keeps that link working while
+    /// taking the courier out of the next dispatch.
+    /// </summary>
+    [Fact]
+    public async Task A_courier_added_in_admin_reaches_the_order_page_and_the_shipped_email_and_follows_its_template()
+    {
+        await using var host = await StartAsync();
+        var order = await PlaceOrderAsync(host);
+
+        using var approver = await host.SignInAsync(Permissions.Orders.Approve);
+        await ApproveAsync(approver, order.PublicId);
+
+        using var settings = await host.SignInAsync(Permissions.Settings.Edit, Permissions.Orders.View);
+        var name = $"xunit-reach-{Guid.NewGuid():N}"[..24];
+        var courierId = await CreateCourierAsync(settings, name);
+
+        using var editor = await host.SignInAsync(Permissions.Orders.Edit, Permissions.Orders.View);
+        await TransitionAsync(editor, order.PublicId, "start-processing", HttpStatusCode.OK);
+        await TransitionAsync(
+            editor,
+            order.PublicId,
+            "mark-shipped",
+            HttpStatusCode.OK,
+            new { courierId, trackingNumber = "REACH 42/7" });
+
+        // The customer's order page, opened anonymously by the order's own link.
+        var tracking = (await PublicOrderAsync(host, order.PublicId)).GetProperty("tracking");
+        Assert.Equal(name, tracking.GetProperty("courierName").GetString());
+        Assert.Equal("REACH 42/7", tracking.GetProperty("trackingNumber").GetString());
+        Assert.Equal(
+            $"https://track.example.test/{Uri.EscapeDataString("REACH 42/7")}",
+            tracking.GetProperty("trackingUrl").GetString());
+
+        // The shipped email, queued by the dispatch.
+        using (var scope = sqlServer.CreateScope())
+        {
+            var id = order.PublicId.ToString("D");
+            var shipped = await scope.ServiceProvider.GetRequiredService<AppDbContext>().EmailOutbox
+                .AsNoTracking()
+                .Where(message => message.RelatedEntityId == id
+                    && message.TemplateCode == SpencerDenim.Domain.Ops.EmailTemplateCodes.OrderShipped)
+                .SingleAsync(Token);
+
+            Assert.Contains(name, shipped.BodyText!, StringComparison.Ordinal);
+            Assert.Contains(
+                $"https://track.example.test/{Uri.EscapeDataString("REACH 42/7")}",
+                shipped.BodyText!,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain("{trackingNumber}", shipped.BodyText!, StringComparison.Ordinal);
+        }
+
+        // Correct the template and switch the courier off in one edit.
+        using (var edited = await settings.PutAsJsonAsync(
+            new Uri($"{CouriersUrl}/{courierId}", UriKind.Relative),
+            new
+            {
+                name,
+                trackingUrlTemplate = "https://track.example.test/v2?no={trackingNumber}",
+                phone = (string?)null,
+                isActive = false,
+                sortOrder = 0,
+            },
+            JsonOptions,
+            Token))
+        {
+            Assert.Equal(HttpStatusCode.OK, edited.StatusCode);
+        }
+
+        var after = (await PublicOrderAsync(host, order.PublicId)).GetProperty("tracking");
+        Assert.Equal(name, after.GetProperty("courierName").GetString());
+        Assert.Equal(
+            $"https://track.example.test/v2?no={Uri.EscapeDataString("REACH 42/7")}",
+            after.GetProperty("trackingUrl").GetString());
+
+        // Switched off: a new dispatch with it is refused (409) and the order stays Processing.
+        var next = await PlaceOrderAsync(host);
+        await ApproveAsync(approver, next.PublicId);
+        await TransitionAsync(editor, next.PublicId, "start-processing", HttpStatusCode.OK);
+
+        await TransitionAsync(
+            editor,
+            next.PublicId,
+            "mark-shipped",
+            HttpStatusCode.Conflict,
+            new { courierId, trackingNumber = "REACH-NEXT" });
+
+        Assert.Equal(
+            nameof(OrderStatus.Processing),
+            (await DetailAsync(editor, next.PublicId)).GetProperty("status").GetString());
+    }
+
+    /// <summary>
     /// <b>A courier body that leaves a field out is refused, not read as null.</b>
     /// </summary>
     /// <remarks>
@@ -1184,14 +1317,32 @@ public sealed class AdminOrderEndpointTests(SqlServerDatabaseFixture sqlServer)
     private static string OrderUrl(Guid orderPublicId) =>
         $"{OrdersUrl}/{orderPublicId.ToString("D", CultureInfo.InvariantCulture)}";
 
-    private static object NewCourierBody(string name) => new
+    private static object NewCourierBody(string name, short sortOrder = 0, bool isActive = true) => new
     {
         name,
         trackingUrlTemplate = "https://track.example.test/{trackingNumber}",
         phone = (string?)null,
-        isActive = true,
-        sortOrder = 0,
+        isActive,
+        sortOrder,
     };
+
+    private static async Task<List<int>> CourierIdsAsync(HttpClient client)
+    {
+        var list = await client.GetFromJsonAsync<JsonElement>(new Uri(CouriersUrl, UriKind.Relative), JsonOptions, Token);
+
+        return list.EnumerateArray().Select(row => row.GetProperty("id").GetInt32()).ToList();
+    }
+
+    /// <summary>The public order payload, read by a shopper with no session — what the order page draws.</summary>
+    private static async Task<JsonElement> PublicOrderAsync(MediaTestHost host, Guid orderPublicId)
+    {
+        using var shopper = host.CreateAnonymousClient();
+        using var response = await shopper.GetAsync(new Uri($"/api/orders/{orderPublicId:D}", UriKind.Relative), Token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        return await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, Token);
+    }
 
     /// <summary>
     /// Doc 11 P10 flow A on the wire: <c>Orders.Edit</c> cancels an unpaid order, with a reason.
@@ -1493,11 +1644,15 @@ public sealed class AdminOrderEndpointTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    private static async Task<int> CreateCourierAsync(HttpClient client, string name)
+    private static async Task<int> CreateCourierAsync(
+        HttpClient client,
+        string name,
+        short sortOrder = 0,
+        bool isActive = true)
     {
         using var response = await client.PostAsJsonAsync(
             new Uri(CouriersUrl, UriKind.Relative),
-            NewCourierBody(name),
+            NewCourierBody(name, sortOrder, isActive),
             JsonOptions,
             Token);
 

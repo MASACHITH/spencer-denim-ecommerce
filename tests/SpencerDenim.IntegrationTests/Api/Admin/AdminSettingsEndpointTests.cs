@@ -154,9 +154,16 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
 
         var byKey = await ReadSettingsAsync(client);
 
+        // Every key a role can be given the permission for. The Email.Smtp keys need Settings.Security, which no role
+        // can hold (CK_RoleClaims_NoSecurity) — only a GrantsAll Super Admin reads them, which
+        // AdminSmtpSettingsEndpointTests proves — so they are the one group this caller must not receive.
         Assert.Equal(
-            SettingCatalog.All.Select(definition => definition.Key).Order(StringComparer.Ordinal),
+            SettingCatalog.All
+                .Where(definition => definition.RequiredPermission != Permissions.Settings.Security)
+                .Select(definition => definition.Key)
+                .Order(StringComparer.Ordinal),
             byKey.Keys.Order(StringComparer.Ordinal));
+        Assert.DoesNotContain(byKey.Keys, key => key.StartsWith("Email.Smtp.", StringComparison.Ordinal));
 
         var logo = byKey[SettingKeys.Store.LogoAssetId];
         Assert.Equal("MediaAssetRef", logo.GetProperty("valueType").GetString());

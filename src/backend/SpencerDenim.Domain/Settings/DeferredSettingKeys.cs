@@ -157,24 +157,6 @@ public static class DeferredSettingKeys
             + "save would raise already exists — the Bank and PayPal handlers use it — so that is not the "
             + "blocker.)"),
 
-        // ---- Email.Smtp ------------------------------------------------------------------------------
-        // Seven keys, one reason. ops.EmailOutbox now exists (#133) and so does ops.AdminAlerts (#138),
-        // so the tables are no longer the blocker — #113 guessed they were, and that guess is out of date.
-        // Two things still are. The transport is handed the bound EmailOptions singleton, i.e.
-        // Email__Smtp__* read once at startup, so a
-        // seeded row would not configure anything; and doc 08 §3.8 N2 requires an SMTP change to send its
-        // alert twice, once through the new configuration and once through the previous one carried as
-        // Data Protection ciphertext in EmailOutbox.TransportOverrideProtected. That dual send does not
-        // exist, and "a hijacked SMTP change cannot silence its own alert" is the property it provides, so
-        // making these keys editable before it exists would remove a control rather than add a setting.
-        new("Email.Smtp.Host", SettingKeyDeferralKind.AwaitingItsFeature, SmtpReason),
-        new("Email.Smtp.Port", SettingKeyDeferralKind.AwaitingItsFeature, SmtpReason),
-        new("Email.Smtp.Username", SettingKeyDeferralKind.AwaitingItsFeature, SmtpReason),
-        new("Email.Smtp.Password", SettingKeyDeferralKind.AwaitingItsFeature, SmtpReason),
-        new("Email.Smtp.FromAddress", SettingKeyDeferralKind.AwaitingItsFeature, SmtpReason),
-        new("Email.Smtp.FromName", SettingKeyDeferralKind.AwaitingItsFeature, SmtpReason),
-        new("Email.Smtp.UseStartTls", SettingKeyDeferralKind.AwaitingItsFeature, SmtpReason),
-
         // ---- Security --------------------------------------------------------------------------------
         new(
             "Security.StaffLockoutMaxFailures",
@@ -205,13 +187,6 @@ public static class DeferredSettingKeys
             "As Security.CustomerLockoutMaxFailures: CustomerSecurityOptions.LockoutMinutes, default 15, "
             + "doc 08 §3.8's own figure."),
     ];
-
-    private const string SmtpReason =
-        "The transport is handed the bound EmailOptions singleton — Email__Smtp__*, bound once at "
-        + "startup — so a seeded row would configure nothing. ops.EmailOutbox (#133) and ops.AdminAlerts (#138) now exist, so the tables are no "
-        + "longer the blocker; doc 08 §3.8 N2's dual send is, which carries the previous SMTP "
-        + "configuration as ciphertext in EmailOutbox.TransportOverrideProtected so that a hijacked SMTP "
-        + "change cannot silence its own alert. Making the keys editable first would remove that control.";
 
     /// <summary>The deferred keys as a set, for a membership test.</summary>
     public static IReadOnlySet<string> Keys { get; } =

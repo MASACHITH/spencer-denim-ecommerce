@@ -526,6 +526,9 @@ test.describe('the settings screen is usable and accessible', () => {
 
       // Issue #189: whether customers' reviews wait for approval.
       'h2:Reviews',
+
+      // ADM-22 (2026-10-21): the mail account, for a Super Admin (the stub's user holds GrantsAll).
+      'h2:Email account',
     ]);
   });
 
@@ -958,5 +961,170 @@ test.describe('the Traffic form (issue #193)', () => {
         expect(await undersized(page, selector), `${selector} at ${width}px`).toEqual([]);
       }
     }
+  });
+});
+
+test.describe('the Email account panel (ADM-22, 2026-10-21)', () => {
+  const smtpFields = ['host', 'port', 'username', 'password', 'fromAddress', 'fromName', 'useStartTls'].map(
+    (name) => `[data-testid="smtp-field-${name}"]`,
+  );
+
+  async function fillAccount(page: Page): Promise<void> {
+    const panel = page.getByTestId('smtp-panel');
+    await panel.getByLabel('Mail server').fill('smtp.example.test');
+    await panel.getByLabel('Port').fill('587');
+    await panel.getByLabel('User name').fill('shop@example.test');
+    await panel.getByLabel('Password').fill('an app password');
+    await panel.getByLabel('Send from address').fill('shop@example.test');
+    await panel.getByLabel('Send from name').fill('Colombo Wardrobe');
+  }
+
+  test('is shown to a Super Admin with every box labelled and the password empty', async ({ page }) => {
+    await openSettings(page);
+
+    const panel = page.getByTestId('smtp-panel');
+    await expect(panel.getByRole('heading', { level: 2, name: 'Email account' })).toBeVisible();
+    await expect(panel.getByLabel('Password')).toHaveValue('');
+    await expect(panel.getByLabel('Password')).toHaveAttribute('type', 'password');
+    await expect(panel.getByTestId('smtp-password-state')).toContainText('No password is saved yet.');
+    await expect(panel.getByLabel('Encrypt the connection (STARTTLS)')).toBeChecked();
+  });
+
+  test('is absent for anybody who is not a Super Admin', async ({ page }) => {
+    await openSettings(page);
+
+    // page.request shares the context's cookies, so the switch lands in this test's own stub state.
+    await page.request.get(`${adminURL}/__test__/smtp-hidden?hidden=yes`);
+    await reopenSettings(page);
+
+    await expect(page.getByTestId('smtp-panel')).toHaveCount(0);
+    await expect(page.getByRole('heading', { level: 2, name: 'Reviews' })).toBeVisible();
+  });
+
+  test('saving stores the account, shows it after a reload, and keeps the password write-only', async ({ page }) => {
+    await openSettings(page);
+    await fillAccount(page);
+
+    const saved = page.waitForResponse(
+      (response) => response.url().endsWith('/api/admin/settings/email-smtp') && response.request().method() === 'PUT',
+    );
+    await page.getByTestId('save-smtp').click();
+    const response = await saved;
+
+    expect(response.status()).toBe(204);
+    expect(response.request().postDataJSON()).toMatchObject({
+      host: 'smtp.example.test',
+      port: '587',
+      username: 'shop@example.test',
+      password: 'an app password',
+      fromAddress: 'shop@example.test',
+      fromName: 'Colombo Wardrobe',
+      useStartTls: true,
+    });
+
+    await expect(page.getByTestId('smtp-announcement')).toContainText('Email account saved');
+    await expect(page.getByTestId('smtp-field-password')).toHaveValue('');
+
+    await reopenSettings(page);
+    const panel = page.getByTestId('smtp-panel');
+    await expect(panel.getByLabel('Mail server')).toHaveValue('smtp.example.test');
+    await expect(panel.getByLabel('Password')).toHaveValue('');
+    await expect(panel.getByTestId('smtp-password-state')).toContainText('A password is saved.');
+
+    // A second save with the password box empty does not send a password at all.
+    const second = page.waitForResponse(
+      (reply) => reply.url().endsWith('/api/admin/settings/email-smtp') && reply.request().method() === 'PUT',
+    );
+    await panel.getByLabel('Send from name').fill('Renamed');
+    await page.getByTestId('save-smtp').click();
+    expect('password' in ((await second).request().postDataJSON() as object)).toBe(false);
+  });
+
+  test('a server without a port and a sender is refused against those boxes', async ({ page }) => {
+    await openSettings(page);
+
+    await page.getByTestId('smtp-panel').getByLabel('Mail server').fill('smtp.example.test');
+    await page.getByTestId('save-smtp').click();
+
+    await expect(page.getByTestId('smtp-error-port')).toBeVisible();
+    await expect(page.getByTestId('smtp-error-fromAddress')).toBeVisible();
+    await expect(page.getByTestId('smtp-field-port')).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  test('a user name with encryption switched off is refused against the switch', async ({ page }) => {
+    await openSettings(page);
+    await fillAccount(page);
+
+    await page.getByTestId('smtp-panel').getByLabel('Encrypt the connection (STARTTLS)').uncheck();
+    await page.getByTestId('save-smtp').click();
+
+    await expect(page.getByTestId('smtp-error-useStartTls')).toContainText('Keep encryption on');
+  });
+
+  test('a server name with a scheme is refused against its box', async ({ page }) => {
+    await openSettings(page);
+    await fillAccount(page);
+
+    await page.getByTestId('smtp-panel').getByLabel('Mail server').fill('https://smtp.example.test');
+    await page.getByTestId('save-smtp').click();
+
+    await expect(page.getByTestId('smtp-error-host')).toBeVisible();
+  });
+
+  test('send test email reports where it went, and a refusal in a plain sentence', async ({ page }) => {
+    await openSettings(page);
+    await fillAccount(page);
+
+    await page.getByTestId('test-smtp').click();
+    await expect(page.getByTestId('smtp-test-sent')).toContainText('catalogue@example.com');
+
+    await page.request.get(`${adminURL}/__test__/smtp-test-outcome?outcome=refused`);
+
+    await page.getByTestId('test-smtp').click();
+    await expect(page.getByTestId('smtp-error')).toContainText('refused the user name or password');
+    await expect(page.getByTestId('smtp-test-sent')).toHaveCount(0);
+  });
+
+  test('fits every breakpoint with no horizontal scroll and real tap targets', async ({ page }) => {
+    for (const width of BREAKPOINTS) {
+      await page.setViewportSize({ width, height: 900 });
+      await openSettings(page);
+      await page.getByTestId('smtp-panel').scrollIntoViewIfNeeded();
+
+      expect(await horizontalOverflow(page), `horizontal overflow at ${width}px with the Email account panel`).toBeLessThanOrEqual(0);
+
+      for (const selector of [...smtpFields, '[data-testid="save-smtp"]', '[data-testid="test-smtp"]']) {
+        const rendered = await page.evaluate(
+          (one) =>
+            [...document.querySelectorAll<HTMLElement>(one)].filter((element) => element.getClientRects().length > 0)
+              .length,
+          selector,
+        );
+
+        expect(rendered, `nothing rendered matches "${selector}" at ${width}px`).toBeGreaterThan(0);
+
+        if (!selector.includes('useStartTls')) {
+          expect(await undersized(page, selector), `${selector} at ${width}px`).toEqual([]);
+        }
+      }
+    }
+  });
+
+  test('has no serious or critical axe violation with an error and a test result on screen', async ({ page }) => {
+    await openSettings(page);
+    await page.getByTestId('smtp-panel').getByLabel('Mail server').fill('smtp.example.test');
+    await page.getByTestId('save-smtp').click();
+    await expect(page.getByTestId('smtp-error-port')).toBeVisible();
+
+    const results = await new AxeBuilder({ page })
+      .include('[data-testid="smtp-panel"]')
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+
+    const serious = results.violations.filter(
+      (violation) => violation.impact === 'serious' || violation.impact === 'critical',
+    );
+
+    expect(serious.map((violation) => violation.id)).toEqual([]);
   });
 });

@@ -97,11 +97,12 @@ public sealed class EmailOutboxMessage
     /// Data Protection ciphertext of an SMTP configuration to use <i>instead of</i> the current one
     /// (doc 08 §3.8 N2), for the previous-configuration copy of <c>SensitiveSettingsChanged</c>.
     /// <para>
-    /// <b>Always null in this build, and the column is here because the schema has it.</b> The dual-send
-    /// belongs to the settings task that can change SMTP at all: it needs <c>ops.AdminAlerts</c>, the
-    /// <c>Email.Smtp.*</c> settings group and <c>Settings.Security</c>, none of which exists. The sender
-    /// does honour the one rule that outlives the dual-send — the column is NULLed on any terminal status
-    /// (R5) — so a ciphertext cannot outlive the message it was for.
+    /// <b>Written only by the mail-account settings save</b> (<c>SensitiveSettingsChangeNotifier</c>, 2026-10-21),
+    /// on the copy of the alert that must go out through the account that was in use <i>before</i> the change,
+    /// under the dedicated purpose <c>SpencerDenim.EmailOutbox.SmtpOverride.v1</c>. <c>SendEmails</c> sends such a
+    /// row through the carried account rather than the current one — even when no current account is configured,
+    /// which is the case a hijacker clearing the mail settings would create. The column is NULLed on any terminal
+    /// status (R5), so the ciphertext, which holds the previous password, cannot outlive the message it was for.
     /// </para>
     /// </summary>
     public string? TransportOverrideProtected { get; set; }

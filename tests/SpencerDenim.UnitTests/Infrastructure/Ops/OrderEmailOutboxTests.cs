@@ -221,6 +221,10 @@ public sealed class OrderEmailOutboxTests
             nameof(EmailTemplateCodes.OrderShipped),
             nameof(EmailTemplateCodes.PaymentConfirmed),
             nameof(EmailTemplateCodes.Welcome),
+
+            // ADM-22 (2026-10-21): the security warning carries no token, and it is the record of what the Super
+            // Admins were told, so it keeps its body for the ordinary thirty days.
+            nameof(EmailTemplateCodes.SensitiveSettingsChanged),
         ];
 
         Assert.Equal(
