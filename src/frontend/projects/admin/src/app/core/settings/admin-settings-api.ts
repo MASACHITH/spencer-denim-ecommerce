@@ -11,6 +11,8 @@ import {
   PayPalValues,
   SmtpTestResponse,
   SmtpTextValues,
+  ProductPageInfoSaveResponse,
+  ProductPageInfoValues,
   TrafficValues,
   UploadedMediaAsset,
 } from './admin-settings.model';
@@ -33,6 +35,7 @@ export class AdminSettingsApi {
   static readonly reviewsUrl = '/api/admin/settings/reviews';
   static readonly smtpUrl = '/api/admin/settings/email-smtp';
   static readonly smtpTestUrl = '/api/admin/settings/email-smtp/test';
+  static readonly productPageInfoUrl = '/api/admin/settings/product-page-info';
   static readonly imagesUrl = '/api/admin/media/images';
 
   private readonly http = inject(HttpClient);
@@ -159,6 +162,20 @@ export class AdminSettingsApi {
       this.http.post<SmtpTestResponse>(AdminSettingsApi.smtpTestUrl, values, {
         headers: { 'X-XSRF-TOKEN': token },
       }),
+    );
+  }
+
+  /**
+   * The product page's delivery and returns texts (issue #33). **Only the fields the screen was given**, the bank
+   * group's rule. Answers with what the server's sanitiser removed, so the screen can say so.
+   */
+  updateProductPageInfo(values: ProductPageInfoValues, rowVersion: string): Observable<ProductPageInfoSaveResponse> {
+    return this.auth.withAntiforgeryToken((token) =>
+      this.http.put<ProductPageInfoSaveResponse>(
+        AdminSettingsApi.productPageInfoUrl,
+        { ...values, rowVersion },
+        { headers: { 'X-XSRF-TOKEN': token } },
+      ),
     );
   }
 

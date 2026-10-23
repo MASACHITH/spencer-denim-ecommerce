@@ -13,6 +13,7 @@ import { toSignal } from '@angular/core/rxjs-interop';
 import { catchError, map, of, switchMap } from 'rxjs';
 
 import { ContactPanel } from './contact-panel';
+import { ShippingRates } from './shipping-rates';
 import { CONTENT_PAGE_KEYS, ContentPageDto } from '../../core/content/content-page.model';
 import { ContentPageService } from '../../core/content/content-page.service';
 import { PageMeta } from '../../core/platform/page-metadata';
@@ -52,7 +53,7 @@ type State =
  */
 @Component({
   selector: 'sd-content-page',
-  imports: [RouterLink, ContactPanel],
+  imports: [RouterLink, ContactPanel, ShippingRates],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @switch (state().kind) {
@@ -65,7 +66,15 @@ type State =
             }
           </header>
 
-          @if (page()!.bodyHtml) {
+          @if (shippingParts(); as parts) {
+            <!-- #33: the Shipping page's live fee list, drawn where the copy marks it (under "Delivery within
+                 Sri Lanka"), or after the copy when the owner has removed the marker line. -->
+            <div class="page__body rich rich--page" [innerHTML]="parts.before"></div>
+            <sd-shipping-rates [inline]="parts.after !== null" />
+            @if (parts.after) {
+              <div class="page__body rich rich--page" [innerHTML]="parts.after"></div>
+            }
+          } @else if (page()!.bodyHtml) {
             <!-- Already-sanitised HTML from the API, bound so Angular's sanitiser runs over it too.
                  See the component's own documentation for why both layers are kept. -->
             <div class="page__body rich rich--page" [innerHTML]="page()!.bodyHtml"></div>
@@ -84,6 +93,8 @@ type State =
           @if (isContact()) {
             <sd-contact-panel />
           }
+
+
         </article>
       }
       @case ('missing') {
@@ -196,6 +207,19 @@ export class ContentPage {
   protected readonly isContact = computed(
     () => this.page()?.systemKey === CONTENT_PAGE_KEYS.contact,
   );
+
+  protected readonly isShipping = computed(
+    () => this.page()?.systemKey === CONTENT_PAGE_KEYS.shipping,
+  );
+
+  /**
+   * The Shipping page's body split at the paragraph that holds only `{{delivery fees}}` (issue #33), or null for any
+   * other page. With no marker the whole body comes first and the list follows it (`after` is null).
+   */
+  protected readonly shippingParts = computed(() => {
+    const page = this.page();
+    return page && this.isShipping() ? splitAtFeeMarker(page.bodyHtml) : null;
+  });
 
   /** The Contact page's address, for the "get in touch" link on an empty page. Null when unpublished. */
   protected readonly contactPath = computed(() => {
@@ -311,4 +335,20 @@ export class ContentPage {
       this.response.status = NOT_FOUND_STATUS;
     }
   }
+}
+
+/** The Shipping page's fee-list marker: a paragraph holding only `{{delivery fees}}` (PolicyPageContent). */
+const FEE_MARKER = /<p>\s*\{\{\s*delivery fees\s*\}\}\s*<\/p>/i;
+
+/** Splits a body at the first fee-list marker; `after` is null when there is none. */
+export function splitAtFeeMarker(bodyHtml: string): { before: string; after: string | null } {
+  const match = FEE_MARKER.exec(bodyHtml);
+  if (!match) {
+    return { before: bodyHtml, after: null };
+  }
+
+  return {
+    before: bodyHtml.slice(0, match.index),
+    after: bodyHtml.slice(match.index + match[0].length).replace(FEE_MARKER, ''),
+  };
 }

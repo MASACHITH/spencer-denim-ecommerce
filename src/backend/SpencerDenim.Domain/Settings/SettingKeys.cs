@@ -6,10 +6,10 @@ namespace SpencerDenim.Domain.Settings;
 /// <para>
 /// <b>What is deliberately absent, and why that is not an oversight.</b> Doc 08 §3.8's "Groups" table
 /// has fifteen rows — counted from the table; "sixteen" is §3.1's module list, which is a different
-/// thing — and names 59 keys, of which this build seeds 43 (issue #193 added <c>Social.YouTubeUrl</c> and the
+/// thing — and names 59 keys, of which this build seeds 45 (issue #193 added <c>Social.YouTubeUrl</c> and the
 /// two <c>Traffic.*</c> retention periods; issue #189 <c>Reviews.RequireApproval</c>; ADM-22's 2026-10-21 work the
-/// seven <c>Email.Smtp.*</c> keys). <see cref="DeferredSettingKeys"/>
-/// is the per-key record of the other 16 and is machine-checked against the document (<c>SettingKeySpecificationTests</c>); the paragraphs below
+/// seven <c>Email.Smtp.*</c> keys; issue #33 the two <c>Content.Pdp*</c> product-page texts). <see cref="DeferredSettingKeys"/>
+/// is the per-key record of the other 14 and is machine-checked against the document (<c>SettingKeySpecificationTests</c>); the paragraphs below
 /// are the summary.
 /// <c>Bank.*</c> is now here (W3-03, PAY-01): it is the one group doc 11 P7's preconditions make a
 /// prerequisite of taking money at all. <c>Payments.PayPal.*</c> is here since W4-01 (see
@@ -210,6 +210,39 @@ public static partial class SettingKeys
     }
 
     /// <summary>
+    /// Group <c>Content</c> (doc 08 §3.8, §3.7; PDP-05, issue #33): the two short texts the product page shows
+    /// under its delivery and returns panel, each linking to the full Shipping or Returns page.
+    /// <para>
+    /// <b><see cref="SettingValueType.TextHtml"/>, the only keys of that type</b>: sanitised on save with the
+    /// content pages' allow-list sanitiser (doc 08 N10), and sanitised again on the way out, so a row written by
+    /// a script is no less safe than one written through the screen. <c>Settings.Edit</c>, as doc 08 §3.8 states.
+    /// </para>
+    /// <para>
+    /// <b>Seeded once with original wording</b> (owner decision 2026-10-21: base the shop's terms on Sri Lankan
+    /// apparel practice, in our own words — <c>docs/research/2026-10-21-sri-lanka-delivery-returns-couriers.md</c>).
+    /// The seed is applied on insert only, so a text the owner has changed, or emptied, stays as they left it.
+    /// The texts hold no fee or delivery day: those are drawn beside them from <c>sales.DeliveryMethodZoneRates</c>.
+    /// </para>
+    /// </summary>
+    public static class Content
+    {
+        public const string Group = "Content";
+
+        /// <summary>The returns snippet under the product page's panel.</summary>
+        public const string PdpReturnsInfoHtml = "Content.PdpReturnsInfoHtml";
+
+        /// <summary>The delivery snippet under the product page's panel.</summary>
+        public const string PdpDeliveryInfoHtml = "Content.PdpDeliveryInfoHtml";
+
+        /// <summary>
+        /// The most cleaned markup either text may hold. A product-page snippet is a few bullet points; four
+        /// thousand characters is several times the seeded text and well short of a page, which belongs on the
+        /// Shipping or Returns page the panel links to.
+        /// </summary>
+        public const int PdpInfoMaxLength = 4_000;
+    }
+
+    /// <summary>
     /// Group <c>Traffic</c> (doc 08 §3.8, §8.4): how long raw page views are kept before the nightly purge
     /// deletes them (ADM-20, issue #193). <c>Settings.Edit</c>, as doc 08 §3.8's table states.
     /// <para>
@@ -377,6 +410,18 @@ public static partial class SettingKeys
         /// shape: an <see cref="SettingValueType.Int"/> row, written by the seeder and read by nothing else.
         /// </summary>
         public const string MegaMenuCardsVersion = "Seed.MegaMenuCardsVersion";
+
+        /// <summary>
+        /// The highest courier seed version applied to this database (issue #33). Same rule: a courier offered in
+        /// a version at or below this one is never offered again, so one an admin deleted stays deleted.
+        /// </summary>
+        public const string CouriersVersion = "Seed.CouriersVersion";
+
+        /// <summary>
+        /// The highest Shipping and Returns page copy version applied to this database (issue #33). The copy is
+        /// written only into a body that is still empty or still exactly an earlier seed's, and never twice.
+        /// </summary>
+        public const string PolicyPagesVersion = "Seed.PolicyPagesVersion";
     }
 
     /// <summary><c>ops.Settings.Key</c> is <c>varchar(100)</c>.</summary>

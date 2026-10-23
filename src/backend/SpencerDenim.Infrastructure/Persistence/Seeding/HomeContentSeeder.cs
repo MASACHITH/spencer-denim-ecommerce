@@ -45,6 +45,7 @@ public sealed class HomeContentSeeder(AppDbContext dbContext, IClock clock)
         counts.Announcements = await SeedAnnouncementsAsync(cancellationToken);
         counts.MegaMenuCards = await SeedMegaMenuCardsAsync(cancellationToken);
         counts.ContentPages = await SeedContentPagesAsync(cancellationToken);
+        counts.PolicyPages = await SeedPolicyPagesAsync(cancellationToken);
 
         return counts;
     }
@@ -140,6 +141,74 @@ public sealed class HomeContentSeeder(AppDbContext dbContext, IClock clock)
         await dbContext.SaveChangesAsync(cancellationToken);
 
         return added;
+    }
+
+    /// <summary>
+    /// Issue #33: the Shipping and Returns pages' starting copy (<see cref="PolicyPageContent"/>), published —
+    /// the owner's instruction of 2026-10-21.
+    /// <para>
+    /// <b>Offered once, by version</b> (<c>Seed.PolicyPagesVersion</c>, the #152 rule), after the shells above
+    /// exist. <b>Never over an admin's words:</b> a page is filled only when its body is still empty or still
+    /// exactly an earlier version's seed, and only that page is published. A page an admin has written, a page
+    /// whose body an admin emptied after a previous run (the marker stops a second run), and a soft-deleted page are
+    /// all left alone. The title, slug and SEO fields are never touched — a title is the client's label.
+    /// </para>
+    /// </summary>
+    private async Task<int> SeedPolicyPagesAsync(CancellationToken cancellationToken)
+    {
+        var (marker, recorded) = await SeedVersionMarker.ReadAsync(
+            dbContext, SettingKeys.Seed.PolicyPagesVersion, cancellationToken);
+
+        if (recorded >= PolicyPageContent.SeedVersion)
+        {
+            return 0;
+        }
+
+        var keys = PolicyPageContent.Bodies.Keys.ToList();
+        var pages = await dbContext.ContentPages
+            .Where(page => page.SystemKey != null && keys.Contains(page.SystemKey))
+            .ToListAsync(cancellationToken);
+
+        var utcNow = clock.UtcNow.UtcDateTime;
+        var filled = 0;
+
+        foreach (var page in pages)
+        {
+            if (!IsUntouched(page))
+            {
+                continue;
+            }
+
+            page.BodyHtml = PolicyPageContent.Bodies[page.SystemKey!];
+            page.SetPublished(true, utcNow);
+            filled++;
+        }
+
+        SeedVersionMarker.Record(
+            dbContext,
+            marker,
+            SettingKeys.Seed.PolicyPagesVersion,
+            PolicyPageContent.SeedVersion,
+            "The highest Shipping and Returns page copy version applied to this database (#33). Written by the "
+            + "seeder; not editable.");
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return filled;
+    }
+
+    /// <summary>Whether a policy page still holds no words of anybody's but an earlier seed's.</summary>
+    internal static bool IsUntouched(ContentPage page)
+    {
+        ArgumentNullException.ThrowIfNull(page);
+
+        if (string.IsNullOrWhiteSpace(page.BodyHtml))
+        {
+            return true;
+        }
+
+        return PolicyPageContent.PreviousSeeds.TryGetValue(page.SystemKey ?? string.Empty, out var previous)
+            && previous.Contains(page.BodyHtml, StringComparer.Ordinal);
     }
 
     private async Task<int> SeedSectionsAsync(CancellationToken cancellationToken)
@@ -564,4 +633,7 @@ public sealed class HomeContentSeedCounts
     /// always empty and the pages are always unpublished.
     /// </summary>
     public int ContentPages { get; set; }
+
+    /// <summary>Shipping and Returns pages given their seeded copy and published (issue #33).</summary>
+    public int PolicyPages { get; set; }
 }

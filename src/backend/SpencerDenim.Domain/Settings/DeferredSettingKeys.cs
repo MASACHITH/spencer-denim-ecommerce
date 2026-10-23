@@ -96,17 +96,8 @@ public static class DeferredSettingKeys
             + "own media."),
 
         // ---- Content -----------------------------------------------------------------------------------
-        new(
-            "Content.PdpReturnsInfoHtml",
-            SettingKeyDeferralKind.AwaitingItsFeature,
-            "PDP-05's returns and delivery panels do not exist: nothing in the storefront or the API "
-            + "reads either key. The allow-list HTML sanitiser these two would need (doc 08 N10) does now "
-            + "exist — W2-11 built IHtmlSanitiser — so the blocker is the panel, not the sanitiser."),
-
-        new(
-            "Content.PdpDeliveryInfoHtml",
-            SettingKeyDeferralKind.AwaitingItsFeature,
-            "See Content.PdpReturnsInfoHtml: the PDP has no panel reading it."),
+        // Content.PdpReturnsInfoHtml and Content.PdpDeliveryInfoHtml left this list with issue #33, which built
+        // the product page's delivery and returns panel that reads them (ContentSettingDefinitions).
 
         // ---- Orders ------------------------------------------------------------------------------------
         new(

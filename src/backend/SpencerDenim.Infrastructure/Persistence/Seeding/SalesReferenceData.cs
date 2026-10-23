@@ -42,6 +42,21 @@ public sealed record DeliveryMethodZoneRateSeed(
     byte EstimatedDaysMax);
 
 /// <summary>Doc 08 §9's two payment providers.</summary>
+/// <summary>One courier the seeder offers (issue #33).</summary>
+/// <param name="Name">As the courier writes it; unique in <c>sales.Couriers</c>.</param>
+/// <param name="Phone">Customer line, printable ASCII, at most 20 characters, or null when not verified.</param>
+/// <param name="TrackingUrlTemplate">An https URL containing <c>{trackingNumber}</c>, or null for form-only tracking.</param>
+/// <param name="IsActive">Whether staff can pick it on dispatch from the start.</param>
+/// <param name="SortOrder">Where it sits in the picker.</param>
+/// <param name="IntroducedIn">The <see cref="SalesReferenceData.CourierSeedVersion"/> that first offered it.</param>
+public sealed record CourierSeed(
+    string Name,
+    string? Phone,
+    string? TrackingUrlTemplate,
+    bool IsActive,
+    short SortOrder,
+    int IntroducedIn = 1);
+
 public sealed record PaymentProviderSeed(
     string Code,
     string DisplayName,
@@ -239,5 +254,43 @@ internal static class SalesReferenceData
             IsEnabled: false,
             DisplayOrder: 2,
             "Pay by card or PayPal balance."),
+    ];
+
+    /// <summary>
+    /// The courier seed version this build ships, recorded in <c>Seed.CouriersVersion</c> (issue #33). A courier
+    /// whose <see cref="CourierSeed.IntroducedIn"/> is at or below a database's recorded version has already been
+    /// offered to it, so one an admin has deleted stays deleted (the #152 rule).
+    /// </summary>
+    public const int CourierSeedVersion = 1;
+
+    /// <summary>
+    /// <c>sales.Couriers</c> (ADM-22): the carriers the shop starts with (owner decision, 2026-10-21, issue #33,
+    /// which reversed the earlier "seed no courier" rule; and the same day's decision to deliver worldwide).
+    /// <para>
+    /// <b>Every name, telephone number and tracking pattern was checked on the courier's own site on
+    /// 2026-10-21</b> — <c>docs/research/2026-10-21-sri-lanka-delivery-returns-couriers.md</c> §3 records how. A
+    /// template is set only where the site was seen reading the number from the address; a courier whose tracking
+    /// is a form (AJAX, a postback or a CAPTCHA) has none, so its number is shown as text rather than as a link to
+    /// a blank form. Nothing is guessed: DHL Express's site refused automated checks, so its template and
+    /// telephone number are left for the owner to fill in.
+    /// </para>
+    /// <para>
+    /// <b>Only the three with verified links are switched on.</b> The rest are real and widely used and are
+    /// switched on from Settings → Couriers when the shop books with them. The two international carriers are off
+    /// until overseas delivery is live.
+    /// </para>
+    /// </summary>
+    public static readonly IReadOnlyList<CourierSeed> Couriers =
+    [
+        new("Domex", "011 7 759 759", "https://www.domex.lk/Order-Details.php?wbno={trackingNumber}", IsActive: true, SortOrder: 1),
+        new("Koombiyo Delivery", "011 7886786", "https://koombiyodelivery.lk/Track/track_id?id={trackingNumber}&phone=", IsActive: true, SortOrder: 2),
+        new("Citypak", "+94 11 7697000", "https://track.citypak.lk/track?tracking_number={trackingNumber}", IsActive: true, SortOrder: 3),
+        new("Pronto Lanka", "+94 112 102 700", null, IsActive: false, SortOrder: 4),
+        new("Trans Express", "011 2999 888", null, IsActive: false, SortOrder: 5),
+        new("Sri Lanka Post (Speed Post)", "011 2328112", null, IsActive: false, SortOrder: 6),
+
+        // International (owner decision 2026-10-21: the shop also delivers worldwide). Off until that is live.
+        new("Sri Lanka Post EMS", null, null, IsActive: false, SortOrder: 7),
+        new("DHL Express", null, null, IsActive: false, SortOrder: 8),
     ];
 }

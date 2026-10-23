@@ -128,7 +128,8 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
 
         // `Bank` is absent for a Settings.Edit holder and that is the point of the filter (doc 08 §3.8
         // DB2); `Orders` arrived with W3-04 and is Settings.Edit, so it is here.
-        Assert.Equal(["Store", "Contact", "Social", "Orders", "Traffic", "Reviews"], groups);
+        // `Content` (issue #33) is the product page's two texts, Settings.Edit.
+        Assert.Equal(["Store", "Contact", "Social", "Content", "Orders", "Traffic", "Reviews"], groups);
 
         foreach (var group in body.GetProperty("groups").EnumerateArray())
         {

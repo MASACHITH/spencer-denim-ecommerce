@@ -1247,7 +1247,7 @@ Stock is **not** reserved in the cart. The cart row is created on the first Add 
 | `Store` | Name, LegalName, BRNumber, VatNumber, Address, Email, LogoAssetId, FaviconAssetId, DefaultOgImageAssetId (GLB-02) | Settings.Edit |
 | `Contact` | Phone, WhatsApp, Email, Address, OpeningHours, MapEmbedUrl | Settings.Edit |
 | `Social` | FacebookUrl, InstagramUrl, TikTokUrl, YouTubeUrl | Settings.Edit |
-| `Content` | PdpReturnsInfoHtml, PdpDeliveryInfoHtml (PDP-05) | Settings.Edit |
+| `Content` | PdpReturnsInfoHtml, PdpDeliveryInfoHtml (PDP-05; seeded once with the shop's starting terms in our own words, owner decision 2026-10-21, #33) | Settings.Edit |
 | `Orders` | BankTransferExpiryHours (48), PayPalExpiryMinutes (60), AutoDeliverAfterDays (7) | Settings.Edit |
 | `Inventory` | DefaultLowStockThreshold (5) | Settings.Edit |
 | `Catalog` | NewArrivalDays (30), BestSellerTopN (10) | Settings.Edit |
@@ -1844,12 +1844,13 @@ OFFSET @skip ROWS FETCH NEXT 24 ROWS ONLY;
 | `sales.PaymentProviders` | 2 | `BankTransfer` (enabled, order 1); `PayPal` (**disabled** until credentials and FX rate are set, order 2) |
 | `sales.DeliveryMethods` | 3 | STANDARD, EXPRESS, PICKUP (PICKUP disabled until a PickupLocation exists) |
 | `sales.DeliveryMethodZoneRates` | 9 | **Placeholders, client to confirm (D8):** **Colombo:** Standard Rs. 400, free ≥ Rs. 10,000, 1–2 days · Express Rs. 950, 1 day · Pickup Rs. 0, 1–2 days. **Western:** Standard Rs. 450, free ≥ Rs. 10,000, 2–3 days · Express Rs. 1,200, 1–2 days · Pickup Rs. 0, 1–2 days. **IslandWide:** Standard Rs. 600, free ≥ Rs. 15,000, 3–5 days · Express **unavailable** · Pickup Rs. 0, 1–2 days |
-| `sales.PickupLocations`, `sales.Couriers` | 0 | Client input (D8) |
+| `sales.PickupLocations` | 0 | Client input (D8) |
+| `sales.Couriers` | 8 | Owner decision 2026-10-21 (#33): Domex, Koombiyo Delivery and Citypak active with verified tracking templates; Pronto Lanka, Trans Express, Sri Lanka Post (Speed Post), Sri Lanka Post EMS and DHL Express inactive with no template. Offered once by `Seed.CouriersVersion`; never over an existing name; a deleted courier is not re-created |
 | `ops.Settings` | ~50 | Keys per §3.8 groups. Defaults: Orders.BankTransferExpiryHours = 48, PayPalExpiryMinutes = 60, AutoDeliverAfterDays = 7 · Inventory.DefaultLowStockThreshold = 5 · Catalog.NewArrivalDays = 30, BestSellerTopN = 10 · Reviews.RequireApproval = true · Payments.PayPal.FxBufferPercent = 3.00, RateMaxAgeDays = 7, Mode = sandbox · Privacy.RetainInvoiceBillTo = true · Traffic.RawRetentionDays = 90, BotRetentionDays = 7 · Delivery.DefaultZone = 3 · Payments.PayPal.CaptureLockHours = 3, CaptureRecoveryMaxHours = 24, PendingCaptureMaxDays = 5 · Security.StaffLockoutMaxFailures = 5, StaffLockoutMinutes = 15, CustomerLockoutMaxFailures = 10, CustomerLockoutMinutes = 15 |
 | `content.HomeSections` | 10 | Proposal order; media-dependent sections disabled until content exists |
 | `content.HomeSectionItems` | 6 | 3 department tiles, 3 benefits |
 | `content.AnnouncementMessages` | 2 | |
-| `content.ContentPages` | 6 | System pages, unpublished until the client's copy (privacy and terms need PDPA review) |
+| `content.ContentPages` | 6 | System pages. Contact published empty; **Shipping and Returns** written with the shop's starting terms and published (owner decision 2026-10-21, #33; only while the body is empty or an untouched earlier seed, once per `Seed.PolicyPagesVersion`); About, Privacy and Terms unpublished until the client's copy (privacy and terms need PDPA review) |
 | `ops.JobLeases` | 9 | One per job |
 
 **Default roles (RoleClaims `perm`):**

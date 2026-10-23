@@ -5,7 +5,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Domain.Content;
 using SpencerDenim.Domain.Identity;
+using SpencerDenim.Domain.Settings;
 using SpencerDenim.Infrastructure.Persistence;
+using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.IntegrationTests.Infrastructure;
 
 namespace SpencerDenim.IntegrationTests.Content;
@@ -32,8 +34,13 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
     // ---- the seeded shells -----------------------------------------------------------------------
 
     /// <summary>
-    /// Doc 08 §9 and doc 11 P13: six system pages with <b>empty bodies</b>, five of them unpublished and
-    /// <b>Contact on the shop</b> (owner decision, W2-11).
+    /// Doc 08 §9 and doc 11 P13: six system pages; <b>Contact on the shop</b> with an empty body (owner decision,
+    /// W2-11); <b>Shipping and Returns on the shop with the shop's starting terms</b> (owner decision 2026-10-21,
+    /// issue #33, from <c>PolicyPageContent</c>); About, Privacy and Terms empty and unpublished.
+    /// <para>
+    /// <b>Issue #33 changed which pages carry copy, not the rule behind it:</b> nothing writes words the owner has
+    /// not asked for. Privacy and Terms still wait for a PDPA review and About for the client.
+    /// </para>
     /// <para>
     /// <b>This is the task's defining constraint, as a test.</b> A returns policy, a privacy policy and
     /// terms of business are the client's own words and carry legal weight — Privacy and Terms need a
@@ -80,6 +87,11 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
                 .IgnoreQueryFilters()
                 .Where(page => page.SystemKey != null)
                 .ExecuteDeleteAsync(Token);
+
+            // And the policy-copy marker, so the run below is a fresh deployment's in full (issue #33).
+            await context.Settings
+                .Where(setting => setting.Key == SettingKeys.Seed.PolicyPagesVersion)
+                .ExecuteDeleteAsync(Token);
         }
 
         await ReseedAsync(host);
@@ -98,9 +110,20 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
             ContentPageKeys.Seeds.Select(seed => seed.SystemKey).Order(StringComparer.Ordinal),
             pages.Select(page => page.SystemKey!).Order(StringComparer.Ordinal));
 
-        foreach (var page in pages)
+        var policyPages = new[] { ContentPageKeys.Shipping, ContentPageKeys.Returns };
+
+        foreach (var page in pages.Where(page => policyPages.Contains(page.SystemKey)))
         {
-            // **Empty for all six, Contact included.** The publish decision below does not relax this:
+            Assert.Equal(PolicyPageContent.Bodies[page.SystemKey!], page.BodyHtml);
+            Assert.True(page.IsPublished);
+            Assert.NotNull(page.PublishedAtUtc);
+            Assert.Null(page.SeoTitle);
+            Assert.Null(page.SeoDescription);
+        }
+
+        foreach (var page in pages.Where(page => !policyPages.Contains(page.SystemKey)))
+        {
+            // **Empty for the other four, Contact included.** The publish decision below does not relax this:
             // Contact's content is the enquiry form and the settings, not copy.
             Assert.True(
                 page.BodyHtml.Length == 0,
@@ -134,8 +157,8 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
         // Said once more as a whole, so "everything is published" and "nothing is" both fail here rather
         // than only inside the loop's per-page message.
         Assert.Equal(
-            [ContentPageKeys.Contact],
-            pages.Where(page => page.IsPublished).Select(page => page.SystemKey));
+            [ContentPageKeys.Contact, ContentPageKeys.Returns, ContentPageKeys.Shipping],
+            pages.Where(page => page.IsPublished).Select(page => page.SystemKey!).Order(StringComparer.Ordinal));
     }
 
     /// <summary>

@@ -338,6 +338,9 @@ public sealed class SeedCounts
     /// </summary>
     public int ContentPages { get; set; }
 
+    /// <summary>The Shipping and Returns pages given their seeded copy and published (issue #33).</summary>
+    public int PolicyPages { get; set; }
+
     /// <summary><c>ops.Settings</c> rows created because the key had none (ADM-22). Values are always null.</summary>
     public int Settings { get; set; }
 
@@ -366,5 +369,5 @@ public sealed class SeedCounts
         $"default role permissions {DefaultRolePermissions}, " +
         $"provinces {Sales.Provinces}, districts {Sales.Districts}, " +
         $"delivery methods {Sales.DeliveryMethods}, zone rates {Sales.DeliveryMethodZoneRates}, " +
-        $"payment providers {Sales.PaymentProviders}";
+        $"payment providers {Sales.PaymentProviders}, couriers {Sales.Couriers}, policy pages {PolicyPages}";
 }

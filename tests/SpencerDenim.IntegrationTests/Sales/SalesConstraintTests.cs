@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.IntegrationTests.Infrastructure;
 
@@ -863,21 +864,35 @@ public sealed class SalesConstraintTests(SqlServerDatabaseFixture sqlServer) : S
     [Fact]
     public async Task One_method_cannot_have_two_rates_for_one_zone()
     {
-        var methodId = await Writer.InsertAsync(
-            "sales.DeliveryMethods",
-            SalesRowWriter.DeliveryMethodRow(),
-            Token);
+        var methodId = 0;
 
-        await Writer.InsertWithoutIdentityAsync(
-            "sales.DeliveryMethodZoneRates",
-            SalesRowWriter.ZoneRateRow(methodId, DeliveryZone.Western),
-            Token);
+        try
+        {
+            methodId = await Writer.InsertAsync(
+                "sales.DeliveryMethods",
+                SalesRowWriter.DeliveryMethodRow(),
+                Token);
 
-        await Writer.AssertRejectedAsync(
-            "sales.DeliveryMethodZoneRates",
-            SalesRowWriter.ZoneRateRow(methodId, DeliveryZone.Western),
-            "PK_DeliveryMethodZoneRates",
-            Token);
+            await Writer.InsertWithoutIdentityAsync(
+                "sales.DeliveryMethodZoneRates",
+                SalesRowWriter.ZoneRateRow(methodId, DeliveryZone.Western),
+                Token);
+
+            await Writer.AssertRejectedAsync(
+                "sales.DeliveryMethodZoneRates",
+                SalesRowWriter.ZoneRateRow(methodId, DeliveryZone.Western),
+                "PK_DeliveryMethodZoneRates",
+                Token);
+        }
+        finally
+        {
+            if (methodId != 0)
+            {
+                await DbContext.Database.ExecuteSqlRawAsync(
+                    "DELETE FROM sales.DeliveryMethodZoneRates WHERE DeliveryMethodId = {0}; DELETE FROM sales.DeliveryMethods WHERE Id = {0};",
+                    [methodId], Token);
+            }
+        }
     }
 
     private static Dictionary<string, object?> ValidOrder(SalesReferenceData reference) =>

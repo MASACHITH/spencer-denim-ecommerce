@@ -1359,7 +1359,105 @@ const SEEDED_SETTINGS = {
 
   // Issue #189: doc 08 section 3.8's own "(true)".
   'Reviews.RequireApproval': 'true',
+
+  // Issue #33: the product page texts, seeded with ContentSettingDefinitions' wording (copied here verbatim).
+  'Content.PdpDeliveryInfoHtml':
+    '<ul><li>Within Sri Lanka we deliver to every district by courier. The fee for your district is shown'
+    + ' at checkout, before you pay.</li><li>We also deliver worldwide with a tracked international service'
+    + ', usually in 5 to 15 working days after dispatch. The fee for your country is shown at checkout.</li'
+    + '><li>We dispatch once your payment is confirmed, and delivery times count working days from dispatch'
+    + '. Customs duties and taxes on overseas orders are paid by the customer.</li><li>Pay securely online '
+    + 'at checkout. Cash on delivery is not available.</li></ul>',
+  'Content.PdpReturnsInfoHtml':
+    '<ul><li>Changed your mind? Return or exchange within 14 days of delivery.</li><li>Items must be unwo'
+    + 'rn and unwashed, with all their tags still attached.</li><li>Innerwear and lingerie, swimwear, socks'
+    + ' and hosiery, pierced jewellery and sale items cannot be returned.</li><li>Refunds go back to your o'
+    + 'riginal payment method within 7 working days of your return reaching us and passing our check.</li><'
+    + 'li>Return postage is yours to pay, from Sri Lanka or overseas, unless the item is damaged, faulty or'
+    + ' wrong.</li><li>Damaged in transit or the wrong item? Tell us within 48 hours of delivery, with phot'
+    + 'os. Found a fault later? Tell us as soon as you notice it. Either way we will put it right at our co'
+    + 'st.</li></ul>',
 };
+
+/** Issue #33: `SettingKeys.Content.PdpInfoMaxLength`, the most cleaned markup either text may hold. */
+const PDP_INFO_MAX_LENGTH = 4000;
+
+/** Issue #33: the body fields of PUT /api/admin/settings/product-page-info and their keys. */
+const PDP_INFO_FIELDS = {
+  deliveryInfoHtml: 'Content.PdpDeliveryInfoHtml',
+  returnsInfoHtml: 'Content.PdpReturnsInfoHtml',
+};
+
+/**
+ * `HtmlSanitiser.SnippetAllowedTags` (#33: the page profile without img, figure and figcaption), so the stub keeps
+ * nothing the server would remove from these two texts.
+ */
+const ALLOWED_TAGS = new Set([
+  'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'sub', 'sup', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'dl', 'dt', 'dd',
+  'blockquote', 'hr', 'a', 'table', 'caption', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
+]);
+
+/** Elements whose contents are code rather than copy, removed with what is inside them. */
+const DROPPED_WITH_CONTENTS = ['script', 'style', 'template', 'noscript', 'iframe', 'object', 'svg', 'math', 'textarea', 'title'];
+
+/**
+ * A deliberately stricter stand-in for `HtmlSanitiser` (issue #33): every tag outside the allow-list is removed
+ * (the code-bearing ones with their contents), and an allowed tag keeps only an `href` whose scheme is http,
+ * https, mailto or a relative path. It never keeps more than the server would, and it reports what it removed in
+ * the server's words ("<script>", "onclick"), so the screen's "removed" notice is exercised.
+ */
+function sanitiseHtml(raw) {
+  const removed = new Set();
+  let html = String(raw ?? '');
+
+  for (const tag of DROPPED_WITH_CONTENTS) {
+    const pattern = new RegExp(String.raw`<${tag}\b[^>]*>[\s\S]*?<\/${tag}\s*>`, 'gi');
+    html = html.replace(pattern, () => {
+      removed.add(`<${tag}>`);
+      return '';
+    });
+  }
+
+  html = html.replace(/<!--[\s\S]*?-->/g, () => {
+    removed.add('an HTML comment');
+    return '';
+  });
+
+  html = html.replace(/<\/?([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g, (whole, name, attributes) => {
+    const tag = name.toLowerCase();
+    if (!ALLOWED_TAGS.has(tag)) {
+      removed.add(`<${tag}>`);
+      return '';
+    }
+
+    if (whole.startsWith('</')) {
+      return `</${tag}>`;
+    }
+
+    let kept = '';
+    for (const match of attributes.matchAll(/([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*(?:=\s*("[^"]*"|'[^']*'|[^\s"'>]+))?/g)) {
+      const attribute = match[1].toLowerCase();
+      const value = (match[2] ?? '').replace(/^["']|["']$/g, '');
+
+      if (attribute === 'href' && tag === 'a' && /^(https?:|mailto:|\/(?!\/))/i.test(value.trim())) {
+        kept += ` href="${value.replace(/"/g, '&quot;')}"`;
+      } else {
+        removed.add(attribute === 'href' ? 'href' : attribute);
+      }
+    }
+
+    return `<${tag}${kept}>`;
+  });
+
+  // The server's serialiser writes a bare ampersand in text as &amp;; so does the stub, so a saved "A & B" reads back
+  // exactly as production stores it. An existing entity is left as it is.
+  html = html.replace(/&(?!(?:[a-zA-Z][a-zA-Z0-9]*|#[0-9]+|#x[0-9a-fA-F]+);)/g, '&amp;');
+
+  const text = html.trim();
+  const rendersNothing = text.replace(/<[^>]+>/g, '').trim().length === 0;
+
+  return { html: rendersNothing ? '' : text, removed: [...removed] };
+}
 
 /**
  * The Traffic form's bounds (issue #193), the same figures as `SettingKeys.Traffic` on the server. The stub
@@ -1530,6 +1628,13 @@ function settingsPayload(state) {
     // Issue #189: the review approval switch. Settings.Edit, its own save unit.
     { groupKey: 'Reviews', keys: ['Reviews.RequireApproval'], types: { 'Reviews.RequireApproval': 'Bool' } },
 
+    // Issue #33: the product page texts. Settings.Edit, TextHtml, its own save unit.
+    {
+      groupKey: 'Content',
+      keys: ['Content.PdpDeliveryInfoHtml', 'Content.PdpReturnsInfoHtml'],
+      types: { 'Content.PdpDeliveryInfoHtml': 'TextHtml', 'Content.PdpReturnsInfoHtml': 'TextHtml' },
+    },
+
     // ADM-22 (2026-10-21): the mail account. Settings.Security (Super Admin only), its own save unit, the password
     // a write-only secret. Absent when `/__test__/smtp-hidden` says the signed-in user is not a Super Admin, as the
     // real read model leaves it out for every other role.
@@ -1592,6 +1697,10 @@ function settingsPayload(state) {
 
     if (groupKey === 'Reviews') {
       return ['Reviews.RequireApproval'];
+    }
+
+    if (groupKey === 'Content') {
+      return ['Content.PdpDeliveryInfoHtml', 'Content.PdpReturnsInfoHtml'];
     }
 
     if (groupKey === 'Email.Smtp') {
@@ -2795,6 +2904,64 @@ const server = createServer(async (request, response) => {
     }
 
     return noContent(response);
+  }
+
+  // Issue #33: the product page texts. Mirrors AdminSettingsEndpoints.UpdateProductPageInfoAsync and
+  // UpdateProductPageInfoCommandHandler: each field, when sent, is text or null (a number is a field error), is
+  // sanitised (sanitiseHtml, stricter than the server's), and may be at most PDP_INFO_MAX_LENGTH characters once
+  // clean; then the token. Empty is stored as null. Answers 200 with what was removed.
+  if (path === '/api/admin/settings/product-page-info' && request.method === 'PUT') {
+    const body = await readBody(request);
+    if (body === undefined || body === null || typeof body !== 'object' || Array.isArray(body)) {
+      return problem(response, 400, 'Malformed JSON', 'The request body is not valid JSON.', 'malformed_json');
+    }
+
+    const errors = {};
+    const wanted = {};
+    const removed = new Set();
+
+    for (const [field, key] of Object.entries(PDP_INFO_FIELDS)) {
+      if (!Object.hasOwn(body, field)) {
+        continue;
+      }
+
+      const raw = body[field];
+      if (raw !== null && typeof raw !== 'string') {
+        errors[field] = ['Send this field as text, or as null to clear it.'];
+        continue;
+      }
+
+      const cleaned = sanitiseHtml(raw);
+      if (cleaned.html.length > PDP_INFO_MAX_LENGTH) {
+        errors[field] = [
+          `That is ${cleaned.html.length.toLocaleString('en-GB')} characters of markup, and this text holds at most `
+          + `${PDP_INFO_MAX_LENGTH.toLocaleString('en-GB')}. Keep it to a few lines and put the detail on the `
+          + 'Shipping or Returns page, which the product page links to.',
+        ];
+        continue;
+      }
+
+      cleaned.removed.forEach((item) => removed.add(item));
+      wanted[key] = cleaned.html.length === 0 ? null : cleaned.html;
+    }
+
+    if (Object.keys(errors).length > 0) {
+      return json(response, 400, { title: 'One or more fields are invalid.', status: 400, errors });
+    }
+
+    if (body.rowVersion !== settingsToken(state, 'Content')) {
+      return problem(
+        response,
+        409,
+        'This change cannot be applied',
+        'Somebody else changed the product page texts while you were editing them.',
+        'stale_row_version',
+      );
+    }
+
+    Object.assign(state.settings, wanted);
+
+    return json(response, 200, { removed: [...removed] });
   }
 
   // Issue #193: the Traffic form. Mirrors UpdateTrafficSettingsCommandHandler's rules and order: field errors,

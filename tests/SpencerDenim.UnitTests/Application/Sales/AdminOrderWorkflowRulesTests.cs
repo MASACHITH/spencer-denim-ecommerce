@@ -233,6 +233,12 @@ public sealed class AdminOrderWorkflowRulesTests
         // the payment window); its credentials, webhook id and exchange rate stay null.
         Assert.Equal(
             [
+                // Issue #33: the product page's delivery and returns texts, seeded with the shop's own starting
+                // terms by the owner's decision of 2026-10-21 (policy wording, not a client fact such as a bank
+                // or an address; every figure in it is a policy the owner edits). See ContentSettingDefinitions.
+                SettingKeys.Content.PdpDeliveryInfoHtml,
+                SettingKeys.Content.PdpReturnsInfoHtml,
+
                 SettingKeys.Orders.AutoDeliverAfterDays,
                 SettingKeys.PayPal.Mode,
                 SettingKeys.PayPal.FxBufferPercent,

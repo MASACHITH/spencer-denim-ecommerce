@@ -160,3 +160,19 @@ public sealed record UpdateTrafficSettingsRequest(
 /// this save; null is refused, because an unset switch would silently fall back to "wait for approval".
 /// </summary>
 public sealed record UpdateReviewSettingsRequest(bool? RequireApproval, string? RowVersion);
+
+/// <summary>
+/// The product page's delivery and returns texts (issue #33), as HTML. A field left out is not written; null or
+/// blank means "show no text". Each is cleaned with the content pages' allow-list sanitiser before it is stored.
+/// </summary>
+/// <param name="DeliveryInfoHtml">The short delivery text shown under the delivery fees.</param>
+/// <param name="ReturnsInfoHtml">The short returns text.</param>
+/// <param name="RowVersion">The <c>Content</c> group's concurrency token, as the screen read it.</param>
+public sealed record UpdateProductPageInfoRequest(
+    string? DeliveryInfoHtml,
+    string? ReturnsInfoHtml,
+    string? RowVersion);
+
+/// <summary>The answer to a product-page text save: what the sanitiser removed, empty when nothing was.</summary>
+/// <param name="Removed">Short descriptions such as <c>&lt;script&gt;</c> or <c>onclick</c>; never the removed content.</param>
+public sealed record ProductPageInfoSaveResponse(IReadOnlyList<string> Removed);

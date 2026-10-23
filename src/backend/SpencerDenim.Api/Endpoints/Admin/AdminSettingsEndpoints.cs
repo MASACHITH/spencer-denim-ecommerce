@@ -176,7 +176,85 @@ internal static partial class AdminSettingsEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
 
+        api.MapPut("/product-page-info", UpdateProductPageInfoAsync)
+            .RequirePermission(Permissions.Settings.Edit)
+            .WithName("AdminUpdateProductPageInfo")
+            .WithSummary("The product page's short delivery and returns texts (PDP-05, issue #33).")
+            .WithDescription(
+                "Body: { deliveryInfoHtml, returnsInfoHtml, rowVersion }. HTML, cleaned on save with the content "
+                + "pages' allow-list sanitiser; a field left out is not written, null or blank clears it, and the "
+                + "cleaned markup may be at most 4,000 characters. Answers 200 with { removed: [...] } naming what "
+                + "the sanitiser took out (empty when nothing). Audited, one row per changed text; shows on the "
+                + "next product page.")
+            .Accepts<UpdateProductPageInfoRequest>("application/json")
+            .Produces<ProductPageInfoSaveResponse>()
+            .ProducesValidationProblem()
+            .Produces(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status500InternalServerError);
+
         return endpoints;
+    }
+
+    /// <summary>The product page's delivery and returns texts (issue #33).</summary>
+    /// <remarks>
+    /// Presence-aware like every other settings write. A success answers 200 rather than this group's usual 204,
+    /// because it carries what the sanitiser removed — a save that quietly dropped half a paste must not look
+    /// complete. Every other outcome is the shared <see cref="ToHttp"/> mapping.
+    /// </remarks>
+    private static async Task<IResult> UpdateProductPageInfoAsync(
+        HttpContext httpContext,
+        IAntiforgery antiforgery,
+        ICommandHandler<UpdateProductPageInfoCommand, SettingsWriteResult> handler,
+        CancellationToken cancellationToken)
+    {
+        if (await AdminWriteRequest.ValidateAntiforgeryAsync(httpContext, antiforgery) is { } forged)
+        {
+            return forged;
+        }
+
+        var (body, problem) = await AdminWriteRequest.ReadJsonAsync<JsonObject>(
+            httpContext.Request, cancellationToken);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
+
+        foreach (var field in UpdateProductPageInfoCommandHandler.Fields)
+        {
+            if (ReadString(body!, field, out var value, out var present) is { } badField)
+            {
+                return badField;
+            }
+
+            if (present)
+            {
+                fields[field] = value;
+            }
+        }
+
+        if (ReadString(body!, "rowVersion", out var rowVersion, out _) is { } badVersion)
+        {
+            return badVersion;
+        }
+
+        var result = await handler.HandleAsync(
+            new UpdateProductPageInfoCommand(
+                fields,
+                AdminWriteRequest.RowVersion(httpContext.Request, rowVersion),
+                AdminWriteRequest.Actor(httpContext)),
+            cancellationToken);
+
+        return result switch
+        {
+            SettingsWriteResult.Succeeded succeeded =>
+                TypedResults.Ok(new ProductPageInfoSaveResponse(succeeded.Removed ?? [])),
+            SettingsWriteResult.Unchanged unchanged =>
+                TypedResults.Ok(new ProductPageInfoSaveResponse(unchanged.Removed ?? [])),
+            _ => ToHttp(result),
+        };
     }
 
     /// <summary>The review approval switch (issue #189).</summary>

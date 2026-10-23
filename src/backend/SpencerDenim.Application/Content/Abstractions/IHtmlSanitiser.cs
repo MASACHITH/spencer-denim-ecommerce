@@ -34,6 +34,16 @@ public interface IHtmlSanitiser
     /// </para>
     /// </summary>
     SanitisedHtml Sanitise(string? html);
+
+    /// <summary>
+    /// Cleans a <b>short snippet</b> drawn inside another page's layout — the product page's delivery and returns
+    /// texts (issue #33) — against a narrower allow-list: the page profile <b>without images</b> and without the
+    /// <c>src</c>, <c>alt</c>, <c>width</c> and <c>height</c> attributes. A snippet sits in a narrow column under
+    /// the buy box, where a pasted <c>&lt;img width="2400"&gt;</c> made the whole product page scroll sideways;
+    /// a picture belongs on the Shipping or Returns page the snippet links to. Same refusals and reporting as
+    /// <see cref="Sanitise"/>.
+    /// </summary>
+    SanitisedHtml SanitiseSnippet(string? html);
 }
 
 /// <summary>What the sanitiser made of a body, and what it had to take out of it.</summary>

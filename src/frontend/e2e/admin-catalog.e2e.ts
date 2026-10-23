@@ -154,6 +154,11 @@ test.describe('reordering', () => {
    * a move a keyboard user cannot repeat.
    */
   test('reorders with the keyboard alone, keeping focus on the row that moved', async ({ page }) => {
+    // Each reset + navigation + stub server interaction takes ~5–10 s on CI's shared runners;
+    // the stub is one of sixteen Node processes competing for the same CPUs (see playwright.config.ts).
+    // 30 s is occasionally not enough — the response arrives but after the wall clock expires.
+    test.setTimeout(60_000);
+
     await page.getByTestId('move-down-10').focus();
     await expect(page.getByTestId('move-down-10')).toBeFocused();
 

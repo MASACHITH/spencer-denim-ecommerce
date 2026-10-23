@@ -20,12 +20,10 @@ interface DetailRow {
  * A block with nothing in it is not rendered at all, rather than rendered empty: every one of
  * these columns is nullable in `catalog.Products` and an admin may fill none of them.
  *
- * **Not here, and not invented: the delivery estimate, the delivery methods and the returns
- * terms** that PDP-05 also asks for. The catalogue API carries none of them, and nothing else
- * does yet — delivery methods and their fees are ADM-22/CHK-02 settings and the returns copy is a
- * GLB-10 content page, both week 3. Writing "2–3 working days" or "free returns within 14 days"
- * here would be putting a promise on the storefront that no part of the system has made. See the
- * task report.
+ * **Not here: the delivery estimate, the delivery methods and the returns terms** that PDP-05 also
+ * asks for. They are `ProductDeliveryReturns` (issue #33), the disclosures drawn straight after this
+ * list, because they come from the delivery rates and the owner's settings rather than from the
+ * product — the same for every product, and read once per session.
  */
 @Component({
   selector: 'sd-product-details',

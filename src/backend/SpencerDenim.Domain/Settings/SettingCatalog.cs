@@ -174,6 +174,10 @@ public static class SettingCatalog
             "The full address of the shop's YouTube channel. Leave it empty and the footer shows no "
             + "YouTube icon."),
 
+        // Group Content (doc 08 §3.8, PDP-05; issue #33): the product page's delivery and returns texts, the only
+        // TextHtml keys in the catalogue. Their own file, with their seeded wording.
+        .. ContentSettingDefinitions.All,
+
         // Group Bank (doc 08 §3.8, doc 11 P7): the account a customer transfers to. Settings.Payments on
         // every row, which is the first time this catalogue carries a permission other than Settings.Edit —
         // and the reason GetAdminSettingsQueryHandler's per-row filter was built before there was anything
@@ -386,6 +390,9 @@ public static class SettingCatalog
         [SettingKeys.Store.Group, SettingKeys.Orders.Group],
 
         [SettingKeys.Contact.Group, SettingKeys.Social.Group],
+
+        // The product page's two texts (issue #33): one form, one permission (Settings.Edit).
+        [SettingKeys.Content.Group],
 
         // The bank details on their own. They are one form filled in from one message from the client, and
         // they are guarded by a different permission from every other group — a save unit that spanned both

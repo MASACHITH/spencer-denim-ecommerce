@@ -24,13 +24,24 @@ public abstract record SettingsWriteResult
     /// Which keys actually changed, in catalogue order. The endpoint does not use it; the tests and the
     /// audit assertions do, and it is the thing a future "what did I just change" confirmation needs.
     /// </param>
-    public sealed record Succeeded(IReadOnlyList<string> ChangedKeys) : SettingsWriteResult;
+    /// <param name="Removed">
+    /// What the HTML sanitiser took out of a <see cref="SpencerDenim.Domain.Settings.SettingValueType.TextHtml"/>
+    /// value on the way in (issue #33), as short descriptions such as <c>&lt;script&gt;</c>, so the screen can say
+    /// so rather than let a save that dropped half a paste look complete. <see langword="null"/> for every
+    /// other write.
+    /// </param>
+    public sealed record Succeeded(IReadOnlyList<string> ChangedKeys, IReadOnlyList<string>? Removed = null)
+        : SettingsWriteResult;
 
     /// <summary>
     /// Every value was already what the request asked for, so nothing was written: no statement issued,
     /// no row version moved, no audit row. Still a success — the request's intent holds.
     /// </summary>
-    public sealed record Unchanged : SettingsWriteResult;
+    /// <param name="Removed">
+    /// As <see cref="Succeeded.Removed"/>: a paste whose cleaned form is what is already stored still had
+    /// something removed from it, and the person who pasted it should be told.
+    /// </param>
+    public sealed record Unchanged(IReadOnlyList<string>? Removed = null) : SettingsWriteResult;
 
     /// <summary>Rejected input, one entry per field, so the screen can attach each message to its control.</summary>
     public sealed record Invalid(IReadOnlyList<ValidationError> Errors) : SettingsWriteResult

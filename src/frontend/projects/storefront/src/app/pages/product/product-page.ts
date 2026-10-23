@@ -14,6 +14,7 @@ import { Meta, Title } from '@angular/platform-browser';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { BRAND, Icon, brandPageTitle } from '@spencer-denim/shared';
 
+import { ProductDeliveryReturns } from './product-delivery-returns';
 import { ProductDetails } from './product-details';
 import { ProductGallery } from './product-gallery';
 import { ProductReviews } from './product-reviews';
@@ -123,6 +124,7 @@ const RECENT_SHOWN = 6;
     Icon,
     NotFoundPage,
     ProductCard,
+    ProductDeliveryReturns,
     ProductDetails,
     ProductGallery,
     ProductReviews,
@@ -358,6 +360,9 @@ const RECENT_SHOWN = 6;
             }
 
             <sd-product-details [product]="item" />
+
+            <!-- PDP-05 (#33): delivery fees from the zone rates, and the owner's delivery and returns texts. -->
+            <sd-product-delivery-returns />
           </div>
         </div>
 

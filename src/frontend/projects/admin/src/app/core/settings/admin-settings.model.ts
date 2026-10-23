@@ -249,6 +249,8 @@ export const SETTING_KEYS = {
   smtpFromAddress: 'Email.Smtp.FromAddress',
   smtpFromName: 'Email.Smtp.FromName',
   smtpUseStartTls: 'Email.Smtp.UseStartTls',
+  pdpDeliveryInfoHtml: 'Content.PdpDeliveryInfoHtml',
+  pdpReturnsInfoHtml: 'Content.PdpReturnsInfoHtml',
 } as const;
 
 /** Doc 08 §3.8's group names. */
@@ -256,6 +258,10 @@ export const SETTING_GROUPS = {
   store: 'Store',
   contact: 'Contact',
   social: 'Social',
+
+  /** The product page's delivery and returns texts (issue #33): their own panel and save unit, `Settings.Edit`. */
+  content: 'Content',
+
   bank: 'Bank',
 
   /**
@@ -295,3 +301,20 @@ export type SmtpTextValues = Readonly<Record<(typeof SMTP_TEXT_FIELDS)[number], 
 export interface SmtpTestResponse {
   readonly sentTo: string;
 }
+
+/**
+ * The product page's two texts (issue #33), as HTML. Holding **only the keys the server sent**, the bank group's
+ * rule, so a caller who did not receive the group sends nothing for it.
+ */
+export interface ProductPageInfoValues {
+  readonly deliveryInfoHtml?: string | null;
+  readonly returnsInfoHtml?: string | null;
+}
+
+/** What a product-page text save answers: what the sanitiser removed, empty when nothing was. */
+export interface ProductPageInfoSaveResponse {
+  readonly removed: readonly string[];
+}
+
+/** The most cleaned markup either text may hold: `SettingKeys.Content.PdpInfoMaxLength` on the server. */
+export const PRODUCT_PAGE_INFO_MAX_LENGTH = 4_000;

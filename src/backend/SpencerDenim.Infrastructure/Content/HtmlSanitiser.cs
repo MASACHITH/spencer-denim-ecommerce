@@ -202,7 +202,26 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
         "head", "html",
     };
 
-    public SanitisedHtml Sanitise(string? html)
+    /// <summary>
+    /// The snippet profile's elements (issue #33): <see cref="AllowedTags"/> without images and their captions.
+    /// </summary>
+    public static IReadOnlySet<string> SnippetAllowedTags { get; } =
+        AllowedTags.Except(["img", "figure", "figcaption"], StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The snippet profile's attributes (issue #33): <see cref="AllowedAttributes"/> without the image and sizing
+    /// ones, so nothing in a snippet can be given a fixed width.
+    /// </summary>
+    public static IReadOnlySet<string> SnippetAllowedAttributes { get; } =
+        AllowedAttributes.Except(["src", "alt", "width", "height"], StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    public SanitisedHtml Sanitise(string? html) => Sanitise(html, AllowedTags, AllowedAttributes);
+
+    public SanitisedHtml SanitiseSnippet(string? html) => Sanitise(html, SnippetAllowedTags, SnippetAllowedAttributes);
+
+    private static SanitisedHtml Sanitise(string? html, IReadOnlySet<string> tags, IReadOnlySet<string> attributes)
     {
         if (string.IsNullOrWhiteSpace(html))
         {
@@ -217,7 +236,7 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
         }
 
         var removed = new List<string>();
-        var sanitiser = Build(removed);
+        var sanitiser = Build(removed, tags, attributes);
 
         var cleaned = sanitiser.Sanitize(html).Trim();
 
@@ -239,12 +258,12 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
     /// <summary>
     /// A fresh sanitiser, configured from the lists above, with the handlers that report what it took out.
     /// </summary>
-    private static HtmlSanitizer Build(List<string> removed)
+    private static HtmlSanitizer Build(List<string> removed, IReadOnlySet<string> tags, IReadOnlySet<string> attributes)
     {
         var sanitiser = new HtmlSanitizer(new HtmlSanitizerOptions
         {
-            AllowedTags = new HashSet<string>(AllowedTags, StringComparer.OrdinalIgnoreCase),
-            AllowedAttributes = new HashSet<string>(AllowedAttributes, StringComparer.OrdinalIgnoreCase),
+            AllowedTags = new HashSet<string>(tags, StringComparer.OrdinalIgnoreCase),
+            AllowedAttributes = new HashSet<string>(attributes, StringComparer.OrdinalIgnoreCase),
             AllowedSchemes = new HashSet<string>(AllowedSchemes, StringComparer.OrdinalIgnoreCase),
 
             // No CSS at all, so there is no property whose value could be a URL. There is also no at-rule

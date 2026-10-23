@@ -37,6 +37,7 @@ using SpencerDenim.Application.Content.Admin.SizeGuides;
 using SpencerDenim.Application.Marketing.Promotions;
 using SpencerDenim.Application.Content.Admin.Contracts;
 using SpencerDenim.Application.Content.Contact;
+using SpencerDenim.Application.Content.DeliveryReturns;
 using SpencerDenim.Application.Content.Home;
 using SpencerDenim.Application.Content.Pages;
 using SpencerDenim.Application.Diagnostics.Ping;
@@ -382,6 +383,13 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<UpdateReviewSettingsCommand, SettingsWriteResult>,
             UpdateReviewSettingsCommandHandler>();
+
+        // Issue #33: the product page's delivery and returns texts (Settings.Edit), and the panel that shows them
+        // beside the delivery rates. The panel is read live, not cached: see the handler.
+        services.AddScoped<
+            ICommandHandler<UpdateProductPageInfoCommand, SettingsWriteResult>,
+            UpdateProductPageInfoCommandHandler>();
+        services.AddScoped<IQueryHandler<GetDeliveryReturnsQuery, DeliveryReturnsDto>, GetDeliveryReturnsQueryHandler>();
         services.AddKeyedScoped<IQueryHandler<GetSiteSettingsQuery, SiteSettingsDto>, GetSiteSettingsQueryHandler>(
             UncachedSiteSettings);
         services.AddScoped<IQueryHandler<GetSiteSettingsQuery, SiteSettingsDto>>(provider =>

@@ -62,8 +62,8 @@ public abstract class AdminOrderTestBase(SqlServerDatabaseFixture sqlServer)
     /// Adds a courier of this test's own and returns its id.
     /// </summary>
     /// <remarks>
-    /// <b>Named with the test's own marker, because <c>sales.Couriers</c> is seeded empty on purpose</b>
-    /// (which carriers the client uses is their information) and the assembly shares one database. A
+    /// <b>Named with the test's own marker</b>, because the assembly shares one database (and, since issue #33,
+    /// it also holds the seeded couriers, whose names a test must not collide with). A
     /// courier left behind would be a neighbour's fixture — the shape that made four
     /// <c>CartStaleItemTests</c> red in a full run and green alone — and, worse, would make
     /// <c>AdminOrderActions.CouriersConfigured</c> true for a test that is about it being false.

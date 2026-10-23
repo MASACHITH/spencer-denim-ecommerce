@@ -8,6 +8,7 @@ using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Content.Announcements;
 using SpencerDenim.Application.Content.Contact;
 using SpencerDenim.Application.Content.Contracts;
+using SpencerDenim.Application.Content.DeliveryReturns;
 using SpencerDenim.Application.Content.Home;
 using SpencerDenim.Application.Content.Pages;
 using SpencerDenim.Application.Marketing.Newsletter;
@@ -89,6 +90,19 @@ internal static class ContentEndpoints
             .Produces<ContentPageDto>()
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        content.MapMethods("/delivery-returns", ReadMethods, GetDeliveryReturnsAsync)
+            .WithName("GetDeliveryReturns")
+            .WithSummary("The product page's delivery and returns panel.")
+            .WithDescription(
+                "PDP-05 (issue #33). Every delivery zone with its label, the address delivery methods checkout "
+                + "would offer with their fee, free-delivery threshold and working days per zone, and the "
+                + "pickup points — empty unless store pickup is enabled and an active pickup location exists. "
+                + "All figures are read from sales.DeliveryMethodZoneRates through checkout's own reader, so "
+                + "the panel cannot quote what checkout would not charge. Also the two short texts "
+                + "(Content.PdpDeliveryInfoHtml, Content.PdpReturnsInfoHtml), already-sanitised HTML and empty "
+                + "when unset. The same answer for every visitor; not cached by the server.")
+            .Produces<DeliveryReturnsDto>();
+
         content.MapPost("/contact", SubmitEnquiryAsync)
             .WithName("SubmitContactEnquiry")
             .WithSummary("Send the shop an enquiry (GLB-10).")
@@ -123,6 +137,11 @@ internal static class ContentEndpoints
         var page = await handler.HandleAsync(new GetHomePageQuery(), cancellationToken);
         return TypedResults.Ok(page);
     }
+
+    private static async Task<Ok<DeliveryReturnsDto>> GetDeliveryReturnsAsync(
+        IQueryHandler<GetDeliveryReturnsQuery, DeliveryReturnsDto> handler,
+        CancellationToken cancellationToken) =>
+        TypedResults.Ok(await handler.HandleAsync(new GetDeliveryReturnsQuery(), cancellationToken));
 
     private static async Task<Ok<SaleBannerDto>> GetSaleBannerAsync(
         IQueryHandler<GetSaleBannerQuery, SaleBannerDto> handler,
