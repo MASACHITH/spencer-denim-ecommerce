@@ -1,3 +1,5 @@
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { SafeLocalStorage } from '@spencer-denim/shared';
 
@@ -7,6 +9,37 @@ import {
   DeliveryDistrictService,
 } from '../../core/delivery/delivery-district.service';
 import { DELIVERY_DISTRICTS } from '../../core/delivery/district.data';
+import {
+  DELIVERY_COUNTRIES_URL,
+  DELIVERY_COUNTRY_STORAGE_KEY,
+  DeliveryCountry,
+  DeliveryCountryService,
+} from '../../core/delivery/delivery-country.service';
+
+const COUNTRIES: readonly DeliveryCountry[] = [
+  {
+    code: 'LK',
+    name: 'Sri Lanka',
+    isDomestic: true,
+    isAvailable: true,
+    postalCodeRequired: false,
+    regionRequired: false,
+    fee: null,
+    estimatedDaysMin: null,
+    estimatedDaysMax: null,
+  },
+  {
+    code: 'GB',
+    name: 'United Kingdom',
+    isDomestic: false,
+    isAvailable: true,
+    postalCodeRequired: true,
+    regionRequired: false,
+    fee: 9500,
+    estimatedDaysMin: 7,
+    estimatedDaysMax: 14,
+  },
+];
 
 /** An in-memory stand-in for `localStorage`, so a test never depends on the real one. */
 class StorageStub {
@@ -41,10 +74,16 @@ describe('DistrictSelector (GLB-06)', () => {
   function setUp(storage: StorageStub) {
     TestBed.configureTestingModule({
       imports: [DistrictSelector],
-      providers: [{ provide: SafeLocalStorage, useValue: storage }],
+      providers: [
+        { provide: SafeLocalStorage, useValue: storage },
+        provideHttpClient(),
+        provideHttpClientTesting(),
+      ],
     });
 
     const fixture = TestBed.createComponent(DistrictSelector);
+    fixture.detectChanges();
+    TestBed.inject(HttpTestingController).expectOne(DELIVERY_COUNTRIES_URL).flush(COUNTRIES);
     fixture.detectChanges();
 
     const select = (fixture.nativeElement as HTMLElement).querySelector(
@@ -63,9 +102,56 @@ describe('DistrictSelector (GLB-06)', () => {
     const { fixture, select } = setUp(new StorageStub());
 
     expect(select.options).toHaveLength(DELIVERY_DISTRICTS.length);
-    const label = (fixture.nativeElement as HTMLElement).querySelector('label');
+    const host = fixture.nativeElement as HTMLElement;
+    const district = host.querySelector(`label[for="${select.id}"]`);
+    expect(district?.textContent?.trim()).toBe('District');
+
+    const country = host.querySelector('[data-testid="country-select"]') as HTMLSelectElement;
+    const label = host.querySelector(`label[for="${country.id}"]`);
     expect(label?.textContent?.trim()).toBe('Deliver to');
-    expect(label?.getAttribute('for')).toBe(select.id);
+  });
+
+  describe('the country (owner decision 2026-10-21)', () => {
+    function countrySelect(fixture: { nativeElement: unknown }): HTMLSelectElement {
+      return (fixture.nativeElement as HTMLElement).querySelector(
+        '[data-testid="country-select"]',
+      ) as HTMLSelectElement;
+    }
+
+    it('lists the countries the API returned, Sri Lanka selected by default', () => {
+      const { fixture } = setUp(new StorageStub());
+
+      const select = countrySelect(fixture);
+      expect(Array.from(select.options).map((option) => option.value)).toEqual(['LK', 'GB']);
+      expect(select.value).toBe('LK');
+    });
+
+    it('hides the district picker for an overseas country and remembers the choice', () => {
+      const storage = new StorageStub();
+      const { fixture } = setUp(storage);
+
+      choose(countrySelect(fixture), 'GB');
+      fixture.detectChanges();
+
+      const host = fixture.nativeElement as HTMLElement;
+      expect(host.querySelector('[data-testid="district-select"]')).toBeNull();
+      expect(storage.entries.get(DELIVERY_COUNTRY_STORAGE_KEY)).toBe('GB');
+      expect(TestBed.inject(DeliveryCountryService).overseasEstimate()?.fee).toBe(9500);
+    });
+
+    it('shows the district picker again for Sri Lanka', () => {
+      const storage = new StorageStub();
+      storage.entries.set(DELIVERY_COUNTRY_STORAGE_KEY, 'GB');
+      const { fixture } = setUp(storage);
+      expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="district-select"]')).toBeNull();
+
+      choose(countrySelect(fixture), 'LK');
+      fixture.detectChanges();
+
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelector('[data-testid="district-select"]'),
+      ).not.toBeNull();
+    });
   });
 
   it('starts on the default district when nothing has been chosen', () => {

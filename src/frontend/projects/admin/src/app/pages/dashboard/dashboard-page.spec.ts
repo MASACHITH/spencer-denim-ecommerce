@@ -52,8 +52,8 @@ function dashboard(overrides: Partial<AdminDashboard> = {}): AdminDashboard {
     buyersByDistrict: {
       distinctBuyers: 2,
       districts: [
-        { districtId: 4, name: 'Kandy', buyers: 2, paidOrders: 2, revenue: 80000 },
-        { districtId: 7, name: 'Galle', buyers: 1, paidOrders: 1, revenue: 45000 },
+        { districtId: 4, name: 'Kandy', buyers: 2, paidOrders: 2, revenue: 80000, countryCode: 'LK' },
+        { districtId: 7, name: 'Galle', buyers: 1, paidOrders: 1, revenue: 45000, countryCode: 'LK' },
       ],
     },
     ...overrides,
@@ -479,5 +479,29 @@ describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
 
     const widths = [...byTestId('dashboard-district-bars')!.querySelectorAll<HTMLElement>('.dash__track span')].map((bar) => bar.style.width);
     expect(widths).toEqual(['100%', '50%']);
+  });
+
+  it('lists overseas buyers by country beside the districts, marked overseas (owner decision 2026-10-21)', async () => {
+    const payload = dashboard();
+    await open(
+      'all',
+      dashboard({
+        buyersByDistrict: {
+          distinctBuyers: 4,
+          districts: [
+            ...payload.buyersByDistrict.districts,
+            { districtId: null, name: 'United Kingdom', buyers: 1, paidOrders: 1, revenue: 30000, countryCode: 'GB' },
+            { districtId: null, name: 'Australia', buyers: 1, paidOrders: 1, revenue: 20000, countryCode: 'AU' },
+          ],
+        },
+      }),
+    );
+
+    const bars = byTestId('dashboard-district-bars')?.textContent ?? '';
+    expect(bars).toContain('Kandy');
+    expect(bars).toContain('United Kingdom');
+    expect(bars).toContain('Australia');
+    expect(element.querySelectorAll('[data-testid="dashboard-overseas"]').length).toBe(2);
+    expect(byTestId('dashboard-districts')?.querySelectorAll('tbody tr').length).toBe(4);
   });
 });

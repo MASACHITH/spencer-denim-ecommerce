@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using SpencerDenim.Domain.Identity;
+using SpencerDenim.Domain.Reference;
 using SpencerDenim.Infrastructure.Identity;
 
 namespace SpencerDenim.Infrastructure.Persistence.Configurations.Identity;
@@ -22,7 +23,10 @@ internal sealed class CustomerAddressConfiguration : IEntityTypeConfiguration<Cu
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        builder.ToTable("CustomerAddresses", "identity");
+        builder.ToTable("CustomerAddresses", "identity", table => table.HasCheckConstraint(
+            "CK_CustomerAddresses_Destination",
+            $"([CountryCode] = '{Country.SriLankaCode}' AND [DistrictId] IS NOT NULL) "
+            + $"OR ([CountryCode] <> '{Country.SriLankaCode}' AND [DistrictId] IS NULL)"));
 
         builder.HasKey(address => address.Id);
 
@@ -41,6 +45,14 @@ internal sealed class CustomerAddressConfiguration : IEntityTypeConfiguration<Cu
         builder.Property(address => address.Line1).HasMaxLength(CustomerAddress.LineMaxLength).IsRequired();
         builder.Property(address => address.Line2).HasMaxLength(CustomerAddress.LineMaxLength);
         builder.Property(address => address.City).HasMaxLength(CustomerAddress.CityMaxLength).IsRequired();
+
+        // Owner decision 2026-10-21: the country, and an overseas address's state or region.
+        builder
+            .Property(address => address.CountryCode)
+            .HasColumnType($"char({Country.CodeLength})")
+            .IsRequired();
+        builder.Property(address => address.Region).HasMaxLength(CustomerAddress.RegionMaxLength);
+        builder.Property(address => address.DistrictId);
 
         builder
             .Property(address => address.PostalCode)
@@ -79,6 +91,17 @@ internal sealed class CustomerAddressConfiguration : IEntityTypeConfiguration<Cu
         // give: a user does not need an addresses collection, and the Identity entity stays free of it.
         // NO ACTION (doc 08 §1.6's default) because a customer is anonymised rather than deleted, and
         // §3.1 step 2's set-based ExecuteDelete clears these rows itself.
+        builder
+            .HasIndex(address => address.CountryCode)
+            .HasDatabaseName("IX_CustomerAddresses_CountryCode");
+
+        builder
+            .HasOne(address => address.Country)
+            .WithMany()
+            .HasForeignKey(address => address.CountryCode)
+            .HasConstraintName("FK_CustomerAddresses_Countries_CountryCode")
+            .OnDelete(DeleteBehavior.NoAction);
+
         builder
             .HasOne<AppUser>()
             .WithMany()

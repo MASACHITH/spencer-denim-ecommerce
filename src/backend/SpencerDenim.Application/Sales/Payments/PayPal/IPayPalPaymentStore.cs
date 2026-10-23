@@ -197,7 +197,8 @@ public sealed record PayPalOrderView(
     string PaymentProviderCode,
     PayPalPaymentView? Open,
     PayPalPaymentView? Latest,
-    bool HasUnsettledCapture = false);
+    bool HasUnsettledCapture = false,
+    PayPalShipping? Shipping = null);
 
 /// <summary>One PayPal payment row, as far as describing it needs.</summary>
 public sealed record PayPalPaymentView(

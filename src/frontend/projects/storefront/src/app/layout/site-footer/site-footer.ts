@@ -222,7 +222,7 @@ export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
 
         <div class="site-footer__legal t-small muted">
           <p>&copy; {{ year }} {{ brand }}. All rights reserved.</p>
-          <p>Prices in Sri Lankan rupees. Delivery island-wide.</p>
+          <p>Prices in Sri Lankan rupees. Delivery across Sri Lanka and worldwide.</p>
         </div>
       </div>
     </footer>

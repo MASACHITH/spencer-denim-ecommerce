@@ -1,4 +1,6 @@
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
+using SpencerDenim.Domain.Identity;
 using SpencerDenim.Domain.Reference;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Domain.Settings;
@@ -23,6 +25,15 @@ public sealed class SalesSeedCounts
 
     /// <summary><c>sales.Couriers</c> offered by the courier seed version (issue #33).</summary>
     public int Couriers { get; set; }
+
+    /// <summary><c>sales.DeliveryRegions</c> rows inserted (owner decision 2026-10-21).</summary>
+    public int DeliveryRegions { get; set; }
+
+    /// <summary><c>ref.Countries</c> rows inserted.</summary>
+    public int Countries { get; set; }
+
+    /// <summary>Whether this run applied the one-time bank-transfer switch-off (2026-10-21).</summary>
+    public bool BankTransferSwitchedOff { get; set; }
 }
 
 /// <summary>
@@ -64,8 +75,176 @@ public sealed class SalesReferenceDataSeeder(AppDbContext dbContext)
         counts.PaymentProviders = await SeedPaymentProvidersAsync(cancellationToken);
         counts.Couriers = await SeedCouriersAsync(cancellationToken);
 
+        // Regions before countries: a country's region is a foreign key.
+        counts.DeliveryRegions = await SeedDeliveryRegionsAsync(cancellationToken);
+        counts.Countries = await SeedCountriesAsync(cancellationToken);
+        counts.BankTransferSwitchedOff = await ApplyPaymentProviderIncrementsAsync(cancellationToken);
+
         return counts;
     }
+
+    /// <summary>The increment <see cref="ApplyPaymentProviderIncrementsAsync"/> brings a database up to.</summary>
+    public const int PaymentProvidersSeedVersion = 1;
+
+    private async Task<int> SeedDeliveryRegionsAsync(CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.DeliveryRegions
+            .Select(region => region.Code)
+            .ToListAsync(cancellationToken);
+
+        var added = 0;
+        foreach (var seed in CountryReferenceData.Regions)
+        {
+            if (existing.Contains(seed.Code, StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            dbContext.DeliveryRegions.Add(new DeliveryRegion
+            {
+                Code = seed.Code,
+                Name = seed.Name,
+
+                // Placeholders for the owner (CountryReferenceData). Inserted once and never revisited, so the
+                // owner's own figures survive every deployment.
+                Fee = seed.Fee,
+                EstimatedDaysMin = seed.EstimatedDaysMin,
+                EstimatedDaysMax = seed.EstimatedDaysMax,
+                IsEnabled = true,
+                SortOrder = seed.SortOrder,
+            });
+            added++;
+        }
+
+        if (added > 0)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        return added;
+    }
+
+    private async Task<int> SeedCountriesAsync(CancellationToken cancellationToken)
+    {
+        // Sri Lanka is normally already here: the migration inserts it so the order and address backfill has a
+        // key to point at. Insert-missing makes that harmless.
+        var existing = await dbContext.Countries
+            .Select(country => country.Code)
+            .ToListAsync(cancellationToken);
+
+        var added = 0;
+        foreach (var seed in CountryReferenceData.Countries)
+        {
+            if (existing.Contains(seed.Code, StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            dbContext.Countries.Add(new Country
+            {
+                Code = seed.Code,
+                Name = seed.Name,
+                RegionCode = seed.RegionCode,
+                PostalCodeRequired = CountryReferenceData.PostalCodeRequired.Contains(seed.Code),
+                RegionRequired = CountryReferenceData.RegionRequired.Contains(seed.Code),
+                IsShippingEnabled = !CountryReferenceData.NoDeliverableAddresses.Contains(seed.Code),
+
+                // Sri Lanka first in every list, the rest by name.
+                SortOrder = seed.RegionCode is null ? (short)0 : (short)1,
+            });
+            added++;
+        }
+
+        if (added > 0)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        return added;
+    }
+
+    /// <summary>
+    /// Version 1 of the payment-provider increments: <b>bank transfer is switched off once</b> (owner decision
+    /// 2026-10-21, "block only for now"; PayPal is the only payment method).
+    /// </summary>
+    /// <remarks>
+    /// <b>The rule.</b> When this database's <c>Seed.PaymentProvidersVersion</c> is below 1, the BankTransfer row
+    /// is set to <c>IsEnabled = 0</c> <i>unless an admin has saved it</i> — that is, unless
+    /// <c>UpdatedByUserId</c> is set, which the audited Payment methods switch stamps — and the marker is written
+    /// as 1 in the same transaction. From then on this step does nothing, ever, so a Super Admin who switches bank
+    /// transfer back on keeps it on through every deployment.
+    /// <para>
+    /// <b>Why an existing database that had it on is switched off this once.</b> Before this change there was no
+    /// switch: every BankTransfer row that exists was written by the seeder with <c>IsEnabled = 1</c>, and nobody
+    /// chose that value. The owner's decision is newer than every such row, so the safe reading is to apply it
+    /// once. A row an admin <i>has</i> touched (<c>UpdatedByUserId</c> set) is a choice newer than the seed and
+    /// is left alone. A fresh database inserts the row already switched off (<see cref="SalesReferenceData"/>),
+    /// so the step only writes the marker there.
+    /// </para>
+    /// <para>
+    /// <b>Idempotent and concurrency-safe</b> the way every reference-data step is: it runs inside
+    /// <c>CatalogSeedRunner</c>'s <c>sp_getapplock</c>, and the update and the marker commit together, so an
+    /// interrupted run repeats in full and a completed one never repeats.
+    /// </para>
+    /// </remarks>
+    /// <returns>Whether this run switched bank transfer off.</returns>
+    internal async Task<bool> ApplyPaymentProviderIncrementsAsync(CancellationToken cancellationToken)
+    {
+        var marker = await dbContext.Settings
+            .FirstOrDefaultAsync(setting => setting.Key == SettingKeys.Seed.PaymentProvidersVersion, cancellationToken);
+
+        if (ReadVersion(marker) >= PaymentProvidersSeedVersion)
+        {
+            return false;
+        }
+
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+            var switchedOff = await dbContext.PaymentProviders
+                .Where(provider => provider.Code == PaymentProviderCodes.BankTransfer
+                    && provider.IsEnabled
+                    && provider.UpdatedByUserId == null)
+                .ExecuteUpdateAsync(
+                    update => update.SetProperty(provider => provider.IsEnabled, false),
+                    cancellationToken) > 0;
+
+            var value = PaymentProvidersSeedVersion.ToString(CultureInfo.InvariantCulture);
+            if (marker is null)
+            {
+                dbContext.Settings.Add(new Setting
+                {
+                    Key = SettingKeys.Seed.PaymentProvidersVersion,
+                    GroupKey = SettingKeys.Seed.Group,
+                    ValueType = SettingValueType.Int,
+                    Value = value,
+                    RequiredPermission = Permissions.Settings.Security,
+                    Description =
+                        "The highest payment-provider seed increment applied to this database (2026-10-21: "
+                        + "bank transfer switched off once). Written by the seeder; not editable.",
+                });
+            }
+            else
+            {
+                marker.Value = value;
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            return switchedOff;
+        });
+    }
+
+    /// <summary>The recorded increment, or 0 when there is no marker or it is not a number.</summary>
+    internal static int ReadVersion(Setting? marker) =>
+        marker is not null
+        && int.TryParse(marker.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : 0;
 
     private async Task<int> SeedProvincesAsync(CancellationToken cancellationToken)
     {

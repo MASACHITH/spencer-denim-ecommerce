@@ -45,8 +45,15 @@ export class CheckoutApi {
     districtId: number | null,
     deliveryMethodId: number | null,
     promoCode: string | null = null,
+    countryCode: string | null = null,
   ): Observable<CheckoutSessionDto> {
     let params = new HttpParams();
+
+    // Owner decision 2026-10-21. Sent only for an overseas country, so a Sri Lankan quote asks exactly
+    // what it asked before overseas delivery existed (the server reads no country as Sri Lanka).
+    if (countryCode !== null && countryCode !== 'LK') {
+      params = params.set('countryCode', countryCode);
+    }
 
     if (districtId !== null) {
       params = params.set('districtId', districtId);

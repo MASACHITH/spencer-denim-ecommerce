@@ -44,7 +44,10 @@ internal static class CheckoutEndpoints
                 + "than one being invented. Pass promoCode to be quoted with a promo code applied "
                 + "(ADM-13): it is revalidated on every read, and a code that does not qualify comes back "
                 + "as `promoRefusal` with `appliedPromoCode` null, so the box clears rather than leaving a "
-                + "discount on screen that is not in the total.")
+                + "discount on screen that is not in the total. Pass countryCode (ISO 3166-1 alpha-2) for an "
+                + "overseas quote: omitted means Sri Lanka; any other country ignores districtId and offers "
+                + "the single International delivery option at that country's fee, or blocker "
+                + "CountryNotServed when it is not delivered to.")
             .Produces<CheckoutSessionDto>();
 
         checkout.MapPost("/orders", PlaceOrderAsync)
@@ -128,10 +131,16 @@ internal static class CheckoutEndpoints
         CancellationToken cancellationToken,
         [FromQuery] int? districtId = null,
         [FromQuery] int? deliveryMethodId = null,
-        [FromQuery] string? promoCode = null)
+        [FromQuery] string? promoCode = null,
+        [FromQuery] string? countryCode = null)
     {
         var view = await handler.HandleAsync(
-            new GetCheckoutQuery(await SignedInCustomer.ReadCartLookupAsync(httpContext), districtId, deliveryMethodId, promoCode),
+            new GetCheckoutQuery(
+                await SignedInCustomer.ReadCartLookupAsync(httpContext),
+                districtId,
+                deliveryMethodId,
+                promoCode,
+                countryCode),
             cancellationToken);
 
         CartCookie.Apply(httpContext.Response, view.Cookie, view.GuestToken, clock);
@@ -177,7 +186,10 @@ internal static class CheckoutEndpoints
             // ADM-13. Sent on every submit, not held on the server: the code travels on the quote request
             // too, so it is revalidated on both (doc 11 P3 step 12). A body that omits it is an order
             // placed without a code, which is what a shopper who cleared the box asked for.
-            request?.PromoCode)
+            request?.PromoCode,
+
+            // Owner decision 2026-10-21. Omitted means Sri Lanka, as every client before overseas delivery sent.
+            request?.CountryCode)
         {
             // **The one field that decides whether this order is in My account** (ACC-02). It was
             // never set before W3-01's tester pass, so every order placed while signed in was stored as
@@ -440,6 +452,8 @@ internal static class CheckoutEndpoints
                     "We cannot deliver to that district at the moment.",
                 CheckoutBlocker.NoPaymentMethod =>
                     "No payment method is available at the moment. Please try again shortly.",
+                CheckoutBlocker.CountryNotServed =>
+                    "We cannot deliver to that country at the moment.",
                 _ => "Checkout is not available.",
             }));
 
@@ -489,6 +503,11 @@ internal static class CheckoutEndpoints
 /// minimum spend refuses the order with 409 <c>promoRefusal</c> rather than being quietly dropped — the
 /// total the shopper agreed to included it.
 /// </param>
+/// <param name="CountryCode">
+/// ISO 3166-1 alpha-2 of the destination (owner decision 2026-10-21). Omitted means Sri Lanka (<c>LK</c>), which
+/// keeps the district and the domestic delivery methods; any other country has no district and is sent by
+/// International delivery at the country's fee.
+/// </param>
 public sealed record PlaceOrderRequest(
     Guid CheckoutKey,
     string? FirstName,
@@ -502,7 +521,8 @@ public sealed record PlaceOrderRequest(
     string? PaymentMethodCode,
     decimal? ExpectedGrandTotal,
     string? CustomerNote,
-    string? PromoCode);
+    string? PromoCode,
+    string? CountryCode = null);
 
 /// <summary>
 /// The bank reference a customer quotes for their transfer (PAY-01, doc 11 P7 step 3).

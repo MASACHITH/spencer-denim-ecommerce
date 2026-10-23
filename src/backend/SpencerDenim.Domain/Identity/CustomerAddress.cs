@@ -51,6 +51,9 @@ public sealed class CustomerAddress : IAuditable
     /// <summary><c>nvarchar(150)</c>, doc 08 §3.1.</summary>
     public const int LandmarkMaxLength = 150;
 
+    /// <summary><c>nvarchar(80)</c>: state, province or region of an overseas address.</summary>
+    public const int RegionMaxLength = 80;
+
     /// <summary>
     /// Doc 08 §3.1: "App cap: 10 addresses per customer", restated in doc 11 P11 step 11 and in its
     /// business rules. A <i>cap</i> and not a constraint: SQL Server has no way to express "at most ten
@@ -82,10 +85,24 @@ public sealed class CustomerAddress : IAuditable
 
     public string City { get; set; } = string.Empty;
 
-    /// <summary>FK <c>ref.Districts</c>. Drives the delivery zone, so it is <c>NOT NULL</c> (doc 08 §3.1).</summary>
-    public int DistrictId { get; set; }
+    /// <summary>
+    /// FK <c>ref.Countries</c> (owner decision 2026-10-21). <c>NOT NULL</c>; every address saved before
+    /// overseas delivery existed was backfilled as <see cref="Country.SriLankaCode"/>.
+    /// </summary>
+    public string CountryCode { get; set; } = Country.SriLankaCode;
+
+    public Country? Country { get; set; }
+
+    /// <summary>
+    /// FK <c>ref.Districts</c>. Drives the delivery zone of a Sri Lankan address, so it is required there and
+    /// absent everywhere else (<c>CK_CustomerAddresses_Destination</c>).
+    /// </summary>
+    public int? DistrictId { get; set; }
 
     public District? District { get; set; }
+
+    /// <summary>State, province or region of an overseas address. Null for a Sri Lankan one.</summary>
+    public string? Region { get; set; }
 
     public string? PostalCode { get; set; }
 

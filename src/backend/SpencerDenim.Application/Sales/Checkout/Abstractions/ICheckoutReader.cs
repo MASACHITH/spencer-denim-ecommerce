@@ -12,6 +12,27 @@ namespace SpencerDenim.Application.Sales.Checkout.Abstractions;
 public readonly record struct CheckoutDistrict(int Id, string Name, DeliveryZone DeliveryZone);
 
 /// <summary>
+/// One <c>ref.Countries</c> row as checkout reads it (owner decision 2026-10-21), with its overseas quote
+/// already resolved by <see cref="OverseasDeliveryRate"/>. For Sri Lanka the quote is meaningless — delivery
+/// there is priced by district — and is reported as available.
+/// </summary>
+public sealed record CheckoutCountry(
+    string Code,
+    string Name,
+    bool IsDomestic,
+    bool PostalCodeRequired,
+    bool RegionRequired,
+    OverseasQuote Quote)
+{
+    /// <summary>Whether an order may be sent here at all.</summary>
+    public bool IsServed => IsDomestic || Quote.IsAvailable;
+
+    /// <summary>The quote as a rate, for <see cref="CheckoutQuote.Price"/>. No free-above threshold overseas.</summary>
+    public CheckoutZoneRate OverseasRate =>
+        new(Quote.IsAvailable, Quote.Fee, null, Quote.EstimatedDaysMin, Quote.EstimatedDaysMax);
+}
+
+/// <summary>
 /// A delivery method with the zone rate that applies, or without one.
 /// </summary>
 /// <param name="Rate">
@@ -96,7 +117,20 @@ public sealed record CheckoutCartLine(
 /// Reads for checkout (CHK-01..04). Separate from <c>ICartReader</c> because the shapes differ: a bag line
 /// carries what a bag page draws, a checkout line carries what an order row stores.
 /// </summary>
-public interface ICheckoutReader
+/// <summary>
+/// The country list and one country's delivery facts (owner decision 2026-10-21). Its own interface so the
+/// account address book can ask the same question checkout asks without depending on the rest of checkout.
+/// </summary>
+public interface IDeliveryCountryReader
+{
+    /// <summary>Every country, Sri Lanka first and then by name, each with its overseas quote.</summary>
+    Task<IReadOnlyList<CheckoutCountry>> CountriesAsync(CancellationToken cancellationToken);
+
+    /// <summary>One country by its ISO code (case-insensitive), or null when there is no such country.</summary>
+    Task<CheckoutCountry?> FindCountryAsync(string countryCode, CancellationToken cancellationToken);
+}
+
+public interface ICheckoutReader : IDeliveryCountryReader
 {
     /// <summary>
     /// The active districts a delivery address may name, ordered by name — a shopper looking for Matara
@@ -157,6 +191,12 @@ public interface ICheckoutReader
 
     /// <summary>The enabled payment providers, in <c>DisplayOrder</c>.</summary>
     Task<IReadOnlyList<CheckoutPaymentMethod>> EnabledPaymentMethodsAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The <see cref="DeliveryMethod.InternationalCode"/> method when it is switched on, or null. It carries
+    /// no rate: the rate is the country's.
+    /// </summary>
+    Task<CheckoutDeliveryMethod?> InternationalMethodAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// One <c>marketing.PromoCodes</c> row by code (ADM-13, doc 08 §6 step 7), or <see langword="null"/>

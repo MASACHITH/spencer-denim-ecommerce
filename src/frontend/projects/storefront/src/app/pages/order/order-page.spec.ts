@@ -1920,4 +1920,42 @@ describe('OrderPage (CHK-04)', () => {
     expect(text()).toContain('Awaiting payment. We hold your items until 7 October 2026 at 10.00 am.');
     expect(text()).not.toMatch(/transfer|bank statement|account number|slip/i);
   });
+
+  describe('an overseas order (owner decision 2026-10-21)', () => {
+    it('prints the city, region, postcode and country, and no district', async () => {
+      await open(
+        order({
+          paymentMethodCode: 'PayPal',
+          paymentMethodName: 'PayPal',
+          payment: null,
+          delivery: {
+            ...order().delivery,
+            methodCode: 'INTERNATIONAL',
+            methodName: 'International delivery',
+            city: 'London',
+            region: 'Greater London',
+            postalCode: 'SW1A 2AA',
+            districtName: null,
+            landmark: null,
+            countryCode: 'GB',
+            countryName: 'United Kingdom',
+          },
+        }),
+      );
+
+      expect(
+        element.querySelector('[data-testid="order-overseas-address"]')?.textContent?.trim(),
+      ).toBe('London, Greater London SW1A 2AA');
+      expect(element.querySelector('[data-testid="order-country"]')?.textContent?.trim()).toBe(
+        'United Kingdom',
+      );
+    });
+
+    it('keeps the Sri Lankan district line for a Sri Lankan order', async () => {
+      await open(order());
+
+      expect(element.querySelector('[data-testid="order-country"]')).toBeNull();
+      expect(text()).toContain(`, ${order().delivery.districtName}`);
+    });
+  });
 });

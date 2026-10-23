@@ -5,6 +5,7 @@ using SpencerDenim.Application.Ops.Email.Contracts;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Domain.Inventory;
+using SpencerDenim.Domain.Reference;
 using SpencerDenim.Infrastructure.Inventory;
 using SpencerDenim.Infrastructure.Persistence;
 
@@ -321,7 +322,9 @@ internal sealed class OrderPlacementStore(
                 placement.Delivery.DeliveryMethodCode == DeliveryMethod.PickupCode,
                 placement.Delivery.PickupLocationName,
                 AddressLines(placement.ShipAddress),
-                placement.DeliveryDistrictName),
+                placement.DeliveryDistrictName,
+                placement.DeliveryCountryName,
+                !string.Equals(placement.DeliveryCountryCode, Country.SriLankaCode, StringComparison.Ordinal)),
             placement.PaymentMethodName,
             placement.Payment.PaymentDueAtUtc));
 
@@ -348,6 +351,9 @@ internal sealed class OrderPlacementStore(
             address.Line1,
             address.Line2,
             address.City,
+
+            // An overseas address's state or region, then its postcode — the order a parcel label reads in.
+            address.Region,
             address.PostalCode,
             address.Landmark,
         }
@@ -388,6 +394,8 @@ internal sealed class OrderPlacementStore(
             Phone = placement.Phone,
             FirstName = placement.FirstName,
             LastName = placement.LastName,
+            DeliveryCountryCode = placement.DeliveryCountryCode,
+            DeliveryCountryName = placement.DeliveryCountryName,
             DeliveryDistrictId = placement.DeliveryDistrictId,
             DeliveryDistrictName = placement.DeliveryDistrictName,
             DeliveryZone = placement.DeliveryZone,

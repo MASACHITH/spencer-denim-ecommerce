@@ -60,9 +60,16 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
         builder.Property(order => order.FirstName).HasMaxLength(80).IsRequired();
         builder.Property(order => order.LastName).HasMaxLength(80);
 
-        builder.Property(order => order.DeliveryDistrictId).IsRequired();
-        builder.Property(order => order.DeliveryDistrictName).HasMaxLength(60).IsRequired();
-        builder.Property(order => order.DeliveryZone).HasColumnType("tinyint").IsRequired();
+        // Owner decision 2026-10-21: an overseas order has a country and no district or zone, so the three
+        // district columns are nullable and CK_Orders_Destination says which shape each row takes.
+        builder
+            .Property(order => order.DeliveryCountryCode)
+            .HasColumnType($"char({Country.CodeLength})")
+            .IsRequired();
+        builder.Property(order => order.DeliveryCountryName).HasMaxLength(Country.MaxNameLength).IsRequired();
+        builder.Property(order => order.DeliveryDistrictId);
+        builder.Property(order => order.DeliveryDistrictName).HasMaxLength(60);
+        builder.Property(order => order.DeliveryZone).HasColumnType("tinyint");
 
         ConfigureShipAddress(builder);
         ConfigureDeliverySnapshot(builder);
@@ -114,6 +121,22 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
 
         // Doc 08 §3.1: the same three zones as ref.Districts.DeliveryZone, snapshotted here (N4).
         table.HasCheckConstraint("CK_Orders_DeliveryZone", "[DeliveryZone] BETWEEN 1 AND 3");
+
+        // Owner decision 2026-10-21. A Sri Lankan order keeps its district, district name and zone and never
+        // travels by the international method; an overseas order has none of the three, always travels by
+        // it, and is never a store pickup (the international code is not PICKUP, so that follows).
+        table.HasCheckConstraint(
+            "CK_Orders_Destination",
+            $"""
+            ([DeliveryCountryCode] = '{Country.SriLankaCode}'
+                AND [DeliveryDistrictId] IS NOT NULL AND [DeliveryDistrictName] IS NOT NULL
+                AND [DeliveryZone] IS NOT NULL
+                AND [DeliveryMethodCode] <> '{DeliveryMethod.InternationalCode}')
+            OR ([DeliveryCountryCode] <> '{Country.SriLankaCode}'
+                AND [DeliveryDistrictId] IS NULL AND [DeliveryDistrictName] IS NULL
+                AND [DeliveryZone] IS NULL
+                AND [DeliveryMethodCode] = '{DeliveryMethod.InternationalCode}')
+            """);
 
         // Doc 08 §1.4: Currency appears only on Orders, Payments and Refunds, each with a CK 'LKR'.
         table.HasCheckConstraint("CK_Orders_Currency", $"[Currency] = '{SalesCurrency.Lkr}'");
@@ -171,6 +194,7 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
             ship.Property(address => address.Line1).HasColumnName("Ship_Line1").HasMaxLength(150);
             ship.Property(address => address.Line2).HasColumnName("Ship_Line2").HasMaxLength(150);
             ship.Property(address => address.City).HasColumnName("Ship_City").HasMaxLength(80);
+            ship.Property(address => address.Region).HasColumnName("Ship_Region").HasMaxLength(80);
             ship.Property(address => address.PostalCode).HasColumnName("Ship_PostalCode").HasColumnType("varchar(10)");
             ship.Property(address => address.Landmark).HasColumnName("Ship_Landmark").HasMaxLength(150);
         });
@@ -287,6 +311,7 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
             {
                 order.GrandTotal,
                 order.DeliveryDistrictId,
+                order.DeliveryCountryCode,
                 order.PaymentProviderCode,
                 order.CustomerUserId,
                 order.EmailNormalized,
@@ -317,6 +342,7 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
         // does not depend on EF's naming. DeliveryDistrictId is here although its constraint is deferred
         // (see the class remarks).
         builder.HasIndex(order => order.DeliveryDistrictId).HasDatabaseName("IX_Orders_DeliveryDistrictId");
+        builder.HasIndex(order => order.DeliveryCountryCode).HasDatabaseName("IX_Orders_DeliveryCountryCode");
         builder.HasIndex(order => order.PaymentProviderCode).HasDatabaseName("IX_Orders_PaymentProviderCode");
         builder.HasIndex(order => order.DeliveryMethodId).HasDatabaseName("IX_Orders_DeliveryMethodId");
         builder.HasIndex(order => order.PickupLocationId).HasDatabaseName("IX_Orders_PickupLocationId");
@@ -365,6 +391,15 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
             .HasOne<District>()
             .WithMany()
             .HasForeignKey(order => order.DeliveryDistrictId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // Owner decision 2026-10-21. No navigation, for the reason the district's relationship gives; the
+        // order reads `DeliveryCountryName`, its snapshot.
+        builder
+            .HasOne<Country>()
+            .WithMany()
+            .HasForeignKey(order => order.DeliveryCountryCode)
+            .HasConstraintName("FK_Orders_Countries_DeliveryCountryCode")
             .OnDelete(DeleteBehavior.NoAction);
 
         // **W3-05 makes `PromoCodeId` a real constraint**, which the class remarks above had been waiting

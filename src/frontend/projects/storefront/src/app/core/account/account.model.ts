@@ -107,10 +107,11 @@ export interface CustomerAddressDto {
   readonly line1: string;
   readonly line2: string | null;
   readonly city: string;
-  readonly districtId: number;
+  /** Null for an overseas address, which has no district (owner decision 2026-10-21). */
+  readonly districtId: number | null;
 
-  /** Joined in, so a district the shop has since deactivated still reads as its own name. */
-  readonly districtName: string;
+  /** Joined in, so a district the shop has since deactivated still reads as its own name. Null abroad. */
+  readonly districtName: string | null;
 
   /**
    * False when the shop has stopped serving that district since the address was saved. An ordinary
@@ -121,6 +122,11 @@ export interface CustomerAddressDto {
   readonly postalCode: string | null;
   readonly landmark: string | null;
   readonly isDefault: boolean;
+  /** ISO 3166-1 alpha-2, `LK` for Sri Lanka. Optional so an older payload still reads as Sri Lankan. */
+  readonly countryCode?: string;
+  readonly countryName?: string;
+  /** State, province or region of an overseas address. */
+  readonly region?: string | null;
 }
 
 /**
@@ -162,6 +168,10 @@ export interface CustomerAddressEdit {
   readonly postalCode: string | null;
   readonly landmark: string | null;
   readonly isDefault: boolean;
+  /** ISO 3166-1 alpha-2; `LK` keeps the district (owner decision 2026-10-21). */
+  readonly countryCode: string;
+  /** State, province or region; null for Sri Lanka. */
+  readonly region: string | null;
 }
 
 /**

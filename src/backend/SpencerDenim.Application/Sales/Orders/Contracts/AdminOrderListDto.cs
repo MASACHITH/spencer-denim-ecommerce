@@ -83,6 +83,9 @@ public sealed record AdminOrderListPage(
 /// on the page saying so.
 /// </para>
 /// </param>
+/// <param name="CountryCode">The destination country, ISO 3166-1 alpha-2 (owner decision 2026-10-21).</param>
+/// <param name="CountryName">The destination country as snapshotted on the order.</param>
+/// <param name="DistrictName">The Sri Lankan district, or null for an overseas order.</param>
 public sealed record AdminOrderListRow(
     Guid OrderPublicId,
     string OrderNumber,
@@ -100,7 +103,10 @@ public sealed record AdminOrderListRow(
     string? InvoiceNumber,
     DateTime PlacedAtUtc,
     DateTime? PaidAtUtc,
-    long? SecondsUntilExpiry);
+    long? SecondsUntilExpiry,
+    string CountryCode = Domain.Reference.Country.SriLankaCode,
+    string CountryName = "Sri Lanka",
+    string? DistrictName = null);
 
 /// <summary>Which end of the list comes first.</summary>
 /// <remarks>

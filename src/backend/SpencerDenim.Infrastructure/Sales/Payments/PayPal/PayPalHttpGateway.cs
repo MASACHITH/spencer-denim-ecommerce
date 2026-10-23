@@ -275,8 +275,10 @@ internal sealed partial class PayPalHttpGateway(
     /// The create-order body: intent CAPTURE, one purchase unit in USD, and the buyer's way back.
     /// </summary>
     /// <remarks>
-    /// <b>No shipping address and no payer details are sent</b> — the shop collected the delivery address
-    /// itself, and <c>NO_SHIPPING</c> stops PayPal asking for one again. <c>custom_id</c> is ours and comes
+    /// <b>The delivery address the shop collected is sent, fixed</b> (owner decision 2026-10-21): with
+    /// <c>SET_PROVIDED_ADDRESS</c> PayPal shows the buyer where the parcel goes and does not let them change it,
+    /// for Sri Lankan and overseas addresses alike. A store pickup has no address and keeps <c>NO_SHIPPING</c>.
+    /// No payer details are sent. <c>custom_id</c> is ours and comes
     /// back in webhooks; <c>invoice_id</c> is left out on purpose, because PayPal refuses a second order with
     /// an invoice id it has seen, which a retry after a decline would be.
     /// </remarks>
@@ -297,6 +299,12 @@ internal sealed partial class PayPalHttpGateway(
             writer.WriteString("currency_code", request.Currency);
             writer.WriteString("value", PayPalUsdAmount.Format(request.Amount));
             writer.WriteEndObject();
+
+            if (request.Shipping is { } shipping)
+            {
+                WriteShipping(writer, shipping);
+            }
+
             writer.WriteEndObject();
             writer.WriteEndArray();
 
@@ -305,7 +313,9 @@ internal sealed partial class PayPalHttpGateway(
             writer.WriteStartObject("experience_context");
             writer.WriteString("brand_name", StoreBrand.Name);
             writer.WriteString("landing_page", "NO_PREFERENCE");
-            writer.WriteString("shipping_preference", "NO_SHIPPING");
+            writer.WriteString(
+                "shipping_preference",
+                request.Shipping is null ? "NO_SHIPPING" : "SET_PROVIDED_ADDRESS");
             writer.WriteString("user_action", "PAY_NOW");
             writer.WriteString("return_url", request.ReturnUrl);
             writer.WriteString("cancel_url", request.CancelUrl);
@@ -317,6 +327,39 @@ internal sealed partial class PayPalHttpGateway(
         }
 
         return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    /// <summary>
+    /// <c>purchase_units[0].shipping</c> (owner decision 2026-10-21): the recipient and the address in PayPal's
+    /// fields — city in <c>admin_area_2</c>, state or region in <c>admin_area_1</c>, and the ISO country code. An
+    /// optional part the order does not have is left out rather than sent empty, which PayPal refuses.
+    /// </summary>
+    private static void WriteShipping(Utf8JsonWriter writer, PayPalShipping shipping)
+    {
+        writer.WriteStartObject("shipping");
+
+        writer.WriteStartObject("name");
+        writer.WriteString("full_name", shipping.FullName);
+        writer.WriteEndObject();
+
+        writer.WriteStartObject("address");
+        writer.WriteString("address_line_1", shipping.Line1);
+        WriteIfPresent(writer, "address_line_2", shipping.Line2);
+        writer.WriteString("admin_area_2", shipping.City);
+        WriteIfPresent(writer, "admin_area_1", shipping.Region);
+        WriteIfPresent(writer, "postal_code", shipping.PostalCode);
+        writer.WriteString("country_code", shipping.CountryCode);
+        writer.WriteEndObject();
+
+        writer.WriteEndObject();
+    }
+
+    private static void WriteIfPresent(Utf8JsonWriter writer, string name, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            writer.WriteString(name, value);
+        }
     }
 
     /// <summary>

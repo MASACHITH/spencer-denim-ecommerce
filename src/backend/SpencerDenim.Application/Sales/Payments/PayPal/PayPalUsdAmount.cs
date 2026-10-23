@@ -83,6 +83,13 @@ public static class PayPalRequestIds
     public static string Create(int paymentId) => FormattableString.Invariant($"create-{paymentId}");
 
     /// <summary>
+    /// The key of the one retry without a shipping address, after PayPal refused the address itself (owner
+    /// decision 2026-10-21). A different key, because PayPal answers a reused key with the first reply.
+    /// </summary>
+    public static string CreateWithoutShipping(int paymentId) =>
+        FormattableString.Invariant($"create-{paymentId}-ns");
+
+    /// <summary>
     /// What is written in the purchase unit's <c>custom_id</c>, and so comes back in webhooks: the way an
     /// event for a capture we have not recorded yet is tied to its payment.
     /// </summary>
@@ -132,4 +139,26 @@ public static class PayPalInitiationPolicy
             rate,
             settings.FxBufferPercent);
     }
+}
+
+/// <summary>
+/// Whether PayPal refused a create-order call because of the shipping address (owner decision 2026-10-21).
+/// </summary>
+/// <remarks>
+/// PayPal names the problem in <c>details[0].issue</c> but not always the field. The address-specific codes are
+/// matched by name; the three generic syntax codes are included too, because the only free text a shopper typed
+/// into the request is the address — the amount, ids and URLs are the shop's own. The caller retries once without
+/// the address, so matching a little too much costs one harmless extra call, and matching too little leaves a
+/// placed order that cannot be paid.
+/// </remarks>
+public static class PayPalAddressRefusal
+{
+    private static readonly string[] AddressWords = ["ADDRESS", "POSTAL_CODE", "CITY", "STATE", "ADMIN_AREA", "COUNTRY", "SHIPPING"];
+
+    private static readonly string[] GenericSyntax = ["INVALID_PARAMETER_SYNTAX", "INVALID_STRING_LENGTH", "INVALID_PARAMETER_VALUE"];
+
+    public static bool IsAddressIssue(string? issue) =>
+        !string.IsNullOrWhiteSpace(issue)
+        && (AddressWords.Any(word => issue.Contains(word, StringComparison.OrdinalIgnoreCase))
+            || GenericSyntax.Any(code => string.Equals(issue.Trim(), code, StringComparison.OrdinalIgnoreCase)));
 }

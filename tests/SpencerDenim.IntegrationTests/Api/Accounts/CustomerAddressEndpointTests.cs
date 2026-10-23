@@ -499,6 +499,85 @@ public sealed class CustomerAddressEndpointTests(SqlServerDatabaseFixture sqlSer
     }
 
     /// <summary>
+    /// Owner decision 2026-10-21 (independent-tester pass, attack 1): <c>SaveCustomerAddressCommandHandler</c>
+    /// always derives <c>DistrictId</c> from the resolved country rather than trusting the request — "an
+    /// overseas address has no district, whatever the request sent" — so the application can never itself
+    /// produce a row that mixes a foreign country with a district, or Sri Lanka with none. This is the belt
+    /// behind that braces: a row that mixes them, however it was written, is refused by the database
+    /// regardless of which layer built it.
+    /// </summary>
+    [Theory]
+    [InlineData("LK", null)] // Sri Lanka with no district at all.
+    [InlineData("FR", 1)] // A foreign country with a Sri Lankan district still attached.
+    public async Task A_hand_written_address_that_mixes_its_country_and_district_is_refused_by_the_database(
+        string countryCode,
+        int? districtId)
+    {
+        await ReadyAsync();
+
+        await using var factory = CreateHost();
+        using var client = CreateClient(factory);
+        var email = UniqueEmail("address-destination-ck");
+
+        await RegisterAsync(client, email);
+        var customer = await ReadCustomerAsync(factory, email);
+        Assert.NotNull(customer);
+
+        var row = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["UserId"] = customer.Id,
+            ["RecipientName"] = "Test Recipient",
+            ["Phone"] = "+44 20 7946 0958",
+            ["Line1"] = "10 Example Street",
+            ["City"] = "Test City",
+            ["CountryCode"] = countryCode,
+            ["DistrictId"] = districtId,
+            ["IsDefault"] = false,
+        };
+
+        await Writer.AssertRejectedAsync(
+            "[identity].[CustomerAddresses]",
+            row,
+            "CK_CustomerAddresses_Destination",
+            Token);
+    }
+
+    /// <summary>
+    /// The converse of the test above: the one overseas shape the constraint actually allows — a foreign
+    /// country with no district — lands without complaint.
+    /// </summary>
+    [Fact]
+    public async Task A_hand_written_overseas_address_with_no_district_is_accepted()
+    {
+        await ReadyAsync();
+
+        await using var factory = CreateHost();
+        using var client = CreateClient(factory);
+        var email = UniqueEmail("address-destination-ck-ok");
+
+        await RegisterAsync(client, email);
+        var customer = await ReadCustomerAsync(factory, email);
+        Assert.NotNull(customer);
+
+        var addressId = await Writer.InsertAsync(
+            "[identity].[CustomerAddresses]",
+            new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["UserId"] = customer.Id,
+                ["RecipientName"] = "Test Recipient",
+                ["Phone"] = "+44 20 7946 0958",
+                ["Line1"] = "10 Example Street",
+                ["City"] = "Test City",
+                ["CountryCode"] = "FR",
+                ["DistrictId"] = null,
+                ["IsDefault"] = false,
+            },
+            Token);
+
+        Assert.True(addressId > 0);
+    }
+
+    /// <summary>
     /// Delays the address-book <c>COUNT</c> so the window between it and the insert is wide enough for a
     /// concurrent caller to land in.
     /// </summary>

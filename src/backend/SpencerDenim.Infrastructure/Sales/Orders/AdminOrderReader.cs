@@ -64,6 +64,9 @@ internal sealed class AdminOrderReader(AppDbContext dbContext, IClock clock) : I
                 order.PlacedAtUtc,
                 order.PaymentDueAtUtc,
                 order.PaidAtUtc,
+                order.DeliveryCountryCode,
+                order.DeliveryCountryName,
+                order.DeliveryDistrictName,
             })
             .ToListAsync(cancellationToken);
 
@@ -98,7 +101,10 @@ internal sealed class AdminOrderReader(AppDbContext dbContext, IClock clock) : I
                         // would be a number a staff member could act on wrongly.
                         row.Status == OrderStatus.PendingPayment
                             ? (long)Math.Round((row.PaymentDueAtUtc - nowUtc).TotalSeconds)
-                            : null);
+                            : null,
+                        row.DeliveryCountryCode,
+                        row.DeliveryCountryName,
+                        row.DeliveryDistrictName);
                 })
                 .ToList(),
             page,
@@ -296,7 +302,10 @@ internal sealed class AdminOrderReader(AppDbContext dbContext, IClock clock) : I
                 candidate.DeliveredAtUtc,
                 candidate.ClosedAtUtc,
                 candidate.PaymentProviderCode,
-                candidate.CaptureLockedUntilUtc))
+                candidate.CaptureLockedUntilUtc,
+                candidate.ShipAddress.Region,
+                candidate.DeliveryCountryCode,
+                candidate.DeliveryCountryName))
             .FirstOrDefaultAsync(cancellationToken);
 
         if (order is null)
@@ -329,7 +338,7 @@ internal sealed class AdminOrderReader(AppDbContext dbContext, IClock clock) : I
                 isPickup,
                 order.PickupLocationName,
                 order.DeliveryDistrictName,
-                order.DeliveryZone.ToString(),
+                ZoneLabel(order.DeliveryZone),
                 order.EstimatedDaysMin,
                 order.EstimatedDaysMax,
                 order.RecipientName,
@@ -338,7 +347,10 @@ internal sealed class AdminOrderReader(AppDbContext dbContext, IClock clock) : I
                 order.Line2,
                 order.City,
                 order.PostalCode,
-                order.Landmark),
+                order.Landmark,
+                order.ShipRegion,
+                order.DeliveryCountryCode,
+                order.DeliveryCountryName),
             new AdminOrderMoneyDto(
                 order.Currency,
                 order.ItemsOriginalTotal,
@@ -698,6 +710,8 @@ internal sealed class AdminOrderReader(AppDbContext dbContext, IClock clock) : I
                 candidate.Delivery.EstimatedDaysMax,
                 candidate.DeliveryDistrictName,
                 candidate.DeliveryZone,
+                candidate.DeliveryCountryCode,
+                candidate.DeliveryCountryName,
                 candidate.ShipAddress,
                 candidate.Currency,
                 candidate.ItemsOriginalTotal,
@@ -754,7 +768,7 @@ internal sealed class AdminOrderReader(AppDbContext dbContext, IClock clock) : I
                 IsPickup(order.DeliveryMethodCode),
                 order.PickupLocationName,
                 order.DeliveryDistrictName,
-                order.DeliveryZone.ToString(),
+                ZoneLabel(order.DeliveryZone),
                 order.EstimatedDaysMin,
                 order.EstimatedDaysMax,
                 order.ShipAddress.RecipientName,
@@ -763,7 +777,10 @@ internal sealed class AdminOrderReader(AppDbContext dbContext, IClock clock) : I
                 order.ShipAddress.Line2,
                 order.ShipAddress.City,
                 order.ShipAddress.PostalCode,
-                order.ShipAddress.Landmark),
+                order.ShipAddress.Landmark,
+                order.ShipAddress.Region,
+                order.DeliveryCountryCode,
+                order.DeliveryCountryName),
             new AdminOrderMoneyDto(
                 order.Currency,
                 order.ItemsOriginalTotal,
@@ -898,8 +915,8 @@ internal sealed class AdminOrderReader(AppDbContext dbContext, IClock clock) : I
         string? PickupLocationName,
         byte EstimatedDaysMin,
         byte EstimatedDaysMax,
-        string DeliveryDistrictName,
-        DeliveryZone DeliveryZone,
+        string? DeliveryDistrictName,
+        DeliveryZone? DeliveryZone,
         string? RecipientName,
         string? RecipientPhone,
         string? Line1,
@@ -938,5 +955,11 @@ internal sealed class AdminOrderReader(AppDbContext dbContext, IClock clock) : I
         // Doc 11 P10 step 2's capture-lock guard, for AdminOrderActions.CanCancel. Nothing in this build
         // sets it (it is PayPal's, W4-01), so it is null on every order today — read rather than assumed
         // null, because the flag has to be right the day it is not.
-        DateTime? CaptureLockedUntilUtc);
+        DateTime? CaptureLockedUntilUtc,
+        string? ShipRegion,
+        string DeliveryCountryCode,
+        string DeliveryCountryName);
+
+    /// <summary>The zone's name, or <c>Overseas</c> for an order with no zone (owner decision 2026-10-21).</summary>
+    internal static string ZoneLabel(DeliveryZone? zone) => zone?.ToString() ?? "Overseas";
 }

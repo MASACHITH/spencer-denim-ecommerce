@@ -16,7 +16,8 @@ public sealed record CheckoutAddressInput(
     string? Line2,
     string? City,
     string? PostalCode,
-    string? Landmark);
+    string? Landmark,
+    string? Region = null);
 
 /// <summary>
 /// Place the order (CHK-01..04, doc 11 P6).
@@ -57,7 +58,8 @@ public sealed record PlaceOrderCommand(
     decimal? ExpectedGrandTotal,
     string? CustomerNote,
     string? PlacedIpAddress,
-    string? PromoCode = null)
+    string? PromoCode = null,
+    string? CountryCode = null)
 {
     /// <summary>
     /// The account placing it, or <see langword="null"/> for a guest.

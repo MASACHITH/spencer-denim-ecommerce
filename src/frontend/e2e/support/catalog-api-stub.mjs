@@ -2860,6 +2860,73 @@ const CHECKOUT_RATES = [
   { methodId: 2, zone: 3, isAvailable: false, fee: 0, freeAboveAmount: null, min: 1, max: 2 },
 ];
 
+/**
+ * Owner decision 2026-10-21: Sri Lanka plus worldwide delivery. A trimmed `ref.Countries` in the shape of
+ * `GET /api/delivery/countries` (`DeliveryCountryDto`), with the region fees already resolved the way
+ * `OverseasDeliveryRate` resolves them: Sri Lanka, a postcode country (GB), a postcode-and-state country
+ * (US), one with neither (AE), and one the shop does not deliver to (AQ, seeded switched off).
+ * The fees are not the seeded placeholders on purpose: none of them contains the digits "500", which
+ * `home-page.e2e.ts` reads as an HTTP status anywhere in the page's text, the handed-over JSON included.
+ */
+const CHECKOUT_COUNTRIES = [
+  { code: 'LK', name: 'Sri Lanka', isDomestic: true, isAvailable: true, postalCodeRequired: false, regionRequired: false, fee: null, estimatedDaysMin: null, estimatedDaysMax: null },
+  { code: 'AQ', name: 'Antarctica', isDomestic: false, isAvailable: false, postalCodeRequired: false, regionRequired: false, fee: null, estimatedDaysMin: null, estimatedDaysMax: null },
+  { code: 'GB', name: 'United Kingdom', isDomestic: false, isAvailable: true, postalCodeRequired: true, regionRequired: false, fee: 9800, estimatedDaysMin: 7, estimatedDaysMax: 14 },
+  { code: 'AE', name: 'United Arab Emirates', isDomestic: false, isAvailable: true, postalCodeRequired: false, regionRequired: false, fee: 7800, estimatedDaysMin: 5, estimatedDaysMax: 10 },
+  { code: 'US', name: 'United States', isDomestic: false, isAvailable: true, postalCodeRequired: true, regionRequired: true, fee: 10800, estimatedDaysMin: 7, estimatedDaysMax: 14 },
+];
+
+/** `DeliveryMethod.InternationalCode`: the one overseas option. It has no zone rates. */
+const INTERNATIONAL_METHOD = {
+  id: 9,
+  code: 'INTERNATIONAL',
+  name: 'International delivery',
+  description: 'Sent overseas by an international service such as Sri Lanka Post EMS or DHL.',
+  requiresAddress: true,
+};
+
+/** `DestinationRules.NormaliseCountryCode`: none means Sri Lanka; anything but two letters is unknown. */
+function normaliseCountryCode(raw) {
+  if (raw === null || raw === undefined || (typeof raw === 'string' && raw.trim() === '')) {
+    return 'LK';
+  }
+
+  return typeof raw === 'string' && /^[A-Za-z]{2}$/.test(raw.trim()) ? raw.trim().toUpperCase() : null;
+}
+
+function findCountry(code) {
+  return code === null ? null : (CHECKOUT_COUNTRIES.find((country) => country.code === code) ?? null);
+}
+
+/** `DestinationRules.ValidateOverseasAddress`, field for field, under the `address.` prefix. */
+function overseasAddressErrors(country, address, errors) {
+  const region = trimmed(address.region);
+  const postal = trimmed(address.postalCode);
+  const phone = trimmed(address.phone);
+
+  if (region === null) {
+    if (country.regionRequired) {
+      errors['address.region'] = ['Enter the state, province or region.'];
+    }
+  } else if (region.length > 80) {
+    errors['address.region'] = ['This can be at most 80 characters.'];
+  }
+
+  if (postal === null) {
+    if (country.postalCodeRequired) {
+      errors['address.postalCode'] = [`Enter the postcode for ${country.name}.`];
+    }
+  } else if (postal.length > 10) {
+    errors['address.postalCode'] = ['This can be at most 10 characters.'];
+  } else if (!/^[A-Za-z0-9](?:[A-Za-z0-9 -]*[A-Za-z0-9])?$/.test(postal)) {
+    errors['address.postalCode'] = ['A postcode can use only letters, numbers, spaces and hyphens.'];
+  }
+
+  if (phone !== null && !(phone.startsWith('+') || phone.startsWith('00'))) {
+    errors['address.phone'] = ['Include the country code, for example +44 20 7946 0958.'];
+  }
+}
+
 const CHECKOUT_PAYMENT_METHODS = [
   {
     code: 'BankTransfer',
@@ -3099,7 +3166,7 @@ function checkoutAllocate(lines, amount) {
   return lines.map((line, index) => ({ ...line, promoDiscountAllocated: shares[index] }));
 }
 
-function checkoutBlockers(lines, districtId, options) {
+function checkoutBlockers(lines, districtId, options, country = null) {
   const blockers = [];
 
   if (lines.length === 0) {
@@ -3108,7 +3175,11 @@ function checkoutBlockers(lines, districtId, options) {
     blockers.push('LineNotPurchasable');
   }
 
-  if (districtId !== null && !options.some((option) => option.isAvailable)) {
+  if (country && !country.isDomestic) {
+    if (!country.isAvailable || !options.some((option) => option.isAvailable)) {
+      blockers.push('CountryNotServed');
+    }
+  } else if (districtId !== null && !options.some((option) => option.isAvailable)) {
     blockers.push('NoDeliveryMethod');
   }
 
@@ -3119,7 +3190,19 @@ function checkoutBlockers(lines, districtId, options) {
   return blockers;
 }
 
-function checkoutSession(token, districtId, deliveryMethodId, promoCode) {
+/** An overseas country's quote as a zone rate, the way `CheckoutCountry.OverseasRate` builds it. */
+function overseasRate(country) {
+  return country.isAvailable
+    ? { isAvailable: true, fee: country.fee, freeAboveAmount: null, min: country.estimatedDaysMin, max: country.estimatedDaysMax }
+    : null;
+}
+
+function checkoutSession(token, districtId, deliveryMethodId, promoCode, countryCode = 'LK') {
+  const country = findCountry(countryCode);
+  if (country && !country.isDomestic) {
+    return overseasSession(token, deliveryMethodId, promoCode, country);
+  }
+
   const lines = checkoutLines(token);
   const district = CHECKOUT_DISTRICTS.find((candidate) => candidate.id === districtId) ?? null;
 
@@ -3175,6 +3258,56 @@ function checkoutSession(token, districtId, deliveryMethodId, promoCode) {
     promoRefusal: promo.refusal,
     promoMinimumSpend: promo.minimumSpend,
     blockers: checkoutBlockers(lines, district ? district.id : null, options),
+    selectedCountryCode: country ? country.code : null,
+    promoFreeDeliveryIgnored: false,
+  };
+}
+
+/**
+ * `GetCheckoutQueryHandler` for an overseas country: no district, the one International option at the
+ * country's fee, and a free-delivery code that does not cover it (`CheckoutQuote.ForDestination`).
+ */
+function overseasSession(token, deliveryMethodId, promoCode, country) {
+  const lines = checkoutLines(token);
+  const grossSubtotal = checkoutTotals(lines, null, null).itemsSubtotal;
+  const promo = checkoutPromo(promoCode, grossSubtotal);
+  const charge = { ...promo, freeDelivery: false };
+  const rate = overseasRate(country);
+
+  const options = [
+    {
+      id: INTERNATIONAL_METHOD.id,
+      code: INTERNATIONAL_METHOD.code,
+      name: INTERNATIONAL_METHOD.name,
+      description: INTERNATIONAL_METHOD.description,
+      requiresAddress: true,
+      isAvailable: rate !== null,
+      fee: rate ? rate.fee : null,
+      freeAboveAmount: null,
+      feeAfterDiscount: rate ? rate.fee : null,
+      estimatedDaysMin: rate ? rate.min : null,
+      estimatedDaysMax: rate ? rate.max : null,
+    },
+  ];
+
+  const selected = rate !== null && deliveryMethodId === INTERNATIONAL_METHOD.id;
+
+  return {
+    checkoutKey: randomUUID(),
+    lines,
+    totals: checkoutTotals(lines, selected ? rate : null, charge),
+    districts: CHECKOUT_DISTRICTS,
+    deliveryOptions: options,
+    pickupLocations: [],
+    paymentMethods: CHECKOUT_PAYMENT_METHODS,
+    selectedDistrictId: null,
+    selectedDeliveryMethodId: selected ? INTERNATIONAL_METHOD.id : null,
+    appliedPromoCode: promo.applied,
+    promoRefusal: promo.refusal,
+    promoMinimumSpend: promo.minimumSpend,
+    blockers: checkoutBlockers(lines, null, options, country),
+    selectedCountryCode: country.code,
+    promoFreeDeliveryIgnored: promo.freeDelivery === true,
   };
 }
 
@@ -3225,6 +3358,7 @@ function handleCheckoutRead(request, response, url) {
   const rawMethod = url.searchParams.get('deliveryMethodId');
 
   const promoCode = url.searchParams.get('promoCode');
+  const countryCode = normaliseCountryCode(url.searchParams.get('countryCode'));
   const districtId = rawDistrict !== null && /^\d+$/.test(rawDistrict) ? Number(rawDistrict) : null;
   const methodId = rawMethod !== null && /^\d+$/.test(rawMethod) ? Number(rawMethod) : null;
 
@@ -3234,7 +3368,7 @@ function handleCheckoutRead(request, response, url) {
 
   response.end(
     JSON.stringify(
-      checkoutSession(token && carts.has(token) ? token : null, districtId, methodId, promoCode),
+      checkoutSession(token && carts.has(token) ? token : null, districtId, methodId, promoCode, countryCode),
     ),
   );
 }
@@ -3276,7 +3410,17 @@ function handlePlaceOrder(request, response) {
       errors['phone'] = ['Enter a phone number for the delivery.'];
     }
 
-    const method = CHECKOUT_METHODS.find((candidate) => candidate.id === wholeNumber(body.deliveryMethodId)) ?? null;
+    const countryCode = normaliseCountryCode(body.countryCode);
+    const country = findCountry(countryCode);
+    if (!country) {
+      errors['countryCode'] = ['Choose the country your order is going to.'];
+    }
+    const overseas = country !== null && !country.isDomestic;
+
+    const method =
+      [...CHECKOUT_METHODS, INTERNATIONAL_METHOD].find(
+        (candidate) => candidate.id === wholeNumber(body.deliveryMethodId),
+      ) ?? null;
     if (!method) {
       errors['deliveryMethodId'] = body.deliveryMethodId
         ? ['This delivery option is no longer available. Choose another.']
@@ -3296,7 +3440,7 @@ function handlePlaceOrder(request, response) {
     const district = CHECKOUT_DISTRICTS.find((candidate) => candidate.id === wholeNumber(body.districtId)) ?? null;
 
     if (method && method.requiresAddress) {
-      if (!district) {
+      if (!district && !overseas) {
         errors['districtId'] = ['Choose the district your order is going to.'];
       }
 
@@ -3316,6 +3460,9 @@ function handlePlaceOrder(request, response) {
         if (!trimmed(address.city)) {
           errors['address.city'] = ['Enter the town or city.'];
         }
+        if (overseas) {
+          overseasAddressErrors(country, address, errors);
+        }
       }
     }
 
@@ -3324,7 +3471,28 @@ function handlePlaceOrder(request, response) {
       return;
     }
 
-    const rate = checkoutRateFor(method.id, district.deliveryZone);
+    // `DestinationRules.MethodMismatch` and `NotServed`, in the handler's order.
+    const international = method.code === INTERNATIONAL_METHOD.code;
+    if (!overseas && international) {
+      validationProblems(response, {
+        deliveryMethodId: ['International delivery is for addresses outside Sri Lanka. Choose another option.'],
+      });
+      return;
+    }
+    if (overseas && !international) {
+      validationProblems(response, {
+        deliveryMethodId: [`This delivery option is for Sri Lanka only. Choose International delivery for ${country.name}.`],
+      });
+      return;
+    }
+    if (overseas && !country.isAvailable) {
+      validationProblems(response, {
+        countryCode: [`We cannot deliver to ${country.name} at the moment. Choose another country.`],
+      });
+      return;
+    }
+
+    const rate = overseas ? overseasRate(country) : checkoutRateFor(method.id, district.deliveryZone);
     if (!rate || !rate.isAvailable) {
       validationProblems(response, {
         deliveryMethodId: ['This delivery option is not available for that district. Choose another.'],
@@ -3358,7 +3526,8 @@ function handlePlaceOrder(request, response) {
     // `promoRefusal` extension and this answers the same, because a stub that accepted what the API
     // refuses would make the screen's refusal path unreachable in the browser (#126).
     const grossSubtotal = checkoutTotals(lines, null, null).itemsSubtotal;
-    const promo = checkoutPromo(body.promoCode, grossSubtotal);
+    const quoted = checkoutPromo(body.promoCode, grossSubtotal);
+    const promo = overseas ? { ...quoted, freeDelivery: false } : quoted;
 
     if (promo.refusal !== null) {
       checkoutProblem(response, 409, {
@@ -3469,11 +3638,14 @@ function handlePlaceOrder(request, response) {
         line1: address ? trimmed(address.line1) : null,
         line2: address ? trimmed(address.line2) : null,
         city: address ? trimmed(address.city) : null,
-        districtName: district.name,
+        districtName: overseas ? null : district.name,
         postalCode: address ? trimmed(address.postalCode) : null,
-        landmark: address ? trimmed(address.landmark) : null,
+        landmark: address && !overseas ? trimmed(address.landmark) : null,
         estimatedDaysMin: rate.min,
         estimatedDaysMax: rate.max,
+        region: address && overseas ? trimmed(address.region) : null,
+        countryCode: country.code,
+        countryName: country.name,
       },
       itemsOriginalTotal: totals.itemsOriginalTotal,
       itemsSubtotal: totals.itemsSubtotal,
@@ -3714,6 +3886,12 @@ function handleCheckout(request, response, url) {
     }
 
     response.end(JSON.stringify({ token, fault: armed }));
+    return true;
+  }
+
+  if (url.pathname === '/api/delivery/countries') {
+    response.setHeader('Cache-Control', 'public, max-age=60');
+    response.end(JSON.stringify(CHECKOUT_COUNTRIES));
     return true;
   }
 

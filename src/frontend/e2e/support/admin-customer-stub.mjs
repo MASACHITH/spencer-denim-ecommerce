@@ -46,6 +46,8 @@ function customer(customerId, overrides = {}) {
     lifetimeSpend: 0,
     currency: 'LKR',
     lastOrderAtUtc: null,
+    // Owner decision 2026-10-21: the country of the default saved address, or null with none.
+    countryName: 'Sri Lanka',
     addresses: [],
     orders: [],
     ...overrides,
@@ -81,6 +83,9 @@ function customersFor(set) {
           postalCode: '00300',
           landmark: null,
           isDefault: true,
+          countryCode: 'LK',
+          countryName: 'Sri Lanka',
+          region: null,
         },
       ],
       // The two stub orders this customer owns, by the tokens the order screen already serves, so a link
@@ -116,6 +121,26 @@ function customersFor(set) {
       phone: null,
       districtName: null,
       registeredAtUtc: '2026-09-20T04:30:00Z',
+      // An overseas buyer's address book (owner decision 2026-10-21): no district, a region and a country.
+      countryName: 'Canada',
+      addresses: [
+        {
+          addressId: 9,
+          label: 'Toronto',
+          recipientName: 'Kasun Abeysekera',
+          phone: '+1 416 555 0199',
+          line1: '290 Bremner Boulevard',
+          line2: null,
+          city: 'Toronto',
+          districtName: null,
+          postalCode: 'M5V 3L9',
+          landmark: null,
+          isDefault: true,
+          countryCode: 'CA',
+          countryName: 'Canada',
+          region: 'Ontario',
+        },
+      ],
     }),
   ];
 
@@ -172,6 +197,7 @@ function listRow(row) {
     lifetimeSpend: row.lifetimeSpend,
     currency: row.currency,
     lastOrderAtUtc: row.lastOrderAtUtc,
+    countryName: row.countryName,
   };
 }
 

@@ -215,6 +215,81 @@ public sealed class PayPalHttpGatewayTests
 
     // ---------------------------------------------------------------- create order
 
+    /// <summary>
+    /// Owner decision 2026-10-21: the ship-to address goes to PayPal in its own fields, fixed with
+    /// <c>SET_PROVIDED_ADDRESS</c>, with the ISO country code — and an optional part the order lacks is left out
+    /// rather than sent empty.
+    /// </summary>
+    [Fact]
+    public async Task Create_order_sends_an_overseas_shipping_address_in_PayPals_fields()
+    {
+        var h = new Harness();
+        h.Handler.Enqueue(HttpStatusCode.OK, TokenJson());
+        h.Handler.Enqueue(HttpStatusCode.Created, """{ "id": "5O19", "status": "CREATED" }""");
+
+        await h.Gateway.CreateOrderAsync(
+            new PayPalCreateOrderRequest(
+                "create-9",
+                61.20m,
+                "USD",
+                "pay-9",
+                "Order CW-2026-000900",
+                "https://x.test/r",
+                "https://x.test/c",
+                new PayPalShipping("Amelia Hart", "1600 Amphitheatre Parkway", null, "Mountain View", "CA", "94043", "US")),
+            TestContext.Current.CancellationToken);
+
+        using var body = JsonDocument.Parse(h.Handler.Requests[^1].Body!);
+        var root = body.RootElement;
+        var unit = root.GetProperty("purchase_units")[0];
+        var shipping = unit.GetProperty("shipping");
+
+        Assert.Equal("61.20", unit.GetProperty("amount").GetProperty("value").GetString());
+        Assert.Equal("Amelia Hart", shipping.GetProperty("name").GetProperty("full_name").GetString());
+
+        var address = shipping.GetProperty("address");
+        Assert.Equal("1600 Amphitheatre Parkway", address.GetProperty("address_line_1").GetString());
+        Assert.False(address.TryGetProperty("address_line_2", out _));
+        Assert.Equal("Mountain View", address.GetProperty("admin_area_2").GetString());
+        Assert.Equal("CA", address.GetProperty("admin_area_1").GetString());
+        Assert.Equal("94043", address.GetProperty("postal_code").GetString());
+        Assert.Equal("US", address.GetProperty("country_code").GetString());
+
+        Assert.Equal(
+            "SET_PROVIDED_ADDRESS",
+            root.GetProperty("payment_source").GetProperty("paypal").GetProperty("experience_context")
+                .GetProperty("shipping_preference").GetString());
+    }
+
+    /// <summary>A Sri Lankan address has no state: <c>admin_area_1</c> is absent, the country is LK.</summary>
+    [Fact]
+    public async Task Create_order_sends_a_Sri_Lankan_address_with_LK_and_no_state()
+    {
+        var h = new Harness();
+        h.Handler.Enqueue(HttpStatusCode.OK, TokenJson());
+        h.Handler.Enqueue(HttpStatusCode.Created, """{ "id": "5O19", "status": "CREATED" }""");
+
+        await h.Gateway.CreateOrderAsync(
+            new PayPalCreateOrderRequest(
+                "create-10",
+                20m,
+                "USD",
+                "pay-10",
+                "d",
+                "https://x.test/r",
+                "https://x.test/c",
+                new PayPalShipping("Nimali Perera", "14 Galle Road", "Flat 3", "Kollupitiya", null, null, "LK")),
+            TestContext.Current.CancellationToken);
+
+        using var body = JsonDocument.Parse(h.Handler.Requests[^1].Body!);
+        var address = body.RootElement.GetProperty("purchase_units")[0].GetProperty("shipping").GetProperty("address");
+
+        Assert.Equal("LK", address.GetProperty("country_code").GetString());
+        Assert.Equal("Flat 3", address.GetProperty("address_line_2").GetString());
+        Assert.False(address.TryGetProperty("admin_area_1", out _));
+        Assert.False(address.TryGetProperty("postal_code", out _));
+    }
+
     [Fact]
     public async Task Create_order_sends_the_amount_the_request_id_and_the_way_back()
     {

@@ -85,6 +85,13 @@ export interface AdminOrderListRow {
    * show a list whose deadlines are all wrong with nothing on the page saying so.
    */
   readonly secondsUntilExpiry: number | null;
+
+  /** The destination country, ISO 3166-1 alpha-2 (owner decision 2026-10-21). */
+  readonly countryCode: string;
+  readonly countryName: string;
+
+  /** The Sri Lankan district, or null for an overseas order. */
+  readonly districtName: string | null;
 }
 
 export interface AdminOrderListPage {
@@ -133,7 +140,9 @@ export interface AdminOrderDelivery {
   readonly methodName: string;
   readonly isPickup: boolean;
   readonly pickupLocationName: string | null;
-  readonly districtName: string;
+  /** The district snapshot; null for an overseas order. */
+  readonly districtName: string | null;
+  /** The zone's name, or `Overseas` for an order with no zone. */
   readonly zone: string;
   readonly estimatedDaysMin: number;
   readonly estimatedDaysMax: number;
@@ -144,6 +153,11 @@ export interface AdminOrderDelivery {
   readonly city: string | null;
   readonly postalCode: string | null;
   readonly landmark: string | null;
+  /** An overseas address's state or region (owner decision 2026-10-21). */
+  readonly region: string | null;
+  /** ISO 3166-1 alpha-2 of the destination, `LK` for Sri Lanka. */
+  readonly countryCode: string;
+  readonly countryName: string;
 }
 
 /**

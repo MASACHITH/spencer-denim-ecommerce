@@ -107,7 +107,14 @@ internal static class CustomerAccountValidator
     }
 
     /// <summary>Doc 11 P11 step 11's address form (ACC-02, CHK-01).</summary>
-    public static IReadOnlyList<ValidationError> ValidateAddress(CustomerAddressEdit edit)
+    /// <param name="edit">The address as typed.</param>
+    /// <param name="country">
+    /// The country it is in (owner decision 2026-10-21), or <see langword="null"/> when the request named one
+    /// that is malformed or does not exist. Omitted, the address is Sri Lankan, as every address was before.
+    /// </param>
+    public static IReadOnlyList<ValidationError> ValidateAddress(
+        CustomerAddressEdit edit,
+        Sales.Checkout.Abstractions.CheckoutCountry? country = null)
     {
         ArgumentNullException.ThrowIfNull(edit);
 
@@ -133,10 +140,29 @@ internal static class CustomerAccountValidator
 
         Optional(errors, "line2", edit.Line2, CustomerAddress.LineMaxLength);
         Required(errors, "city", edit.City, CustomerAddress.CityMaxLength, "Enter the town or city.");
-        Optional(errors, "postalCode", edit.PostalCode, CustomerAddress.PostalCodeMaxLength);
         Optional(errors, "landmark", edit.Landmark, CustomerAddress.LandmarkMaxLength);
 
-        if (edit.DistrictId <= 0)
+        if (country is { IsDomestic: false })
+        {
+            Sales.Checkout.DestinationRules.ValidateOverseasAddress(
+                errors,
+                string.Empty,
+                country,
+                edit.Region,
+                edit.PostalCode,
+                edit.Phone);
+
+            return errors;
+        }
+
+        if (country is null && !string.Equals(edit.CountryCode, Domain.Reference.Country.SriLankaCode, StringComparison.Ordinal))
+        {
+            errors.Add(Sales.Checkout.DestinationRules.UnknownCountry("countryCode"));
+        }
+
+        Optional(errors, "postalCode", edit.PostalCode, CustomerAddress.PostalCodeMaxLength);
+
+        if (edit.DistrictId is null or <= 0)
         {
             errors.Add(new ValidationError("districtId", "Choose a district."));
         }

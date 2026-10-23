@@ -30,6 +30,12 @@ public sealed class AddressSnapshot
 
     public string? City { get; set; }
 
+    /// <summary>
+    /// State, province or region, for an overseas address (owner decision 2026-10-21). Null for a Sri Lankan
+    /// address, which names its district on the order instead.
+    /// </summary>
+    public string? Region { get; set; }
+
     public string? PostalCode { get; set; }
 
     /// <summary>A nearby landmark. Sri Lankan addresses often need one to be findable.</summary>

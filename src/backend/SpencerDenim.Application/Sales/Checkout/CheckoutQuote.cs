@@ -209,6 +209,15 @@ internal static class CheckoutQuote
     /// delivery that the order then charges for.
     /// </param>
     /// <param name="freeDeliveryPromo">True when the applied code is a free-delivery one.</param>
+    /// <summary>
+    /// The promo as it applies to this destination: a free-delivery code waives Sri Lankan delivery only, so for
+    /// an overseas order the waiver is removed and any money discount kept (2026-10-21; the safe choice,
+    /// recorded for the owner — an overseas fee is many times a domestic one, and nothing in ADM-13 promised a
+    /// free international parcel).
+    /// </summary>
+    public static PromoCharge? ForDestination(PromoCharge? promo, bool isDomestic) =>
+        promo is { FreeDelivery: true } && !isDomestic ? promo with { FreeDelivery = false } : promo;
+
     public static decimal FeeAfterDiscount(
         CheckoutZoneRate rate,
         decimal itemsSubtotalAfterPromo,

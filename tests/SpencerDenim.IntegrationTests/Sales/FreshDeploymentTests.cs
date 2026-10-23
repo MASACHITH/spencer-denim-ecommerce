@@ -83,7 +83,10 @@ public sealed class FreshDeploymentTests(SqlServerDatabaseFixture sqlServer)
             Assert.True(await after.DeliveryMethods.AnyAsync(method => method.IsEnabled, cancellationToken));
             Assert.True(
                 await after.DeliveryMethodZoneRates.AnyAsync(rate => rate.IsAvailable, cancellationToken));
-            Assert.True(
+            // Owner decision 2026-10-21: both providers are seeded switched OFF — bank transfer "blocked for
+            // now", PayPal until it is configured. Present, but not taking money.
+            Assert.Equal(2, await after.PaymentProviders.CountAsync(cancellationToken));
+            Assert.False(
                 await after.PaymentProviders.AnyAsync(provider => provider.IsEnabled, cancellationToken));
 
             // The navigation and the settings screen are in the same phase and were empty for the same
@@ -110,8 +113,10 @@ public sealed class FreshDeploymentTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(Districts, session!.Districts.Count);
         Assert.Contains(session.DeliveryOptions, option => option.IsAvailable);
-        Assert.NotEmpty(session.PaymentMethods);
-        Assert.DoesNotContain(
+        // Owner decision 2026-10-21: no payment method is on until a Super Admin configures PayPal (or switches
+        // bank transfer back on), and checkout says so rather than taking an order nobody can pay.
+        Assert.Empty(session.PaymentMethods);
+        Assert.Contains(
             Application.Sales.Checkout.Contracts.CheckoutBlocker.NoPaymentMethod,
             session.Blockers);
         Assert.DoesNotContain(
@@ -315,7 +320,8 @@ public sealed class FreshDeploymentTests(SqlServerDatabaseFixture sqlServer)
             Assert.Equal(Districts, await db.Districts.CountAsync(cancellationToken));
             Assert.True(await db.DeliveryMethods.AnyAsync(method => method.IsEnabled, cancellationToken));
             Assert.True(await db.DeliveryMethodZoneRates.AnyAsync(rate => rate.IsAvailable, cancellationToken));
-            Assert.True(await db.PaymentProviders.AnyAsync(provider => provider.IsEnabled, cancellationToken));
+            // Both seeded switched off (owner decision 2026-10-21), and exactly once each.
+            Assert.Equal(2, await db.PaymentProviders.CountAsync(cancellationToken));
 
             // Nothing was inserted twice: the losers inserted what was missing, not a second copy.
             Assert.Equal(3, await db.Departments.CountAsync(cancellationToken));

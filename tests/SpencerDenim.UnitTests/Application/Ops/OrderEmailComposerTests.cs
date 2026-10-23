@@ -250,6 +250,37 @@ public sealed class OrderEmailComposerTests
     }
 
     /// <summary>
+    /// Owner decision 2026-10-21: an overseas address prints its lines (state and postcode among them) and a
+    /// Country row, and no District row — it has no district, and "District: " followed by nothing would read as
+    /// a broken email.
+    /// </summary>
+    [Fact]
+    public void An_overseas_placement_email_names_the_country_and_no_district()
+    {
+        var email = Composer().OrderPlaced(Placed(new OrderEmailDelivery(
+            "International delivery",
+            IsPickup: false,
+            PickupLocationName: null,
+            ["Amelia Hart", "1600 Amphitheatre Parkway", "Mountain View", "CA", "94043"],
+            DistrictName: null,
+            CountryName: "United States",
+            IsOverseas: true)));
+
+        Assert.Contains("Country: United States", email.Text, StringComparison.Ordinal);
+        Assert.Contains("1600 Amphitheatre Parkway", email.Text, StringComparison.Ordinal);
+        Assert.Contains("94043", email.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("District:", email.Text, StringComparison.Ordinal);
+        Assert.Contains("United States", email.Html, StringComparison.Ordinal);
+    }
+
+    /// <summary>A Sri Lankan placement email has no Country row: nothing a domestic customer reads has changed.</summary>
+    [Fact]
+    public void A_Sri_Lankan_placement_email_has_no_country_row()
+    {
+        Assert.DoesNotContain("Country:", Composer().OrderPlaced(Placed()).Text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// <b>The placement email must not announce a second one</b>, because the second one is not always
     /// queued: with the shop's bank details unset there are no instructions to send, and a message
     /// promising an email that never arrives is the defect this project has already paid for twice.

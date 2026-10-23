@@ -22,6 +22,7 @@ function row(overrides: Partial<AdminCustomerListRow> = {}): AdminCustomerListRo
     lifetimeSpend: 15_596.6,
     currency: 'LKR',
     lastOrderAtUtc: '2026-10-05T04:30:00Z',
+    countryName: 'Sri Lanka',
     ...overrides,
   };
 }
@@ -211,5 +212,17 @@ describe('CustomersListPage (ADM-15)', () => {
     const headings = Array.from(element.querySelectorAll('h1, h2, h3')).map((heading) => heading.tagName);
     expect(headings[0]).toBe('H1');
     expect(headings.filter((tag) => tag === 'H1')).toHaveLength(1);
+  });
+
+  it('shows the country of the default address, and says so when there is none', async () => {
+    await open(
+      page({
+        rows: [row(), row({ customerId: 42, countryName: 'Australia' }), row({ customerId: 43, countryName: null })],
+        totalCount: 3,
+      }),
+    );
+
+    expect(element.querySelector('[data-testid="country-42"]')?.textContent).toContain('Australia');
+    expect(element.querySelector('[data-testid="country-43"]')?.textContent).toContain('No saved address');
   });
 });

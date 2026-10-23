@@ -14,7 +14,7 @@ import {
   formatPeriod,
   presetPeriod,
 } from '../../core/reporting/reporting-format';
-import { AdminDashboard, ComparedFigure, REPORTING_PERMISSIONS } from '../../core/reporting/reporting.model';
+import { AdminDashboard, ComparedFigure, DistrictBuyersRow, REPORTING_PERMISSIONS } from '../../core/reporting/reporting.model';
 import { ChartTable, ChartView } from '../../core/charts/chart';
 import { BarSpec, DoughnutSpec, compactRupees, shareText, sharesOf } from '../../core/charts/chart-config';
 import { STATUS_TOKENS } from '../../core/charts/chart-palette';
@@ -37,6 +37,8 @@ interface Access {
   readonly traffic: boolean;
   readonly inventory: boolean;
   readonly reviews: boolean;
+  /** `Settings.View`: the Overseas delivery screen (owner decision 2026-10-21). */
+  readonly overseasDelivery: boolean;
 }
 
 /**
@@ -273,9 +275,9 @@ interface Access {
               @if (answered.buyersByDistrict.districts.length > 0) {
                 <h3 class="dash__minor">Buyers by delivery district</h3>
                 <ul class="dash__districts" data-testid="dashboard-district-bars">
-                  @for (row of answered.buyersByDistrict.districts; track row.districtId) {
+                  @for (row of answered.buyersByDistrict.districts; track districtKey(row)) {
                     <li>
-                      <span class="dash__district">{{ row.name }}</span>
+                      <span class="dash__district">{{ row.name }}@if (isOverseas(row)) { <span class="adm-pill" data-testid="dashboard-overseas">Overseas</span>}</span>
                       <span class="dash__track" aria-hidden="true"><span [style.width.%]="districtWidth(row.buyers)"></span></span>
                       <span class="dash__count">{{ number(row.buyers) }}</span>
                     </li>
@@ -290,8 +292,8 @@ interface Access {
                         <tr><th scope="col">District</th><th scope="col" class="adm-num">Buyers</th><th scope="col" class="adm-num">Paid orders</th><th scope="col" class="adm-num">Revenue</th></tr>
                       </thead>
                       <tbody>
-                        @for (row of answered.buyersByDistrict.districts; track row.districtId) {
-                          <tr><th scope="row">{{ row.name }}</th><td class="adm-num">{{ number(row.buyers) }}</td><td class="adm-num">{{ number(row.paidOrders) }}</td><td class="adm-num">{{ rupees(row.revenue) }}</td></tr>
+                        @for (row of answered.buyersByDistrict.districts; track districtKey(row)) {
+                          <tr><th scope="row">{{ row.name }}@if (isOverseas(row)) { (overseas)}</th><td class="adm-num">{{ number(row.buyers) }}</td><td class="adm-num">{{ number(row.paidOrders) }}</td><td class="adm-num">{{ rupees(row.revenue) }}</td></tr>
                         }
                       </tbody>
                     </table>
@@ -333,6 +335,9 @@ interface Access {
             <a class="adm-link" routerLink="/traffic" data-testid="dashboard-traffic-link">Website traffic</a>
           }
           <a class="adm-link" routerLink="/settings">Settings</a>
+          @if (access()?.overseasDelivery) {
+            <a class="adm-link" routerLink="/settings/overseas-delivery" data-testid="dashboard-overseas-link">Overseas delivery</a>
+          }
           <a class="adm-link" routerLink="/audit-log">Audit log</a>
           <a class="adm-link" routerLink="/users">Staff users</a>
           <a class="adm-link" routerLink="/roles">Roles</a>
@@ -521,6 +526,7 @@ export class DashboardPage {
           traffic: holds(TRAFFIC_PERMISSION),
           inventory: holds(INVENTORY_PERMISSIONS.view),
           reviews: holds(REVIEW_PERMISSIONS.view),
+          overseasDelivery: holds('Settings.View'),
         };
 
         this.access.set(access);
@@ -531,7 +537,7 @@ export class DashboardPage {
       },
       // The session could not be read: show the widgets and let the API decide, as the other screens do.
       error: () => {
-        this.access.set({ dashboard: true, orders: true, reports: true, traffic: true, inventory: true, reviews: true });
+        this.access.set({ dashboard: true, orders: true, reports: true, traffic: true, inventory: true, reviews: true, overseasDelivery: true });
         this.load();
       },
     });
@@ -639,6 +645,19 @@ export class DashboardPage {
         this.announce(failure.message);
       },
     });
+  }
+
+  /**
+   * A row's identity: the district, or the country for an overseas row, which has no district (owner decision
+   * 2026-10-21). Two overseas countries would otherwise share the key `null`.
+   */
+  protected districtKey(row: DistrictBuyersRow): string {
+    return row.districtId === null ? `country:${row.countryCode}` : `district:${row.districtId}`;
+  }
+
+  /** Whether the row is an overseas country rather than a Sri Lankan district. */
+  protected isOverseas(row: DistrictBuyersRow): boolean {
+    return row.districtId === null;
   }
 
   protected districtWidth(buyers: number): number {

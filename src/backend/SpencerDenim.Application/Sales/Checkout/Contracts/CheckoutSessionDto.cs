@@ -30,6 +30,13 @@ public enum CheckoutBlocker : byte
     /// way to be paid for, and saying so is better than a Place order button that always fails.
     /// </summary>
     NoPaymentMethod = 4,
+
+    /// <summary>
+    /// The chosen country is not delivered to right now: switched off, its region switched off, International
+    /// delivery switched off, or no fee set (owner decision 2026-10-21). Reported instead of
+    /// <see cref="NoDeliveryMethod"/> for an overseas country, so the page can name the country.
+    /// </summary>
+    CountryNotServed = 5,
 }
 
 /// <summary>
@@ -189,6 +196,15 @@ public sealed record CheckoutTotalsDto(
 /// Empty when the order can be placed. Sent as a list rather than a boolean so the page can say which
 /// thing is wrong, and so a test can assert on the reason rather than on a disabled button.
 /// </param>
+/// <param name="SelectedCountryCode">
+/// The country the quote is for (owner decision 2026-10-21): Sri Lanka unless the request named another, and
+/// null when it named one that does not exist. Sri Lanka keeps the district selector; any other country gets
+/// the single International delivery option.
+/// </param>
+/// <param name="PromoFreeDeliveryIgnored">
+/// True when the applied code waives delivery and the destination is overseas, where it does not apply, so
+/// the page can say why the delivery fee is still charged.
+/// </param>
 /// <param name="AppliedPromoCode">
 /// The code the quote was priced with, upper-cased, or <see langword="null"/> when none was asked for or
 /// the one asked for was refused. Echoed for the same reason
@@ -220,4 +236,6 @@ public sealed record CheckoutSessionDto(
     string? AppliedPromoCode,
     PromoRefusal? PromoRefusal,
     decimal? PromoMinimumSpend,
-    IReadOnlyList<CheckoutBlocker> Blockers);
+    IReadOnlyList<CheckoutBlocker> Blockers,
+    string? SelectedCountryCode = Domain.Reference.Country.SriLankaCode,
+    bool PromoFreeDeliveryIgnored = false);

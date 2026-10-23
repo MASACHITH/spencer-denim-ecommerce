@@ -42,7 +42,8 @@ public sealed record GetCheckoutQuery(
     CartLookup Lookup,
     int? DistrictId,
     int? DeliveryMethodId,
-    string? PromoCode = null);
+    string? PromoCode = null,
+    string? CountryCode = null);
 
 /// <summary>
 /// What the GET answered: the session, plus whatever the guest cookie must now say.
@@ -85,16 +86,24 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
             ? await reader.ReadCartAsync(found.Id, cancellationToken)
             : [];
 
-        var district = query.DistrictId is { } districtId
+        // Owner decision 2026-10-21: the country first. None named means Sri Lanka, which is what every page
+        // asked for before overseas delivery existed, so the domestic quote below is unchanged for it.
+        var countryCode = DestinationRules.NormaliseCountryCode(query.CountryCode);
+        var country = countryCode is null ? null : await reader.FindCountryAsync(countryCode, cancellationToken);
+        var overseas = country is { IsDomestic: false };
+
+        var district = !overseas && query.DistrictId is { } districtId
             ? await reader.FindActiveDistrictAsync(districtId, cancellationToken)
             : null;
 
         // Store pickup's zone is the *location's* district zone, not the address district's (doc 08 §3.5
         // R7). Until a method is chosen there is nothing to resolve, and with no pickup location seeded
         // (§9 gives zero, client input D8) the pickup branch has nothing to resolve to either.
-        var methods = district is { } chosen
-            ? await reader.DeliveryMethodsForZoneAsync(chosen.DeliveryZone, cancellationToken)
-            : [];
+        var methods = overseas
+            ? await OverseasMethodsAsync(country!, cancellationToken)
+            : district is { } chosen
+                ? await reader.DeliveryMethodsForZoneAsync(chosen.DeliveryZone, cancellationToken)
+                : [];
 
         var selectedMethod = methods.FirstOrDefault(method => method.Id == query.DeliveryMethodId);
 
@@ -107,7 +116,9 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
         // is what clears the box rather than leaving a discount on screen that is not in the total.
         var promo = await ResolvePromoAsync(query.PromoCode, lines, cancellationToken);
 
-        var totals = CheckoutQuote.Totals(lines, selectedMethod?.Rate, promo.Charge);
+        // A free-delivery code does not cover an overseas parcel (CheckoutQuote.ForDestination).
+        var charge = CheckoutQuote.ForDestination(promo.Charge, !overseas);
+        var totals = CheckoutQuote.Totals(lines, selectedMethod?.Rate, charge);
 
         // Step 10's comparison is against the items subtotal **less the promo**, so the fee printed beside
         // an option the shopper has not chosen is the fee they would be charged if they did.
@@ -122,7 +133,7 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
             lines.Select(ToLine).ToList().AsReadOnly(),
             totals ?? EmptyTotals,
             districts.Select(ToDistrict).ToList().AsReadOnly(),
-            DeliveryOptions(methods, subtotalAfterPromo, promo.Charge?.FreeDelivery ?? false),
+            DeliveryOptions(methods, subtotalAfterPromo, charge?.FreeDelivery ?? false),
             pickupLocations.Select(ToPickupLocation).ToList().AsReadOnly(),
             paymentMethods.Select(ToPaymentMethod).ToList().AsReadOnly(),
             district?.Id,
@@ -130,7 +141,9 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
             promo.AppliedCode,
             promo.Refusal,
             promo.MinimumSpend,
-            Blockers(lines, district, methods, paymentMethods));
+            Blockers(lines, district, methods, paymentMethods, country),
+            country?.Code,
+            overseas && promo.Charge is { FreeDelivery: true });
 
         if (cart is not { } identity)
         {
@@ -154,6 +167,20 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
     /// Doc 08 §6 steps 7 and 8 for the page (ADM-13), through the one resolver the placement path also
     /// uses.
     /// </summary>
+    /// <summary>
+    /// The one option an overseas country gets: International delivery at the country's fee, or the same option
+    /// marked unavailable when the country is not served — and nothing at all when International delivery is
+    /// switched off.
+    /// </summary>
+    private async Task<IReadOnlyList<CheckoutDeliveryMethod>> OverseasMethodsAsync(
+        CheckoutCountry country,
+        CancellationToken cancellationToken)
+    {
+        var international = await reader.InternationalMethodAsync(cancellationToken);
+
+        return international is null ? [] : [international with { Rate = country.OverseasRate }];
+    }
+
     private Task<ResolvedPromo> ResolvePromoAsync(
         string? promoCode,
         IReadOnlyList<CheckoutCartLine> lines,
@@ -167,7 +194,8 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
         IReadOnlyList<CheckoutCartLine> lines,
         CheckoutDistrict? district,
         IReadOnlyList<CheckoutDeliveryMethod> methods,
-        IReadOnlyList<CheckoutPaymentMethod> paymentMethods)
+        IReadOnlyList<CheckoutPaymentMethod> paymentMethods,
+        CheckoutCountry? country = null)
     {
         var blockers = new List<CheckoutBlocker>();
 
@@ -182,7 +210,15 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
 
         // Only once a district has been chosen: "you have not told us where it is going" is the form's
         // job to say, and reporting it as "we do not deliver there" would be wrong and alarming.
-        if (district is not null && !methods.Any(method => method.IsAvailable))
+        if (country is { IsDomestic: false })
+        {
+            // Overseas: the country is the answer to "where", so it is judged at once, and by name.
+            if (!country.IsServed || !methods.Any(method => method.IsAvailable))
+            {
+                blockers.Add(CheckoutBlocker.CountryNotServed);
+            }
+        }
+        else if (district is not null && !methods.Any(method => method.IsAvailable))
         {
             blockers.Add(CheckoutBlocker.NoDeliveryMethod);
         }

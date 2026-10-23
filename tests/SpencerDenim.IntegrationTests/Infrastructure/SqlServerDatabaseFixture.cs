@@ -129,6 +129,15 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
 
         var runner = scope.ServiceProvider.GetRequiredService<CatalogSeedRunner>();
         SeedCounts = await runner.RunAsync(includeDemoCatalogue: true, cancellationToken);
+
+        // Owner decision 2026-10-21: bank transfer is seeded switched OFF ("block only for now"). The shared
+        // database models a shop that has switched it back on, which is the state every bank-transfer suite
+        // written before that decision exercises — so they keep proving "switched on: works as before". The
+        // switched-off default is proven where it is decided: PaymentSwitchSeedTests (the seed rule, on its own
+        // fresh databases) and PaymentProviderSwitchEndpointTests (checkout with it off), which restore this.
+        await dbContext.PaymentProviders
+            .Where(provider => provider.Code == Domain.Sales.PaymentProviderCodes.BankTransfer)
+            .ExecuteUpdateAsync(update => update.SetProperty(provider => provider.IsEnabled, true), cancellationToken);
     }
 
     public async ValueTask DisposeAsync()

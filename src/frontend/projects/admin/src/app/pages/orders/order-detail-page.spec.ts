@@ -75,6 +75,9 @@ function detail(overrides: Partial<AdminOrderDetail> = {}): AdminOrderDetail {
       city: 'Kollupitiya',
       postalCode: '00300',
       landmark: 'Opposite the temple',
+      region: null,
+      countryCode: 'LK',
+      countryName: 'Sri Lanka',
     },
     money: {
       currency: 'LKR',
@@ -1065,5 +1068,40 @@ describe('OrderDetailPage (ADM-09)', () => {
       'asked for their details to be removed',
     );
     expect(element.textContent).toContain('not recorded');
+  });
+
+  it('renders an overseas address with region, postcode and country, and no district', async () => {
+    const base = detail();
+    await open(
+      detail({
+        delivery: {
+          ...base.delivery,
+          methodCode: 'INTERNATIONAL',
+          methodName: 'International delivery',
+          districtName: null,
+          zone: 'Overseas',
+          city: 'Austin',
+          region: 'TX',
+          postalCode: '78701',
+          landmark: null,
+          countryCode: 'US',
+          countryName: 'United States',
+        },
+      }),
+    );
+
+    const facts = element.querySelector('[data-testid="order-delivery"]')?.textContent ?? '';
+    expect(facts).toContain('Austin, TX, 78701');
+    expect(element.querySelector('[data-testid="order-country"]')?.textContent).toContain('United States');
+    expect(element.querySelector('[data-testid="order-overseas"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="order-district"]')).toBeNull();
+  });
+
+  it('keeps the district for a Sri Lankan order and does not mark it overseas', async () => {
+    await open();
+
+    expect(element.querySelector('[data-testid="order-district"]')?.textContent).toContain('Colombo');
+    expect(element.querySelector('[data-testid="order-country"]')?.textContent).toContain('Sri Lanka');
+    expect(element.querySelector('[data-testid="order-overseas"]')).toBeNull();
   });
 });

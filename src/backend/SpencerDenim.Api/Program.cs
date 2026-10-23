@@ -112,6 +112,7 @@ app.MapSiteSettingsEndpoints();
 app.MapAdminSettingsEndpoints();
 app.MapAdminPayPalSettingsEndpoints();
 app.MapAdminSmtpSettingsEndpoints();
+app.MapAdminDeliveryEndpoints();
 app.MapAdminBankTransferEndpoints();
 app.MapAdminOrderEndpoints();
 app.MapAdminCustomerEndpoints();
@@ -128,6 +129,7 @@ app.MapAdminSaleCampaignEndpoints();
 app.MapCartEndpoints();
 app.MapWishlistEndpoints();
 app.MapCheckoutEndpoints();
+app.MapDeliveryEndpoints();
 app.MapPayPalEndpoints();
 
 // Traffic recording (W4-03, ADM-06, ADM-20; doc 08 §3.8).

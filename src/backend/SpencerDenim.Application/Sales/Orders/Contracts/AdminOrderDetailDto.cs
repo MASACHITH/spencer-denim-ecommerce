@@ -118,12 +118,15 @@ public sealed record AdminOrderCustomerDto(
 /// <param name="City">Town or city.</param>
 /// <param name="PostalCode">Postcode.</param>
 /// <param name="Landmark">A nearby landmark. Sri Lankan addresses often need one to be findable.</param>
+/// <param name="Region">An overseas address's state or region (owner decision 2026-10-21).</param>
+/// <param name="CountryCode">ISO 3166-1 alpha-2 of the destination.</param>
+/// <param name="CountryName">The destination country as snapshotted on the order.</param>
 public sealed record AdminOrderDeliveryDto(
     string MethodCode,
     string MethodName,
     bool IsPickup,
     string? PickupLocationName,
-    string DistrictName,
+    string? DistrictName,
     string Zone,
     byte EstimatedDaysMin,
     byte EstimatedDaysMax,
@@ -133,7 +136,10 @@ public sealed record AdminOrderDeliveryDto(
     string? Line2,
     string? City,
     string? PostalCode,
-    string? Landmark);
+    string? Landmark,
+    string? Region = null,
+    string CountryCode = Domain.Reference.Country.SriLankaCode,
+    string CountryName = "Sri Lanka");
 
 /// <summary>
 /// The money, exactly as <c>sales.Orders</c> holds it (doc 08 §3.5, §6).

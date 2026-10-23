@@ -20,12 +20,15 @@ public sealed record CustomerAddressDto(
     string Line1,
     string? Line2,
     string City,
-    int DistrictId,
-    string DistrictName,
+    int? DistrictId,
+    string? DistrictName,
     bool DistrictIsActive,
     string? PostalCode,
     string? Landmark,
-    bool IsDefault);
+    bool IsDefault,
+    string CountryCode = Domain.Reference.Country.SriLankaCode,
+    string CountryName = "Sri Lanka",
+    string? Region = null);
 
 /// <summary>What a customer may type into the address form (doc 11 P11 step 11).</summary>
 public sealed record CustomerAddressEdit(
@@ -35,10 +38,12 @@ public sealed record CustomerAddressEdit(
     string Line1,
     string? Line2,
     string City,
-    int DistrictId,
+    int? DistrictId,
     string? PostalCode,
     string? Landmark,
-    bool IsDefault);
+    bool IsDefault,
+    string CountryCode = Domain.Reference.Country.SriLankaCode,
+    string? Region = null);
 
 /// <summary>The outcome of adding, editing or deleting an address.</summary>
 public abstract record CustomerAddressResult

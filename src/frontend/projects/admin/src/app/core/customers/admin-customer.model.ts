@@ -36,6 +36,11 @@ export interface AdminCustomerListRow {
   readonly lifetimeSpend: number;
   readonly currency: string;
   readonly lastOrderAtUtc: string | null;
+  /**
+   * The country of the customer's default saved address, or null when they have none (owner decision
+   * 2026-10-21).
+   */
+  readonly countryName: string | null;
 }
 
 /** One customer in full. There is no anonymise action: that is doc 11 P17, a separate task. */
@@ -66,10 +71,16 @@ export interface AdminCustomerAddress {
   readonly line1: string;
   readonly line2: string | null;
   readonly city: string;
-  readonly districtName: string;
+  /** The Sri Lankan district, or null for an overseas address. */
+  readonly districtName: string | null;
   readonly postalCode: string | null;
   readonly landmark: string | null;
   readonly isDefault: boolean;
+  /** ISO 3166-1 alpha-2, `LK` for Sri Lanka (owner decision 2026-10-21). */
+  readonly countryCode: string;
+  readonly countryName: string;
+  /** State, province or region of an overseas address; null for Sri Lanka. */
+  readonly region: string | null;
 }
 
 /** One page of a customer's orders, newest first. */

@@ -48,7 +48,15 @@ internal sealed class PayPalPaymentStore(AppDbContext dbContext, IAdminAlertWrit
                 candidate.PaymentDueAtUtc,
                 candidate.CaptureLockedUntilUtc,
                 candidate.GrandTotal,
-                candidate.PaymentProviderCode))
+                candidate.PaymentProviderCode,
+                candidate.Delivery.DeliveryMethodCode,
+                candidate.ShipAddress.RecipientName,
+                candidate.ShipAddress.Line1,
+                candidate.ShipAddress.Line2,
+                candidate.ShipAddress.City,
+                candidate.ShipAddress.Region,
+                candidate.ShipAddress.PostalCode,
+                candidate.DeliveryCountryCode))
             .FirstOrDefaultAsync(cancellationToken);
 
         return order is null ? null : await WithPaymentsAsync(order, cancellationToken);
@@ -68,7 +76,15 @@ internal sealed class PayPalPaymentStore(AppDbContext dbContext, IAdminAlertWrit
                 candidate.PaymentDueAtUtc,
                 candidate.CaptureLockedUntilUtc,
                 candidate.GrandTotal,
-                candidate.PaymentProviderCode))
+                candidate.PaymentProviderCode,
+                candidate.Delivery.DeliveryMethodCode,
+                candidate.ShipAddress.RecipientName,
+                candidate.ShipAddress.Line1,
+                candidate.ShipAddress.Line2,
+                candidate.ShipAddress.City,
+                candidate.ShipAddress.Region,
+                candidate.ShipAddress.PostalCode,
+                candidate.DeliveryCountryCode))
             .FirstOrDefaultAsync(cancellationToken);
 
         return order is null ? null : await WithPaymentsAsync(order, cancellationToken);
@@ -494,8 +510,28 @@ internal sealed class PayPalPaymentStore(AppDbContext dbContext, IAdminAlertWrit
                 or PaymentStatus.Pending
                 or PaymentStatus.Capturing),
             payments.FirstOrDefault(),
-            payments.Any(payment => payment.Status == PaymentStatus.CapturedRequiresRefund));
+            payments.Any(payment => payment.Status == PaymentStatus.CapturedRequiresRefund),
+            Shipping(order));
     }
+
+    /// <summary>
+    /// The order's own ship-to snapshot in PayPal's shape (owner decision 2026-10-21), or null for a store pickup
+    /// or an address an anonymisation has emptied — PayPal is then told there is nothing to ship.
+    /// </summary>
+    private static PayPalShipping? Shipping(OrderRow order) =>
+        order.DeliveryMethodCode == DeliveryMethod.PickupCode
+        || string.IsNullOrWhiteSpace(order.RecipientName)
+        || string.IsNullOrWhiteSpace(order.Line1)
+        || string.IsNullOrWhiteSpace(order.City)
+            ? null
+            : new PayPalShipping(
+                order.RecipientName.Trim(),
+                order.Line1.Trim(),
+                string.IsNullOrWhiteSpace(order.Line2) ? null : order.Line2.Trim(),
+                order.City.Trim(),
+                string.IsNullOrWhiteSpace(order.Region) ? null : order.Region.Trim(),
+                string.IsNullOrWhiteSpace(order.PostalCode) ? null : order.PostalCode.Trim(),
+                order.CountryCode.Trim().ToUpperInvariant());
 
     private async Task<OpenAttemptResult> OpenAttemptInTransactionAsync(
         int orderId,
@@ -713,5 +749,13 @@ internal sealed class PayPalPaymentStore(AppDbContext dbContext, IAdminAlertWrit
         DateTime PaymentDueAtUtc,
         DateTime? CaptureLockedUntilUtc,
         decimal GrandTotal,
-        string PaymentProviderCode);
+        string PaymentProviderCode,
+        string DeliveryMethodCode,
+        string? RecipientName,
+        string? Line1,
+        string? Line2,
+        string? City,
+        string? Region,
+        string? PostalCode,
+        string CountryCode);
 }

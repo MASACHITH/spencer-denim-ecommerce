@@ -1,8 +1,10 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
 
 import { AdminSettingsApi } from '../../core/settings/admin-settings-api';
+import { PaymentProvidersApi } from '../../core/settings/payment-providers-api';
 import { AdminSettings, SETTING_KEYS } from '../../core/settings/admin-settings.model';
 import {
   SettingsPage,
@@ -321,13 +323,18 @@ describe('SettingsPage (ADM-22)', () => {
   beforeEach(() => {
     TestBed.configureTestingModule({
       imports: [SettingsPage],
-      providers: [provideHttpClient(), provideHttpClientTesting()],
+      providers: [provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
     });
 
     controller = TestBed.inject(HttpTestingController);
   });
 
-  afterEach(() => controller.verify());
+  afterEach(() => {
+    // The Payment methods panel (owner decision 2026-10-21) fetches for itself wherever the bank panel is
+    // drawn; its own spec covers it, so its read is set aside here rather than answered in every bank test.
+    controller.match(PaymentProvidersApi.url);
+    controller.verify();
+  });
 
   // ---- the read ---------------------------------------------------------------------------------
 
@@ -730,6 +737,17 @@ describe('SettingsPage (ADM-22)', () => {
       // which is the same question the server answers.
       expect(element.querySelector('[data-testid="field-accountNumber"]')).toBeNull();
       expect(element.querySelector('[data-testid="save-bank"]')).toBeNull();
+
+      // Nor the Payment methods switch, which needs the same permission (owner decision 2026-10-21).
+      expect(controller.match(PaymentProvidersApi.url)).toHaveLength(0);
+      expect(element.querySelector('sda-payment-methods-panel')).toBeNull();
+    });
+
+    it('draws the Payment methods switch beside the bank panel, which needs the same permission', async () => {
+      await open(payloadWithBank());
+
+      expect(element.querySelector('sda-payment-methods-panel')).not.toBeNull();
+      expect(controller.match(PaymentProvidersApi.url)).toHaveLength(1);
     });
 
     it('fills the boxes from the payload', async () => {

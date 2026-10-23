@@ -68,6 +68,75 @@ public sealed class SalesConstraintTests(SqlServerDatabaseFixture sqlServer) : S
     }
 
     /// <summary>
+    /// Owner decision 2026-10-21 (independent-tester pass, attack 1): the application never builds a row that
+    /// mixes a foreign country with a Sri Lankan district, because <c>PlaceOrderCommandHandler.ResolveDestinationAsync</c>
+    /// ignores any <c>districtId</c> a client sends once the country resolves overseas (see
+    /// <c>InternationalCheckoutTests.An_overseas_quote_ignores_a_district_sent_with_it</c> and the mass-assignment
+    /// placement test below). This is the belt behind that braces: even a write that bypasses the application
+    /// entirely — a bad migration, a hand run script, a future bug in that resolver — cannot land a row naming a
+    /// foreign country alongside a Sri Lankan district, because <c>CK_Orders_Destination</c> refuses it at the
+    /// database regardless of what wrote the row.
+    /// </summary>
+    [Fact]
+    public async Task An_order_naming_a_foreign_country_with_a_Sri_Lankan_district_is_refused_by_the_database()
+    {
+        var reference = await ReferenceAsync();
+
+        var row = ValidOrder(reference);
+        row["DeliveryCountryCode"] = "FR";
+        row["DeliveryCountryName"] = "France";
+
+        // DeliveryDistrictId/Name/DeliveryZone are left exactly as ValidOrder's Sri Lankan defaults — the
+        // shape a mass-assignment attempt (country overseas, district still populated) would produce.
+        await Writer.AssertRejectedAsync("sales.Orders", row, "CK_Orders_Destination", Token);
+    }
+
+    /// <summary>
+    /// The converse of the test above: Sri Lanka with no district at all. Doc 08's branch requires LK to
+    /// <i>always</i> carry its three district columns, so a row that drops them (whatever wrote it) must be
+    /// refused exactly as the foreign-country-with-a-district shape is.
+    /// </summary>
+    [Fact]
+    public async Task A_Sri_Lankan_order_with_no_district_at_all_is_refused_by_the_database()
+    {
+        var reference = await ReferenceAsync();
+
+        var row = ValidOrder(reference);
+        row["DeliveryDistrictId"] = null;
+        row["DeliveryDistrictName"] = null;
+        row["DeliveryZone"] = null;
+
+        await Writer.AssertRejectedAsync("sales.Orders", row, "CK_Orders_Destination", Token);
+    }
+
+    /// <summary>
+    /// The one overseas shape <c>CK_Orders_Destination</c> actually allows: a foreign country, no district at
+    /// all, and the International method code. Proved alongside the two refusals above so a reader cannot
+    /// mistake "the constraint rejects everything with DeliveryCountryCode set" for the real, narrower rule.
+    /// </summary>
+    [Fact]
+    public async Task An_overseas_order_with_no_district_and_the_international_method_is_accepted()
+    {
+        var reference = await ReferenceAsync();
+
+        var row = ValidOrder(reference);
+        row["DeliveryCountryCode"] = "FR";
+        row["DeliveryCountryName"] = "France";
+        row["DeliveryDistrictId"] = null;
+        row["DeliveryDistrictName"] = null;
+        row["DeliveryZone"] = null;
+        row["DeliveryMethodCode"] = DeliveryMethod.InternationalCode;
+        row["Ship_RecipientName"] = "Amelie Laurent";
+        row["Ship_Phone"] = "+33 1 23 45 67 89";
+        row["Ship_Line1"] = "10 Rue Example";
+        row["Ship_City"] = "Paris";
+
+        var orderId = await Writer.InsertAsync("sales.Orders", row, Token);
+
+        Assert.True(orderId > 0);
+    }
+
+    /// <summary>
     /// Doc 08 §3.5 (DB11): a non-pickup order must have a recipient, a phone, a line 1 and a city. The same
     /// row with the method code <c>PICKUP</c> and a pickup location lands, which is what shows the constraint
     /// is the branch and not a blanket NOT NULL.

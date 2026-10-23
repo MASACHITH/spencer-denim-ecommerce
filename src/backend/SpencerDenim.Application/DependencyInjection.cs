@@ -58,6 +58,8 @@ using SpencerDenim.Application.Sales.Wishlist;
 using SpencerDenim.Application.Sales.Wishlist.Contracts;
 using SpencerDenim.Application.Sales.Checkout;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
+using SpencerDenim.Application.Sales.Delivery;
+using SpencerDenim.Application.Sales.Delivery.Admin;
 using SpencerDenim.Application.Settings;
 using SpencerDenim.Application.Settings.Abstractions;
 using SpencerDenim.Application.Settings.Admin;
@@ -463,6 +465,11 @@ public static class DependencyInjection
         services.AddScoped<IQueryHandler<GetOrderQuery, OrderConfirmationDto?>, GetOrderQueryHandler>();
         services.AddScoped<ICommandHandler<PlaceOrderCommand, PlaceOrderResult>, PlaceOrderCommandHandler>();
 
+        // Owner decision 2026-10-21: the country list the storefront's selectors read.
+        services.AddScoped<
+            IQueryHandler<GetDeliveryCountriesQuery, IReadOnlyList<DeliveryCountryDto>>,
+            GetDeliveryCountriesQueryHandler>();
+
         // Payments (W3-03, PAY-01 / ADM-09). The staff queue of doc 11 P7 step 4 and the one handler
         // behind its three decisions.
         services.AddScoped<
@@ -612,6 +619,25 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<SendSmtpTestEmailCommand, SmtpTestResult>,
             SendSmtpTestEmailCommandHandler>();
+
+        // Owner decision 2026-10-21: the Payment methods switch (Settings.Payments) and the Overseas delivery
+        // screen (Settings.View / Settings.Edit).
+        services.AddScoped<PaymentProviderSwitchHandler>();
+        services.AddScoped<IQueryHandler<GetPaymentProvidersAdminQuery, PaymentProvidersAdminDto>>(
+            provider => provider.GetRequiredService<PaymentProviderSwitchHandler>());
+        services.AddScoped<ICommandHandler<SetPaymentProviderEnabledCommand, PaymentProviderWriteResult>>(
+            provider => provider.GetRequiredService<PaymentProviderSwitchHandler>());
+
+        services.AddScoped<
+            IQueryHandler<GetOverseasDeliveryAdminQuery, OverseasDeliveryAdminDto>,
+            GetOverseasDeliveryAdminQueryHandler>();
+        services.AddScoped<OverseasDeliveryCommandHandler>();
+        services.AddScoped<ICommandHandler<UpdateDeliveryRegionCommand, OverseasDeliveryWriteResult>>(
+            provider => provider.GetRequiredService<OverseasDeliveryCommandHandler>());
+        services.AddScoped<ICommandHandler<UpdateCountryDeliveryCommand, OverseasDeliveryWriteResult>>(
+            provider => provider.GetRequiredService<OverseasDeliveryCommandHandler>());
+        services.AddScoped<ICommandHandler<SetInternationalDeliveryCommand, OverseasDeliveryWriteResult>>(
+            provider => provider.GetRequiredService<OverseasDeliveryCommandHandler>());
 
         return services;
     }

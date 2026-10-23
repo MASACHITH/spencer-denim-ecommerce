@@ -32,6 +32,10 @@ import {
 import { AccountStore } from '../../core/account/account.store';
 import { CheckoutApi } from '../../core/checkout/checkout-api';
 import { DistrictDto } from '../../core/checkout/checkout.model';
+import {
+  DeliveryCountryService,
+  SRI_LANKA_CODE,
+} from '../../core/delivery/delivery-country.service';
 import { privatePage } from '../../core/platform/private-page';
 
 /** The form's own state, which is a draft and not an address until the server has taken it. */
@@ -46,6 +50,10 @@ interface AddressDraft {
   readonly postalCode: string;
   readonly landmark: string;
   readonly isDefault: boolean;
+  /** ISO 3166-1 alpha-2 (owner decision 2026-10-21). Sri Lanka keeps the district. */
+  readonly countryCode: string;
+  /** State, province or region: an overseas address only. */
+  readonly region: string;
 }
 
 /**
@@ -68,6 +76,8 @@ const EMPTY_DRAFT: AddressDraft = {
   postalCode: '',
   landmark: '',
   isDefault: false,
+  countryCode: 'LK',
+  region: '',
 };
 
 /**
@@ -177,16 +187,26 @@ const EMPTY_DRAFT: AddressDraft = {
                   @if (address.line2; as line2) {
                     <p>{{ line2 }}</p>
                   }
-                  <p>{{ address.city }}, {{ address.districtName }}</p>
+                  @if (address.districtName; as districtName) {
+                    <p>{{ address.city }}, {{ districtName }}</p>
+                  } @else {
+                    <p>{{ address.city }}</p>
+                  }
+                  @if (address.region; as region) {
+                    <p>{{ region }}</p>
+                  }
                   @if (address.postalCode; as postalCode) {
                     <p>{{ postalCode }}</p>
                   }
                   @if (address.landmark; as landmark) {
                     <p>{{ landmark }}</p>
                   }
+                  @if (isAbroad(address)) {
+                    <p data-testid="address-country">{{ address.countryName ?? address.countryCode }}</p>
+                  }
                 </div>
 
-                @if (!address.districtIsActive) {
+                @if (!address.districtIsActive && address.districtName) {
                   <p class="acc-error" data-testid="address-inactive-district">
                     We no longer deliver to {{ address.districtName }}. Edit this address and choose
                     another district before using it at checkout.
@@ -280,6 +300,31 @@ const EMPTY_DRAFT: AddressDraft = {
           }
 
           <form class="acc-form" novalidate (submit)="save($event)">
+            <!-- Owner decision 2026-10-21: the country first. Sri Lanka keeps the district; any other
+                 country asks for a state or region and a postcode where it always uses them. -->
+            <div class="acc-field">
+              <label class="acc-label" for="ad-countryCode">Country</label>
+              <select
+                class="acc-input"
+                id="ad-countryCode"
+                name="countryCode"
+                required
+                [attr.aria-invalid]="messageFor('countryCode') ? 'true' : null"
+                [attr.aria-describedby]="messageFor('countryCode') ? 'ad-countryCode-error' : null"
+                data-testid="address-field-country"
+                (change)="set('countryCode', $event)"
+              >
+                @for (country of countries(); track country.code) {
+                  <option [value]="country.code" [selected]="country.code === draft().countryCode">
+                    {{ country.name }}
+                  </option>
+                }
+              </select>
+              @if (messageFor('countryCode'); as message) {
+                <p class="acc-error" id="ad-countryCode-error">{{ message }}</p>
+              }
+            </div>
+
             <div class="acc-field">
               <label class="acc-label" for="ad-label">
                 Name for this address <span class="acc-optional">(optional)</span>
@@ -347,7 +392,13 @@ const EMPTY_DRAFT: AddressDraft = {
                   data-testid="address-field-phone"
                   (input)="set('phone', $event)"
                 />
-                <p class="acc-hint" id="ad-phone-hint">The courier calls this number.</p>
+                <p class="acc-hint" id="ad-phone-hint">
+                  @if (overseas()) {
+                    The courier calls this number. Include the country code, e.g. +44.
+                  } @else {
+                    The courier calls this number.
+                  }
+                </p>
                 @if (messageFor('phone'); as message) {
                   <p class="acc-error" id="ad-phone-error">{{ message }}</p>
                 }
@@ -419,6 +470,32 @@ const EMPTY_DRAFT: AddressDraft = {
                 }
               </div>
 
+              @if (overseas()) {
+                <div class="acc-field">
+                  <label class="acc-label" for="ad-region">
+                    State, province or region
+                    @if (!selectedCountry()?.regionRequired) {
+                      <span class="acc-optional">(optional)</span>
+                    }
+                  </label>
+                  <input
+                    class="acc-input"
+                    id="ad-region"
+                    name="region"
+                    type="text"
+                    autocomplete="address-level1"
+                    maxlength="80"
+                    [value]="draft().region"
+                    [attr.aria-invalid]="messageFor('region') ? 'true' : null"
+                    [attr.aria-describedby]="messageFor('region') ? 'ad-region-error' : null"
+                    data-testid="address-field-region"
+                    (input)="set('region', $event)"
+                  />
+                  @if (messageFor('region'); as message) {
+                    <p class="acc-error" id="ad-region-error">{{ message }}</p>
+                  }
+                </div>
+              } @else {
               <div class="acc-field">
                 <label class="acc-label" for="ad-districtId">District</label>
                 <select
@@ -451,19 +528,23 @@ const EMPTY_DRAFT: AddressDraft = {
                   <p class="acc-error" id="ad-districtId-error">{{ message }}</p>
                 }
               </div>
+              }
             </div>
 
             <div class="acc-row">
               <div class="acc-field">
                 <label class="acc-label" for="ad-postalCode">
-                  Postal code <span class="acc-optional">(optional)</span>
+                  Postal code
+                  @if (!overseas() || !selectedCountry()?.postalCodeRequired) {
+                    <span class="acc-optional">(optional)</span>
+                  }
                 </label>
                 <input
                   class="acc-input"
                   id="ad-postalCode"
                   name="postalCode"
                   type="text"
-                  inputmode="numeric"
+                  [attr.inputmode]="overseas() ? 'text' : 'numeric'"
                   autocomplete="postal-code"
                   [attr.maxlength]="LENGTHS.postalCode"
                   [value]="draft().postalCode"
@@ -477,6 +558,7 @@ const EMPTY_DRAFT: AddressDraft = {
                 }
               </div>
 
+              @if (!overseas()) {
               <div class="acc-field">
                 <label class="acc-label" for="ad-landmark">
                   Landmark <span class="acc-optional">(optional)</span>
@@ -500,6 +582,7 @@ const EMPTY_DRAFT: AddressDraft = {
                   <p class="acc-error" id="ad-landmark-error">{{ message }}</p>
                 }
               </div>
+              }
             </div>
 
             <!-- The whole row is the label, so the tap target is the row rather than the 16 px box —
@@ -565,6 +648,10 @@ export class AddressesPage {
 
   private readonly api = inject(AccountApi);
   private readonly checkout = inject(CheckoutApi);
+  private readonly destination = inject(DeliveryCountryService);
+
+  /** Every country, Sri Lanka first (owner decision 2026-10-21). */
+  protected readonly countries = this.destination.countries;
   private readonly injector = inject(Injector);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly notice = viewChild.required(AccountNotice);
@@ -600,6 +687,18 @@ export class AddressesPage {
   protected readonly draft = this.form.asReadonly();
   protected readonly editingId = this.editing.asReadonly();
   protected readonly confirmingId = this.confirming.asReadonly();
+
+  /** Whether the form is for an address outside Sri Lanka. */
+  protected readonly overseas = computed(() => this.form().countryCode !== SRI_LANKA_CODE);
+
+  /** The chosen country's facts, once the list has them. */
+  protected readonly selectedCountry = computed(
+    () => this.destination.find(this.form().countryCode) ?? null,
+  );
+
+  protected isAbroad(address: CustomerAddressDto): boolean {
+    return (address.countryCode ?? SRI_LANKA_CODE) !== SRI_LANKA_CODE;
+  }
 
   protected readonly atLimit = computed(() => this.addresses().length >= SAVED_ADDRESS_LIMIT);
 
@@ -750,6 +849,8 @@ export class AddressesPage {
       postalCode: address.postalCode ?? '',
       landmark: address.landmark ?? '',
       isDefault: address.isDefault,
+      countryCode: address.countryCode ?? SRI_LANKA_CODE,
+      region: address.region ?? '',
     });
 
     // The form is below the list, and on a telephone it is below the fold: a shopper who pressed Edit
@@ -821,10 +922,13 @@ export class AddressesPage {
       // exactly this reason: an omitted number binds `0` on a non-nullable property, and `0` is
       // indistinguishable from "they sent zero", so the validator could not tell a missing district from
       // an invalid one and would give the wrong message.
-      districtId: this.chosenDistrictId(),
+      // Only a Sri Lankan address has a district or a landmark; an overseas one has a region instead.
+      districtId: this.overseas() ? null : this.chosenDistrictId(),
       postalCode: blankToNull(draft.postalCode),
-      landmark: blankToNull(draft.landmark),
+      landmark: this.overseas() ? null : blankToNull(draft.landmark),
       isDefault: draft.isDefault,
+      countryCode: draft.countryCode,
+      region: this.overseas() ? blankToNull(draft.region) : null,
     };
 
     const editingId = this.editing();

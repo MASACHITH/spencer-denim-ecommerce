@@ -60,9 +60,9 @@ public sealed record OrderPlacement(
     string? Phone,
     string FirstName,
     string? LastName,
-    int DeliveryDistrictId,
-    string DeliveryDistrictName,
-    DeliveryZone DeliveryZone,
+    int? DeliveryDistrictId,
+    string? DeliveryDistrictName,
+    DeliveryZone? DeliveryZone,
     AddressSnapshot ShipAddress,
     int DeliveryMethodId,
     int? PickupLocationId,
@@ -75,7 +75,9 @@ public sealed record OrderPlacement(
     PaymentInitiation Payment,
     string PaymentMethodName,
     PaymentInstructions? Instructions,
-    PromoTake? Promo = null);
+    PromoTake? Promo = null,
+    string DeliveryCountryCode = Domain.Reference.Country.SriLankaCode,
+    string DeliveryCountryName = "Sri Lanka");
 
 /// <summary>
 /// The catalogue facts an order line keeps, paired with the priced figures. Split from

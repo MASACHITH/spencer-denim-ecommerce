@@ -41,6 +41,9 @@ function customer(overrides: Partial<AdminCustomerDetail> = {}): AdminCustomerDe
         postalCode: '00300',
         landmark: 'the temple',
         isDefault: true,
+        countryCode: 'LK',
+        countryName: 'Sri Lanka',
+        region: null,
       },
     ],
     ...overrides,
@@ -213,5 +216,32 @@ describe('CustomerDetailPage (ADM-15)', () => {
 
     const headings = Array.from(element.querySelectorAll('h1, h2, h3')).map((heading) => heading.tagName);
     expect(headings).toEqual(['H1', 'H2', 'H2']);
+  });
+
+  it('shows an overseas address with its region, postcode and country and no district', async () => {
+    const person = customer();
+    await open(
+      customer({
+        addresses: [
+          {
+            ...person.addresses[0],
+            addressId: 9,
+            city: 'Toronto',
+            districtName: null,
+            region: 'Ontario',
+            postalCode: 'M5V 3L9',
+            landmark: null,
+            countryCode: 'CA',
+            countryName: 'Canada',
+          },
+        ],
+      }),
+    );
+
+    const card = byTestId('address-9').textContent ?? '';
+    expect(card).toContain('Toronto, Ontario');
+    expect(card).toContain('M5V 3L9');
+    expect(byTestId('address-country-9').textContent).toContain('Canada');
+    expect(card).not.toContain('Gampaha');
   });
 });

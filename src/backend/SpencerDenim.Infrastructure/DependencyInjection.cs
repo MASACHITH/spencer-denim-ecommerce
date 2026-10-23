@@ -28,6 +28,8 @@ using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Orders.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Wishlist.Abstractions;
+using SpencerDenim.Application.Sales.Delivery.Admin;
+using SpencerDenim.Application.Sales.Payments.Admin;
 using SpencerDenim.Application.Settings.Abstractions;
 using SpencerDenim.Infrastructure.Admin.Auditing;
 using SpencerDenim.Infrastructure.Analytics;
@@ -314,6 +316,11 @@ public static class DependencyInjection
         // UPDATE … OUTPUT deleted.NextValue exactly; `OrderPlacementStore` is doc 08 §5.4's one
         // transaction; `CheckoutReader` is the single repricing read where an order's prices are frozen.
         services.AddScoped<ICheckoutReader, CheckoutReader>();
+        services.AddScoped<IDeliveryCountryReader>(provider => provider.GetRequiredService<ICheckoutReader>());
+
+        // Owner decision 2026-10-21: the Overseas delivery screen and the Payment methods switch.
+        services.AddScoped<IOverseasDeliveryAdminStore, Sales.Delivery.OverseasDeliveryAdminStore>();
+        services.AddScoped<IPaymentProviderAdminStore, Sales.Payments.PaymentProviderAdminStore>();
         services.AddScoped<INumberSeriesAllocator, NumberSeriesAllocator>();
         services.AddScoped<IOrderPlacementStore, OrderPlacementStore>();
 

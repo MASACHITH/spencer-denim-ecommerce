@@ -5,8 +5,11 @@ import {
   deliveryEstimate,
   formatColomboDateTime,
   isPricedLine,
+  hasCountryCode,
   looksLikeEmail,
   looksLikePhone,
+  looksLikePostalCode,
+  overseasAddressErrors,
 } from './checkout.model';
 
 function option(overrides: Partial<DeliveryOptionDto> = {}): DeliveryOptionDto {
@@ -35,6 +38,7 @@ describe('checkoutBlockerMessage', () => {
       'LineNotPurchasable',
       'NoDeliveryMethod',
       'NoPaymentMethod',
+      'CountryNotServed',
     ] as const) {
       const message = checkoutBlockerMessage(blocker);
 
@@ -192,5 +196,54 @@ describe('formatColomboDateTime', () => {
 
   it('says nothing rather than Invalid Date', () => {
     expect(formatColomboDateTime('not a date')).toBe('');
+  });
+});
+
+describe('overseas address rules (mirror DestinationRules, owner decision 2026-10-21)', () => {
+  const UK = { name: 'United Kingdom', regionRequired: false, postalCodeRequired: true };
+  const US = { name: 'United States', regionRequired: true, postalCodeRequired: true };
+  const UAE = { name: 'United Arab Emirates', regionRequired: false, postalCodeRequired: false };
+
+  it('names the country it cannot deliver to', () => {
+    expect(checkoutBlockerMessage('CountryNotServed', 'Antarctica')).toContain('Antarctica');
+  });
+
+  it('requires a postcode only where the country always uses one', () => {
+    expect(overseasAddressErrors(UK, '', '', '+44 20 7946 0958').get('postalCode')).toBe(
+      'Enter the postcode for United Kingdom.',
+    );
+    expect(overseasAddressErrors(UAE, '', '', '+971 4 123 4567').size).toBe(0);
+  });
+
+  it('requires a region only where the country always uses one', () => {
+    expect(overseasAddressErrors(US, '', '20500', '+1 202 555 0143').has('region')).toBe(true);
+    expect(overseasAddressErrors(UK, '', 'SW1A 2AA', '+44 20 7946 0958').has('region')).toBe(false);
+  });
+
+  it('caps the region at 80 and the postcode at 10', () => {
+    expect(overseasAddressErrors(UAE, 'x'.repeat(81), '', '+9714').has('region')).toBe(true);
+    expect(overseasAddressErrors(UAE, 'x'.repeat(80), '', '+9714').has('region')).toBe(false);
+    expect(overseasAddressErrors(UAE, '', '12345678901', '+9714').has('postalCode')).toBe(true);
+    expect(overseasAddressErrors(UAE, '', '1234567890', '+9714').has('postalCode')).toBe(false);
+  });
+
+  it.each(['SW1A 2AA', '20500', '20500-0003', 'H0H 0H0', 'A'])('accepts the postcode %s', (code) => {
+    expect(looksLikePostalCode(code)).toBe(true);
+  });
+
+  it.each(['SW1A#2AA', '-12345', '12345-', ' 12', 'ab_12'])('refuses the postcode %j', (code) => {
+    expect(looksLikePostalCode(code)).toBe(false);
+  });
+
+  it('wants a country code on the delivery phone, as + or 00', () => {
+    expect(hasCountryCode('+44 20 7946 0958')).toBe(true);
+    expect(hasCountryCode('0044 20 7946 0958')).toBe(true);
+    expect(hasCountryCode('  +1 202 555 0143')).toBe(true);
+    expect(hasCountryCode('020 7946 0958')).toBe(false);
+    expect(overseasAddressErrors(UAE, '', '', '04 123 4567').get('phone')).toContain('country code');
+  });
+
+  it('says nothing about a blank phone, which the required check already names', () => {
+    expect(overseasAddressErrors(UAE, '', '', '').has('phone')).toBe(false);
   });
 });

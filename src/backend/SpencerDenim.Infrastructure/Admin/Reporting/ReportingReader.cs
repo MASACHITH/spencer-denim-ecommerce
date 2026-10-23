@@ -258,22 +258,37 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
 
         var distinct = await paid.Select(order => order.EmailNormalized).Distinct().CountAsync(cancellationToken);
 
-        var ids = byDistrict.Select(row => row.Id).ToList();
+        var ids = byDistrict.Where(row => row.Id is not null).Select(row => row.Id!.Value).ToList();
         var names = await dbContext.Districts
             .AsNoTracking()
             .Where(district => ids.Contains(district.Id))
             .Select(district => new { district.Id, district.Name })
             .ToDictionaryAsync(district => district.Id, district => district.Name, cancellationToken);
 
+        // Owner decision 2026-10-21: overseas buyers are grouped by country, beside the districts.
+        var codes = byDistrict.Where(row => row.Id is null).Select(row => row.CountryCode).ToList();
+        var countries = await dbContext.Countries
+            .AsNoTracking()
+            .Where(country => codes.Contains(country.Code))
+            .Select(country => new { country.Code, country.Name })
+            .ToDictionaryAsync(
+                country => country.Code,
+                country => country.Name,
+                StringComparer.OrdinalIgnoreCase,
+                cancellationToken);
+
         return new BuyersByDistrict(
             distinct,
             byDistrict
                 .Select(row => new DistrictBuyersRow(
                     row.Id,
-                    names.TryGetValue(row.Id, out var name) ? name : $"District {row.Id}",
+                    row.Id is { } districtId
+                        ? names.TryGetValue(districtId, out var name) ? name : $"District {districtId}"
+                        : countries.TryGetValue(row.CountryCode, out var country) ? country : row.CountryCode,
                     row.Buyers,
                     row.Orders,
-                    row.Revenue))
+                    row.Revenue,
+                    row.CountryCode))
                 .OrderByDescending(row => row.Buyers)
                 .ThenByDescending(row => row.Revenue)
                 .ThenBy(row => row.Name, StringComparer.Ordinal)
@@ -458,6 +473,7 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
                     order.FirstName,
                     order.LastName,
                     order.DeliveryDistrictName,
+                    order.DeliveryCountryName,
                     PaidAtUtc = order.PaidAtUtc!.Value,
                 })
                 .ToListAsync(cancellationToken))
@@ -476,7 +492,7 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
                     return new CustomerReportRow(
                         order.Email,
                         string.IsNullOrWhiteSpace(order.LastName) ? order.FirstName : $"{order.FirstName} {order.LastName}",
-                        order.DeliveryDistrictName,
+                        order.DeliveryDistrictName ?? order.DeliveryCountryName,
                         row.AccountId is not null,
                         row.Orders,
                         row.Revenue,
@@ -567,9 +583,10 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
     /// <summary>Distinct buyers, paid orders and revenue per delivery district.</summary>
     internal IQueryable<DistrictTotal> BuyersByDistrictQuery(UtcRange range) =>
         PaidIn(range)
-            .GroupBy(order => order.DeliveryDistrictId)
+            .GroupBy(order => new { order.DeliveryDistrictId, order.DeliveryCountryCode })
             .Select(group => new DistrictTotal(
-                group.Key,
+                group.Key.DeliveryDistrictId,
+                group.Key.DeliveryCountryCode,
                 group.Select(order => order.EmailNormalized).Distinct().Count(),
                 group.Count(),
                 group.Sum(order => order.GrandTotal)));
@@ -733,7 +750,8 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
     internal sealed record PaidTotal(decimal Gross, int PaidOrders);
 
     /// <summary>One delivery district's buyers.</summary>
-    internal sealed record DistrictTotal(int Id, int Buyers, int Orders, decimal Revenue);
+    /// <param name="Id">The district, or null for an overseas order, which <paramref name="CountryCode"/> names.</param>
+    internal sealed record DistrictTotal(int? Id, string CountryCode, int Buyers, int Orders, decimal Revenue);
 
     /// <summary>One department's line sales.</summary>
     internal sealed record GroupSales(int Id, int Units, decimal Revenue);

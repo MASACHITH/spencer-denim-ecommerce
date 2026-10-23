@@ -1,3 +1,4 @@
+import { provideTestDeliveryCountries } from '../../core/delivery/delivery-country.testing';
 import { provideHttpClient } from '@angular/common/http';
 import {
   HttpTestingController,
@@ -22,6 +23,7 @@ import {
 } from '../../core/checkout/checkout.model';
 import { DELIVERY_DISTRICTS } from '../../core/delivery/district.data';
 import { DELIVERY_DISTRICT_STORAGE_KEY } from '../../core/delivery/delivery-district.service';
+import { DELIVERY_COUNTRY_STORAGE_KEY } from '../../core/delivery/delivery-country.service';
 
 const COLOMBO: DistrictDto = { id: 1, name: 'Colombo', deliveryZone: 1 };
 const JAFFNA: DistrictDto = { id: 10, name: 'Jaffna', deliveryZone: 3 };
@@ -211,7 +213,7 @@ describe('CheckoutPage (CHK-01..03)', () => {
       providers: [
         provideRouter([]),
         provideHttpClient(),
-        provideHttpClientTesting(),
+        provideHttpClientTesting(), provideTestDeliveryCountries(),
         { provide: RESPONSE_INIT, useValue: response },
       ],
     });
@@ -1709,6 +1711,233 @@ describe('CheckoutPage (CHK-01..03)', () => {
 
       // And the re-quote asks for no code, so the total on screen becomes the one the shop would charge.
       expect(checkoutRequest().request.params.has('promoCode')).toBe(false);
+    });
+  });
+
+  /**
+   * Owner decision 2026-10-21: Sri Lanka plus worldwide delivery. The country comes first; an overseas
+   * country has no district, one option (International delivery) and its own address rules, which mirror
+   * the API's `DestinationRules` and are never stricter.
+   */
+  describe('overseas delivery', () => {
+    const INTERNATIONAL = option({
+      id: 9,
+      code: 'INTERNATIONAL',
+      name: 'International delivery',
+      description: 'Sent overseas by an international service.',
+      fee: 9_500,
+      freeAboveAmount: null,
+      feeAfterDiscount: 9_500,
+      estimatedDaysMin: 7,
+      estimatedDaysMax: 14,
+    });
+
+    const PAYPAL: PaymentMethodDto = {
+      code: 'PayPal',
+      displayName: 'PayPal',
+      checkoutDescription: 'Pay by card or PayPal balance.',
+    };
+
+    function overseas(overrides: Partial<CheckoutSessionDto> = {}): CheckoutSessionDto {
+      return session({
+        selectedDistrictId: null,
+        selectedDeliveryMethodId: 9,
+        deliveryOptions: [INTERNATIONAL],
+        paymentMethods: [PAYPAL],
+        selectedCountryCode: 'GB',
+        totals: totals({ deliveryFeeAmount: 9_500, grandTotal: 18_284 }),
+        ...overrides,
+      });
+    }
+
+    async function openOverseas(code: string, payload: CheckoutSessionDto): Promise<TestRequest> {
+      localStorage.setItem(DELIVERY_COUNTRY_STORAGE_KEY, code);
+      create();
+      await settle();
+      const request = checkoutRequest();
+      request.flush(payload);
+      await settle();
+      return request;
+    }
+
+    async function fillOverseasForm(): Promise<void> {
+      await type('co-firstName', 'Amelia');
+      await type('co-email', 'amelia@example.co.uk');
+      await type('co-phone', '+44 20 7946 0958');
+      await type('co-recipient', 'Amelia Jones');
+      await type('co-address-phone', '+44 20 7946 0958');
+      await type('co-line1', '10 Downing Street');
+      await type('co-city', 'London');
+      await type('co-postcode', 'SW1A 2AA');
+      await choosePayment('PayPal');
+    }
+
+    afterEach(() => localStorage.removeItem(DELIVERY_COUNTRY_STORAGE_KEY));
+
+    it('asks for the header country, without a district', async () => {
+      const request = await openOverseas('GB', overseas());
+
+      expect(request.request.params.get('countryCode')).toBe('GB');
+      expect(request.request.params.has('districtId')).toBe(false);
+      expect(element.querySelector('#co-district')).toBeNull();
+      expect((field('co-country') as unknown as HTMLSelectElement).value).toBe('GB');
+    });
+
+    it('chooses the one International option for the shopper and prices it', async () => {
+      await openOverseas('GB', overseas({ selectedDeliveryMethodId: null }));
+
+      const priced = checkoutRequest();
+      expect(priced.request.params.get('deliveryMethodId')).toBe('9');
+      priced.flush(overseas());
+      await settle();
+
+      expect(text()).toContain('International delivery');
+      expect(sums().delivery).toBe(9_500);
+    });
+
+    it('swaps the district for a state or region, and drops the landmark', async () => {
+      await openOverseas('US', overseas({ selectedCountryCode: 'US' }));
+
+      expect(element.querySelector('#co-region')).not.toBeNull();
+      expect(element.querySelector('#co-landmark')).toBeNull();
+      expect(field('co-region').getAttribute('required')).not.toBeNull();
+      expect(field('co-postcode').getAttribute('required')).not.toBeNull();
+    });
+
+    it('leaves the region and the postcode optional where the country does not use them', async () => {
+      await openOverseas('AE', overseas({ selectedCountryCode: 'AE' }));
+
+      expect(field('co-region').getAttribute('required')).toBeNull();
+      expect(field('co-postcode').getAttribute('required')).toBeNull();
+    });
+
+    it('places the order with the country and the region, and no district or landmark', async () => {
+      await openOverseas('US', overseas({ selectedCountryCode: 'US' }));
+      await fillOverseasForm();
+      await type('co-address-phone', '+1 202 555 0143');
+      await type('co-region', 'District of Columbia');
+      await type('co-postcode', '20500');
+
+      expect(placeBlocked()).toBe(false);
+      placeButton().click();
+      await settle();
+
+      const request = http.expectOne(
+        (candidate) =>
+          candidate.url === `${CheckoutApi.url}/orders` && candidate.method === 'POST',
+      );
+
+      expect(request.request.body).toMatchObject({
+        countryCode: 'US',
+        districtId: null,
+        deliveryMethodId: 9,
+        paymentMethodCode: 'PayPal',
+        expectedGrandTotal: 18_284,
+        address: {
+          region: 'District of Columbia',
+          postalCode: '20500',
+          landmark: null,
+          city: 'London',
+        },
+      });
+
+      request.flush(confirmation());
+      await settle();
+      drainCartRead();
+    });
+
+    it('refuses a missing UK postcode and a delivery phone without its country code', async () => {
+      await openOverseas('GB', overseas());
+      await fillOverseasForm();
+      await type('co-postcode', '');
+      await type('co-address-phone', '020 7946 0958');
+
+      placeButton().click();
+      await settle();
+
+      expect(text()).toContain('Enter the postcode for United Kingdom.');
+      expect(text()).toContain('Include the country code');
+    });
+
+    it('refuses a postcode with characters the server does not take', async () => {
+      await openOverseas('GB', overseas());
+      await fillOverseasForm();
+      await type('co-postcode', 'SW1A#2AA');
+
+      placeButton().click();
+      await settle();
+
+      expect(text()).toContain('A postcode can use only letters, numbers, spaces and hyphens.');
+    });
+
+    it('accepts a 00-prefixed phone, the other international form the server takes', async () => {
+      await openOverseas('GB', overseas());
+      await fillOverseasForm();
+      await type('co-address-phone', '0044 20 7946 0958');
+
+      expect(placeBlocked()).toBe(false);
+    });
+
+    it('names the country it cannot deliver to', async () => {
+      await openOverseas(
+        'AQ',
+        overseas({
+          selectedCountryCode: 'AQ',
+          selectedDeliveryMethodId: null,
+          deliveryOptions: [{ ...INTERNATIONAL, isAvailable: false, fee: null, feeAfterDiscount: null }],
+          blockers: ['CountryNotServed'],
+          totals: totals({ deliveryFeeAmount: null, grandTotal: null }),
+        }),
+      );
+
+      expect(text()).toContain('We cannot deliver to Antarctica at the moment.');
+      expect(placeBlocked()).toBe(true);
+    });
+
+    it('says why a free-delivery code does not cover an overseas parcel', async () => {
+      await openOverseas('GB', overseas({ promoFreeDeliveryIgnored: true }));
+
+      expect(
+        element.querySelector('[data-testid="promo-free-delivery-ignored"]')?.textContent,
+      ).toContain('Free-delivery codes cover Sri Lankan delivery only.');
+    });
+
+    it('re-quotes for a country chosen on the page, and tells the header', async () => {
+      await openWith(session());
+
+      const select = element.querySelector<HTMLSelectElement>('#co-country')!;
+      select.value = 'AE';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle();
+
+      const request = checkoutRequest();
+      expect(request.request.params.get('countryCode')).toBe('AE');
+      expect(request.request.params.has('districtId')).toBe(false);
+      request.flush(overseas({ selectedCountryCode: 'AE' }));
+      await settle();
+
+      expect(localStorage.getItem(DELIVERY_COUNTRY_STORAGE_KEY)).toBe('AE');
+      expect(element.querySelector('#co-district')).toBeNull();
+    });
+
+    it('falls back to Sri Lanka once when the server does not know the country', async () => {
+      await openOverseas('ZZ', overseas({ selectedCountryCode: null }));
+
+      const again = checkoutRequest();
+      expect(again.request.params.has('countryCode')).toBe(false);
+      again.flush(session());
+      await settle();
+
+      expect(element.querySelector('#co-district')).not.toBeNull();
+    });
+  });
+
+  describe('when no payment method is switched on', () => {
+    it('says so plainly and keeps Place order unavailable', async () => {
+      await openWith(session({ paymentMethods: [], blockers: ['NoPaymentMethod'] }));
+
+      expect(text()).toContain('No payment method is available at the moment');
+      expect(placeBlocked()).toBe(true);
     });
   });
 });

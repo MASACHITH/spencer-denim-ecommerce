@@ -33,16 +33,16 @@ Design only. No application code. SQL fragments illustrate intent and are not fi
   - Azure SQL Database accepts this collation at creation, and bacpac import keeps it.
   - Sinhala and Tamil sort, compare and `LIKE` behaviour is **verify-in-spike**: insert sample names, then sort and search them.
 
-### 1.2 Schemas (65 tables)
+### 1.2 Schemas (67 tables)
 
 | Schema | Module | Tables | # |
 |---|---|---|---|
-| `ref` | Shared reference data | Provinces, Districts | 2 |
+| `ref` | Shared reference data | Provinces, Districts, Countries | 3 |
 | `identity` | ASP.NET Core Identity, RBAC, customer addresses | Users, Roles, UserRoles, RoleClaims (permissions), UserClaims, UserLogins, UserTokens, CustomerAddresses | 8 |
 | `catalog` | Departments, categories, products, variants, attributes, reviews, size guides | Departments, Categories, AgeGroups, AttributeOptions, ColourFamilies, Sizes, Products, ProductStats, ProductSearchIndex, ProductCategories, ProductColours, ProductVariants, ProductMedia, RelatedProducts, SizeGuides, ProductReviews | 16 |
 | `media` | Media library (public and private files) | MediaAssets, MediaUsages | 2 |
 | `inventory` | Stock levels and ledger | StockLevels, InventoryMovements | 2 |
-| `sales` | Cart, wishlist, delivery (zone rates), payment providers, orders (incl. invoice), payments | Carts, CartItems, WishlistItems, DeliveryMethods, DeliveryMethodZoneRates, PickupLocations, Couriers, PaymentProviders, NumberSeries, Orders, OrderLines, OrderStatusHistory, Payments, PaymentEvents, Refunds | 15 |
+| `sales` | Cart, wishlist, delivery (zone rates), payment providers, orders (incl. invoice), payments | Carts, CartItems, WishlistItems, DeliveryMethods, DeliveryMethodZoneRates, DeliveryRegions, PickupLocations, Couriers, PaymentProviders, NumberSeries, Orders, OrderLines, OrderStatusHistory, Payments, PaymentEvents, Refunds | 16 |
 | `marketing` | Promo codes, sale campaigns, newsletter | PromoCodes, SaleCampaigns, SaleCampaignTargets, NewsletterSubscribers | 4 |
 | `content` | CMS | HomeSections, HomeSectionItems, AnnouncementMessages, MegaMenuPromoCards, ContentPages, ContactSubmissions | 6 |
 | `ops` | Settings, audit, admin alerts, email outbox, job leases, Data Protection keys | Settings, DataProtectionKeys, AuditLogs, AdminAlerts, EmailOutbox, JobLeases | 6 |
@@ -51,6 +51,7 @@ Design only. No application code. SQL fragments illustrate intent and are not fi
 - **Unused by design:** UserClaims and UserLogins exist for Identity compatibility and stay empty. UserTokens stores staff 2FA authenticator data.
 - **Removed in revision 2** (Appendix A): PromoRedemptions, MediaRenditions, CustomerProfiles, StockReservations (derived), Invoices (folded into Orders), SizeScales (merged into Sizes), RolePermissions (replaced by RoleClaims), and all sales summary tables. Deferred: ProductTags, UrlRedirects.
 - **Added in revision 3:** `sales.DeliveryMethodZoneRates` (N4; a light zone model instead of the deferred per-district rates) and `ops.AdminAlerts` (N2; persistent dashboard alerts that must be acknowledged).
+- **Added 2026-10-21 (owner decision: Sri Lanka plus worldwide delivery):** `ref.Countries` and `sales.DeliveryRegions`; a country on `sales.Orders` and `identity.CustomerAddresses` (migration `InternationalDeliveryPayPalOnly`).
 
 ### 1.3 Key strategy
 - **`int IDENTITY`** is the default PK. It is 4 bytes in every FK and index, the clustered index is append-only, IDs are readable for admin and support, and it behaves the same on Azure SQL. No requirement calls for GUID keys.
@@ -280,6 +281,22 @@ Legend: **[A]** audit columns · **[SD]** soft delete · **[RV]** rowversion (§
 | SortOrder | smallint | N | |
 | IsActive | bit | N | DF 1 |
 
+#### `ref.Countries` (GLB-06, CHK-01; owner decision 2026-10-21) [A] [RV]
+Sri Lanka plus worldwide delivery. Every ISO 3166-1 alpha-2 country (249), seeded insert-missing and never overwritten.
+| Column | Type | Null | Notes |
+|---|---|---|---|
+| Code | char(2) | N | **PK.** ISO 3166-1 alpha-2, upper case (`CK_Countries_Code`, binary collation). `LK` is the domestic country |
+| Name | nvarchar(80) | N | UX `UX_Countries_Name`. English short name |
+| RegionCode | varchar(20) | Y | FK `sales.DeliveryRegions`. **NULL for `LK` only** (`CK_Countries_Region`) |
+| PostalCodeRequired | bit | N | DF 0. Set only where every address has a postcode (US, GB, DE, JP, IN, …) |
+| RegionRequired | bit | N | DF 0. Set for US, CA, AU (state/province always written) |
+| IsShippingEnabled | bit | N | DF 1. **Admin switch** (`Settings.Edit`). `LK` cannot be switched off (`CK_Countries_SriLankaEnabled`) |
+| DeliveryFeeOverride | decimal(18,2) | Y | LKR, CK ≥ 0. Replaces the region's fee for this country |
+| EstimatedDaysMinOverride / MaxOverride | tinyint | Y | Both or neither, Min ≤ Max (`CK_Countries_DaysOverride`) |
+| SortOrder | smallint | N | 0 for `LK` (first in every list), 1 for the rest (then by name) |
+- All countries are seeded **enabled** (owner: "any country in the world") except the seven ISO entries with no street addresses (AQ, BV, GS, HM, IO, TF, UM).
+- The migration inserts the `LK` row itself so every existing order and address can be backfilled as Sri Lanka before the FKs exist; the seeder adds the other 248.
+
 #### `identity.Users` (ACC-01/02, ADM-01/02, ADM-15) [A]
 | Column | Type | Null | Notes |
 |---|---|---|---|
@@ -373,11 +390,14 @@ Identity standard tables, renamed into `identity`. UserClaims and UserLogins sta
 | Phone | varchar(20) | N | |
 | Line1 / Line2 | nvarchar(150) | N/Y | |
 | City | nvarchar(80) | N | |
-| DistrictId | int | N | FK Districts |
-| PostalCode | varchar(10) | Y | |
+| CountryCode | char(2) | N | FK `ref.Countries` (2026-10-21). Existing rows backfilled `LK` |
+| DistrictId | int | **Y** | FK Districts. Required for `LK`, NULL overseas (`CK_CustomerAddresses_Destination`) |
+| Region | nvarchar(80) | Y | State/province of an overseas address |
+| PostalCode | varchar(10) | Y | Required where the country requires one (app rule, `DestinationRules`) |
 | Landmark | nvarchar(150) | Y | |
 | IsDefault | bit | N | |
 - `UX_CustomerAddresses_UserId_Default` (UserId) `WHERE IsDefault = 1`.
+- `IX_CustomerAddresses_CountryCode`. An overseas address's phone must carry its country code (`+` or `00`).
 - App cap: 10 addresses per customer.
 
 #### PDPA anonymisation (G10; permission `Customers.Delete`)
@@ -393,7 +413,7 @@ One transaction, after staff verify the request.
 3. **Orders** (by CustomerUserId or EmailNormalized):
    - **Scrubbing writes placeholders, never NULLs, into NOT NULL or CK-guarded columns (N5).** This keeps `CK_Orders_ShipAddress` strict and the complex-type mapping unchanged.
      - Placeholders: `Anonymised` for FirstName, Ship_RecipientName, Ship_Line1 and Ship_City; `+94000000000` for Ship_Phone; `anon-o{OrderId}@anonymised.invalid` for Email (and EmailNormalized).
-     - Nullable extras become NULL: LastName, Phone, Ship_Line2, Ship_Landmark, Ship_PostalCode.
+     - Nullable extras become NULL: LastName, Phone, Ship_Line2, Ship_Landmark, Ship_PostalCode, Ship_Region.
    - **Always scrubbed:** Email (placeholder), Phone, CustomerNote, PlacedIpAddress.
    - **Unpaid orders** (never invoiced): the name and address snapshot is replaced with placeholders too.
    - **Invoiced orders** (DB27): the bill-to name and address are **kept while `Privacy.RetainInvoiceBillTo = true`** (default true, **pending the accountant's advice**, D2/D9) and scrubbed otherwise.
@@ -777,13 +797,27 @@ Stock is **not** reserved in the cart. The cart row is created on the first Add 
 | Column | Type | Null | Notes |
 |---|---|---|---|
 | Id | int | N | PK |
-| Code | varchar(20) | N | UX. `STANDARD`, `EXPRESS`, `PICKUP` |
+| Code | varchar(20) | N | UX. `STANDARD`, `EXPRESS`, `PICKUP`, `INTERNATIONAL` (2026-10-21) |
 | Name | nvarchar(60) | N | |
 | Description | nvarchar(300) | Y | |
 | IsEnabled | bit | N | |
 | RequiresAddress | bit | N | 0 for PICKUP |
 | SortOrder | smallint | N | |
 - Fees, thresholds and estimates live in `DeliveryMethodZoneRates` (N4).
+- **`INTERNATIONAL`** (owner decision 2026-10-21) is the only method for an address outside Sri Lanka, and never offered for one inside it (`CK_Orders_Destination`). It has no zone rates: its fee is the country's (`ref.Countries.DeliveryFeeOverride`) or its region's (`DeliveryRegions.Fee`). Its `IsEnabled` is the "all overseas orders" switch. Store pickup is Sri Lanka only.
+
+#### `sales.DeliveryRegions` (owner decision 2026-10-21) [A] [RV]
+| Column | Type | Null | Notes |
+|---|---|---|---|
+| Code | varchar(20) | N | **PK.** `ASIA`, `MIDDLE_EAST`, `EUROPE`, `NORTH_AMERICA`, `OCEANIA`, `REST_OF_WORLD` |
+| Name | nvarchar(60) | N | UX `UX_DeliveryRegions_Name` |
+| Fee | decimal(18,2) | Y | LKR, CK ≥ 0. **NULL = not priced**, so its countries cannot be ordered to unless they override it |
+| EstimatedDaysMin / EstimatedDaysMax | tinyint | N | CK Min ≤ Max |
+| IsEnabled | bit | N | DF 1. Off closes every country in the region |
+| SortOrder | smallint | N | |
+- **Effective overseas quote** (`OverseasDeliveryRate`, one function for checkout, the bag estimate, the admin screen and the order): available only when `INTERNATIONAL` is enabled, the country is enabled and its region is enabled; fee = country override ?? region fee (none → not priced); days = the country's pair when both are set, otherwise the region's. No free-above threshold overseas, and **a free-delivery promo code does not waive an overseas fee** (2026-10-21, safe choice recorded for the owner).
+- Seeded fees are **placeholders for the owner**: Asia 6,500 (5–10 days), Middle East 7,500 (5–10), Europe 9,500 (7–14), North America 10,500 (7–14), Oceania 9,500 (7–14), Rest of world 12,500 (10–21).
+- Admin screen: Settings → Overseas delivery (`Settings.View` to read, `Settings.Edit` to change), every change audited (`SettingChange`, before/after JSON), optimistic on `RowVersion`.
 
 #### `sales.DeliveryMethodZoneRates` (GLB-06, CHK-02, PDP-05; N4) [A] [RV]
 | Column | Type | Null | Notes |
@@ -834,11 +868,12 @@ Stock is **not** reserved in the cart. The cart row is created on the first Add 
 |---|---|---|---|
 | Code | varchar(30) | N | **PK.** `BankTransfer`, `PayPal`, future gateways. A natural key is used deliberately: a tiny, code-matched list referenced by FKs from Orders and Payments |
 | DisplayName | nvarchar(60) | N | |
-| IsEnabled | bit | N | **Either provider can be switched off**. Checkout lists enabled providers only |
+| IsEnabled | bit | N | **Either provider can be switched off**. Checkout lists enabled (and ready) providers only. **Admin switch** (Settings → Payment methods, `Settings.Payments`, 2026-10-21) |
 | DisplayOrder | smallint | N | |
 | CheckoutDescription | nvarchar(300) | Y | |
-- Enabling a provider requires its settings to be valid (e.g. PayPal credentials and a fresh FX rate).
+- Enabling a provider requires its settings to be valid (e.g. PayPal credentials and a fresh FX rate); the switch refuses otherwise. Switching off is always allowed, the last one included — checkout then refuses every order (`CheckoutBlocker.NoPaymentMethod`, 409) and writes nothing.
 - Changes are audited with values and trigger the Super Admin alert (§3.8, DB2).
+- **Owner decision 2026-10-21: bank transfer is switched off ("block only for now"), PayPal is the only payment method.** A fresh database seeds `BankTransfer` with `IsEnabled = 0`. An existing database is switched off **once** by the seeder's `Seed.PaymentProvidersVersion = 1` step, unless the row has `UpdatedByUserId` set (an admin saved it); the marker is written in the same transaction and the step never runs again. Orders already placed by bank transfer and the approval queue are unaffected.
 - Credentials live in `ops.Settings`, not here.
 
 #### `sales.NumberSeries`: order and invoice numbers
@@ -870,10 +905,12 @@ Stock is **not** reserved in the cart. The cart row is created on the first Add 
 | Email / EmailNormalized | nvarchar(256) | N | |
 | Phone | varchar(20) | Y | NULL after anonymisation |
 | FirstName / LastName | nvarchar(80) | N/Y | Bill-to name |
-| DeliveryDistrictId | int | N | **Entity-level FK** Districts: the delivery address district, or the pickup location's district |
-| DeliveryDistrictName | nvarchar(60) | N | Snapshot |
-| DeliveryZone | tinyint | N | Snapshot of the district's zone at placement (N4) |
-| ShipAddress (complex, **required**) | — | — | `AddressSnapshot` with **all inner columns nullable**: `Ship_RecipientName nvarchar(120)`, `Ship_Phone varchar(20)`, `Ship_Line1/Line2 nvarchar(150)`, `Ship_City nvarchar(80)`, `Ship_PostalCode varchar(10)`, `Ship_Landmark nvarchar(150)` |
+| DeliveryCountryCode | char(2) | N | FK `ref.Countries` (2026-10-21). Existing orders backfilled `LK`, then NOT NULL. `IX_Orders_DeliveryCountryCode` |
+| DeliveryCountryName | nvarchar(80) | N | Snapshot of the country's name |
+| DeliveryDistrictId | int | **Y** | **Entity-level FK** Districts: the delivery address district, or the pickup location's district. NULL overseas only |
+| DeliveryDistrictName | nvarchar(60) | **Y** | Snapshot. NULL overseas only |
+| DeliveryZone | tinyint | **Y** | Snapshot of the district's zone at placement (N4). NULL overseas only |
+| ShipAddress (complex, **required**) | — | — | `AddressSnapshot` with **all inner columns nullable**: `Ship_RecipientName nvarchar(120)`, `Ship_Phone varchar(20)`, `Ship_Line1/Line2 nvarchar(150)`, `Ship_City nvarchar(80)`, `Ship_Region nvarchar(80)` (overseas state/province, 2026-10-21), `Ship_PostalCode varchar(10)`, `Ship_Landmark nvarchar(150)` |
 | DeliveryMethodId | int | N | **Entity-level FK** DeliveryMethods |
 | PickupLocationId | int | Y | **Entity-level FK** PickupLocations |
 | Delivery (complex, required) | — | — | `DeliverySnapshot`: `DeliveryMethodCode varchar(20) N`, `DeliveryMethodName nvarchar(60) N`, `PickupLocationName nvarchar(100) Y`, `EstimatedDaysMin/Max tinyint N`. No FKs inside |
@@ -907,6 +944,7 @@ Stock is **not** reserved in the cart. The cart row is created on the first Add 
 | AnonymisedAtUtc | datetime2(3) | Y | |
 
 **Check constraints (DB11 nullability fixed):**
+- `CK_Orders_Destination` (2026-10-21): `(DeliveryCountryCode = 'LK' AND DeliveryDistrictId, DeliveryDistrictName, DeliveryZone IS NOT NULL AND DeliveryMethodCode <> 'INTERNATIONAL') OR (DeliveryCountryCode <> 'LK' AND all three IS NULL AND DeliveryMethodCode = 'INTERNATIONAL')`.
 - `CK_Orders_ShipAddress`: `DeliveryMethodCode = 'PICKUP' OR (Ship_RecipientName IS NOT NULL AND Ship_Phone IS NOT NULL AND Ship_Line1 IS NOT NULL AND Ship_City IS NOT NULL)`. It stays strict because PDPA anonymisation writes placeholders (N5, §3.1).
 - `CK_Orders_Pickup`: `DeliveryMethodCode <> 'PICKUP' OR PickupLocationId IS NOT NULL`.
 - `CK_Orders_Totals`:
@@ -922,7 +960,7 @@ Stock is **not** reserved in the cart. The cart row is created on the first Add 
 - `IX_Orders_Placed` (PlacedAtUtc DESC) INCLUDE (OrderNumber, Status, GrandTotal, FirstName, LastName).
 - `IX_Orders_Pending_Due` (PaymentDueAtUtc) INCLUDE (CaptureLockedUntilUtc) `WHERE Status = 0`.
 - `IX_Orders_StockReserved` (Id) `WHERE StockState = 0`, for reconciliation.
-- `IX_Orders_Paid` (PaidAtUtc) INCLUDE (GrandTotal, DeliveryDistrictId, PaymentProviderCode, CustomerUserId, EmailNormalized, Status) `WHERE PaidAtUtc IS NOT NULL`, for the live dashboard.
+- `IX_Orders_Paid` (PaidAtUtc) INCLUDE (GrandTotal, DeliveryDistrictId, DeliveryCountryCode, PaymentProviderCode, CustomerUserId, EmailNormalized, Status) `WHERE PaidAtUtc IS NOT NULL`, for the live dashboard.
 - `IX_Orders_Promo_Email` (PromoCodeId, EmailNormalized) INCLUDE (Status, PaidAtUtc) `WHERE PromoCodeId IS NOT NULL`, for promo limits.
 - `IX_Orders_Shipped` (ShippedAtUtc) `WHERE Status = 3`, for auto-Delivered (D4).
 - `IX_Orders_EmailNormalized`, `IX_Orders_Phone`.
@@ -1773,7 +1811,7 @@ OFFSET @skip ROWS FETCH NEXT 24 ROWS ONLY;
 | Traffic Sources / Traffic page | `TrafficDaily`, `PageDaily` + today live | Clustered PKs |
 | Recent Orders (searchable) | Live | `IX_Orders_Placed`, `IX_Orders_EmailNormalized`, `IX_Orders_Phone` |
 | Low Stock alerts | Live StockLevels ⋈ active variants | `IX_StockLevels_Available` |
-| Customers by district | Live, distinct `EmailNormalized` by `DeliveryDistrictId` | `IX_Orders_Paid` |
+| Customers by district | Live, distinct `EmailNormalized` by (`DeliveryDistrictId`, `DeliveryCountryCode`): districts for Sri Lanka, **one row per country for overseas buyers** (2026-10-21) | `IX_Orders_Paid` |
 | Admin alert banners (payment exceptions, sensitive settings, capture recovery, drift) | Live | `IX_AdminAlerts_Open`, `IX_Payments_Exceptions` |
 | Reports CSV (ADM-19) | Live, streamed, `Reports.Export` | as above |
 - **Trigger to add summary tables** (Appendix A): dashboard p95 > 500 ms in Query Store, or > 100k orders.
@@ -1841,8 +1879,10 @@ OFFSET @skip ROWS FETCH NEXT 24 ROWS ONLY;
 | `catalog.Sizes` | ~60 | ScaleName "Alpha" XS–XXXL · "Women waist" 24–36 · "Men waist" 28–40 · "Kids age" 2–3Y…13–14Y · "Baby months" 0–3M…18–24M · "Footwear EU" 35–46 · "One size" |
 | `identity.Roles` + `RoleClaims` | 4 roles | See below |
 | Super Admin users | 1 (+1) | The first is created on first start from `.env` bootstrap values, with `MustChangePassword = 1` and 2FA enrolment required; skipped if any staff user exists. **Go-live checklist:** create a **second** Super Admin (N14: client owner + vendor), both with 2FA |
-| `sales.PaymentProviders` | 2 | `BankTransfer` (enabled, order 1); `PayPal` (**disabled** until credentials and FX rate are set, order 2) |
-| `sales.DeliveryMethods` | 3 | STANDARD, EXPRESS, PICKUP (PICKUP disabled until a PickupLocation exists) |
+| `sales.PaymentProviders` | 2 | `BankTransfer` (**disabled** — owner decision 2026-10-21, "block only for now"; an existing database is switched off once by `Seed.PaymentProvidersVersion`, see §3.5), order 1; `PayPal` (**disabled** until credentials and FX rate are set, order 2) |
+| `sales.DeliveryMethods` | 4 | STANDARD, EXPRESS, PICKUP (PICKUP disabled until a PickupLocation exists), INTERNATIONAL (enabled, 2026-10-21) |
+| `sales.DeliveryRegions` | 6 | **Placeholders for the owner:** Asia Rs. 6,500 5–10 days · Middle East 7,500 5–10 · Europe 9,500 7–14 · North America 10,500 7–14 · Oceania 9,500 7–14 · Rest of world 12,500 10–21 |
+| `ref.Countries` | 249 | ISO 3166-1 alpha-2 with English names; LK domestic (no region); all enabled except AQ, BV, GS, HM, IO, TF, UM |
 | `sales.DeliveryMethodZoneRates` | 9 | **Placeholders, client to confirm (D8):** **Colombo:** Standard Rs. 400, free ≥ Rs. 10,000, 1–2 days · Express Rs. 950, 1 day · Pickup Rs. 0, 1–2 days. **Western:** Standard Rs. 450, free ≥ Rs. 10,000, 2–3 days · Express Rs. 1,200, 1–2 days · Pickup Rs. 0, 1–2 days. **IslandWide:** Standard Rs. 600, free ≥ Rs. 15,000, 3–5 days · Express **unavailable** · Pickup Rs. 0, 1–2 days |
 | `sales.PickupLocations` | 0 | Client input (D8) |
 | `sales.Couriers` | 8 | Owner decision 2026-10-21 (#33): Domex, Koombiyo Delivery and Citypak active with verified tracking templates; Pronto Lanka, Trans Express, Sri Lanka Post (Speed Post), Sri Lanka Post EMS and DHL Express inactive with no template. Offered once by `Seed.CouriersVersion`; never over an existing name; a deleted courier is not re-created |

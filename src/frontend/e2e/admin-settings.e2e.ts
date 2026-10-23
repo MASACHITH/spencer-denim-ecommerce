@@ -505,6 +505,10 @@ test.describe('the settings screen is usable and accessible', () => {
   test('announces one h1 and then its panels', async ({ page }) => {
     await openSettings(page);
 
+    // The Payment methods panel (owner decision 2026-10-21) fetches for itself, so it is waited for before the
+    // headings are read, or the list would be read before it arrived.
+    await expect(page.getByRole('heading', { level: 2, name: 'Payment methods' })).toBeVisible();
+
     const headings = await page.locator('h1, h2').evaluateAll((nodes) =>
       nodes.map((node) => `${node.tagName.toLowerCase()}:${node.textContent?.trim()}`),
     );
@@ -518,6 +522,9 @@ test.describe('the settings screen is usable and accessible', () => {
       'h1:Settings',
       'h2:Logo',
       'h2:Contact and social',
+
+      // Owner decision 2026-10-21: which payment methods checkout offers, beside the bank details.
+      'h2:Payment methods',
       'h2:Bank transfer',
       'h2:Invoice and fulfilment',
 

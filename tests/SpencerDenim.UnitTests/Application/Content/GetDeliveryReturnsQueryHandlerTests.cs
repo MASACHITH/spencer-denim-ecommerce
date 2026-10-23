@@ -124,6 +124,12 @@ public sealed class GetDeliveryReturnsQueryHandlerTests
 
         public Task<IReadOnlyList<CheckoutPaymentMethod>> EnabledPaymentMethodsAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
 
+        public Task<CheckoutDeliveryMethod?> InternationalMethodAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<CheckoutCountry>> CountriesAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<CheckoutCountry?> FindCountryAsync(string countryCode, CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<PromoCodeTerms?> FindPromoCodeAsync(string normalisedCode, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<IReadOnlyList<CheckoutCartLine>> ReadCartAsync(int cartId, CancellationToken cancellationToken) => throw new NotSupportedException();

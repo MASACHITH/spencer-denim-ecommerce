@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Application.Accounts.Abstractions;
 using SpencerDenim.Application.Accounts.Contracts;
 using SpencerDenim.Domain.Identity;
+using SpencerDenim.Domain.Reference;
 using SpencerDenim.Infrastructure.Persistence;
 
 namespace SpencerDenim.Infrastructure.Identity.Customers;
@@ -54,7 +55,7 @@ internal sealed class CustomerAddressStore(AppDbContext dbContext, CustomerUserL
 
         return await InTransactionAsync(userId, async () =>
         {
-            if (!await IsServedDistrictAsync(edit.DistrictId, cancellationToken))
+            if (!await IsServedDestinationAsync(edit, cancellationToken))
             {
                 return new CustomerAddressResult.UnknownDistrict();
             }
@@ -87,7 +88,9 @@ internal sealed class CustomerAddressStore(AppDbContext dbContext, CustomerUserL
                 Line1 = edit.Line1.Trim(),
                 Line2 = Trimmed(edit.Line2),
                 City = edit.City.Trim(),
+                CountryCode = edit.CountryCode,
                 DistrictId = edit.DistrictId,
+                Region = Trimmed(edit.Region),
                 PostalCode = Trimmed(edit.PostalCode),
                 Landmark = Trimmed(edit.Landmark),
                 IsDefault = isDefault,
@@ -109,7 +112,7 @@ internal sealed class CustomerAddressStore(AppDbContext dbContext, CustomerUserL
 
         return await InTransactionAsync(userId, async () =>
         {
-            if (!await IsServedDistrictAsync(edit.DistrictId, cancellationToken))
+            if (!await IsServedDestinationAsync(edit, cancellationToken))
             {
                 return new CustomerAddressResult.UnknownDistrict();
             }
@@ -147,7 +150,9 @@ internal sealed class CustomerAddressStore(AppDbContext dbContext, CustomerUserL
             address.Line1 = edit.Line1.Trim();
             address.Line2 = Trimmed(edit.Line2);
             address.City = edit.City.Trim();
+            address.CountryCode = edit.CountryCode;
             address.DistrictId = edit.DistrictId;
+            address.Region = Trimmed(edit.Region);
             address.PostalCode = Trimmed(edit.PostalCode);
             address.Landmark = Trimmed(edit.Landmark);
             address.IsDefault = address.IsDefault || becomesDefault;
@@ -270,10 +275,24 @@ internal sealed class CustomerAddressStore(AppDbContext dbContext, CustomerUserL
     /// ordinary state rather than an error — the address <i>already saved</i> against a district the shop
     /// later stops serving is kept, and the card says so (see <see cref="CustomerAddressDto"/>).
     /// </remarks>
-    private async Task<bool> IsServedDistrictAsync(int districtId, CancellationToken cancellationToken) =>
-        await dbContext.Districts.AnyAsync(
-            district => district.Id == districtId && district.IsActive,
-            cancellationToken);
+    /// <summary>
+    /// A Sri Lankan address needs an active district; an overseas one needs a country that exists and no
+    /// district (owner decision 2026-10-21). The use case has already resolved the country, so the second branch
+    /// is the belt to its braces.
+    /// </summary>
+    private async Task<bool> IsServedDestinationAsync(CustomerAddressEdit edit, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(edit.CountryCode, Country.SriLankaCode, StringComparison.Ordinal))
+        {
+            return edit.DistrictId is null
+                && await dbContext.Countries.AnyAsync(country => country.Code == edit.CountryCode, cancellationToken);
+        }
+
+        return edit.DistrictId is { } districtId
+            && await dbContext.Districts.AnyAsync(
+                district => district.Id == districtId && district.IsActive,
+                cancellationToken);
+    }
 
     private async Task ClearDefaultAsync(int userId, CancellationToken cancellationToken) =>
         await dbContext.CustomerAddresses
@@ -342,11 +361,16 @@ internal sealed class CustomerAddressStore(AppDbContext dbContext, CustomerUserL
                 address.Line2,
                 address.City,
                 address.DistrictId,
-                address.District!.Name,
-                address.District!.IsActive,
+                address.District != null ? address.District.Name : null,
+
+                // An overseas address has no district to deactivate, so it is never flagged for one.
+                address.District == null || address.District.IsActive,
                 address.PostalCode,
                 address.Landmark,
-                address.IsDefault))
+                address.IsDefault,
+                address.CountryCode,
+                address.Country!.Name,
+                address.Region))
             .ToListAsync(cancellationToken);
 
     private static string? Trimmed(string? value) =>

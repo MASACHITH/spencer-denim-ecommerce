@@ -25,7 +25,8 @@ export interface AnnouncementMessage {
 export const PLACEHOLDER_ANNOUNCEMENTS: readonly AnnouncementMessage[] = [
   // Must stay in step with HomeContentData.Announcements, and for the same reason: no free-delivery
   // threshold and no returns window until a setting and a published policy exist to back them (#34).
-  { id: 'delivery', text: 'Island-wide delivery across Sri Lanka', linkUrl: null },
+  // Owner decision 2026-10-21: Sri Lanka plus worldwide delivery.
+  { id: 'delivery', text: 'Delivery across Sri Lanka and worldwide', linkUrl: null },
   { id: 'new-collection', text: 'New season linen has arrived', linkUrl: null },
   { id: 'whatsapp', text: 'Questions? Message us on WhatsApp', linkUrl: null },
 ];

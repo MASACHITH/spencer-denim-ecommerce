@@ -1,3 +1,4 @@
+import { provideTestDeliveryCountries } from '../../core/delivery/delivery-country.testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, TestRequest, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ApplicationRef } from '@angular/core';
@@ -264,7 +265,7 @@ describe('ListingPage', () => {
 
   beforeEach(() => {
     TestBed.configureTestingModule({
-      providers: [provideRouter(routes), provideHttpClient(), provideHttpClientTesting()],
+      providers: [provideRouter(routes), provideHttpClient(), provideHttpClientTesting(), provideTestDeliveryCountries()],
     });
   });
 

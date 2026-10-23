@@ -532,12 +532,21 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
             <dt>Address</dt>
             <dd>
               {{ detail.delivery.line1 }}@if (detail.delivery.line2) {, {{ detail.delivery.line2 }}}<br />
-              {{ detail.delivery.city }}@if (detail.delivery.postalCode) {, {{ detail.delivery.postalCode }}}
+              {{ detail.delivery.city }}@if (detail.delivery.region) {, {{ detail.delivery.region }}}@if (detail.delivery.postalCode) {, {{ detail.delivery.postalCode }}}
               @if (detail.delivery.landmark) {<br />Near {{ detail.delivery.landmark }}}
             </dd>
           }
-          <dt>District</dt>
-          <dd>{{ detail.delivery.districtName }}</dd>
+          @if (detail.delivery.districtName) {
+            <dt>District</dt>
+            <dd data-testid="order-district">{{ detail.delivery.districtName }}</dd>
+          }
+          <dt>Country</dt>
+          <dd data-testid="order-country">
+            {{ detail.delivery.countryName }}
+            @if (detail.delivery.countryCode !== 'LK') {
+              <span class="adm-pill" data-testid="order-overseas">Overseas</span>
+            }
+          </dd>
           <dt>Estimate given</dt>
           <dd>{{ detail.delivery.estimatedDaysMin }}–{{ detail.delivery.estimatedDaysMax }} days</dd>
         </dl>

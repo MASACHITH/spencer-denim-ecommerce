@@ -1,3 +1,4 @@
+import { provideTestDeliveryCountries } from '../../core/delivery/delivery-country.testing';
 import { provideHttpClient } from '@angular/common/http';
 import {
   HttpTestingController,
@@ -95,7 +96,7 @@ describe('AddressesPage (ACC-02)', () => {
           { path: 'account/profile', children: [] },
         ]),
         provideHttpClient(),
-        provideHttpClientTesting(),
+        provideHttpClientTesting(), provideTestDeliveryCountries(),
         { provide: RESPONSE_INIT, useValue: response },
         ...(platform === 'server' ? [{ provide: PLATFORM_ID, useValue: 'server' }] : []),
       ],
@@ -370,6 +371,8 @@ describe('AddressesPage (ACC-02)', () => {
         postalCode: null,
         landmark: null,
         isDefault: false,
+        countryCode: 'LK',
+        region: null,
       });
 
       request.flush([address()], { status: 201, statusText: 'Created' });
@@ -875,6 +878,82 @@ describe('AddressesPage (ACC-02)', () => {
 
       expect(text()).not.toMatch(/email (you|your)/i);
       expect(text()).not.toMatch(/check your (inbox|email)/i);
+    });
+  });
+
+  describe('an overseas address (owner decision 2026-10-21)', () => {
+    it('lists the country first, and swaps the district for a region when one is chosen', async () => {
+      await open([]);
+
+      const country = field('address-field-country') as HTMLSelectElement;
+      expect(country.value).toBe('LK');
+      expect(one('address-field-district')).not.toBeNull();
+
+      choose('address-field-country', 'US');
+
+      expect(one('address-field-district')).toBeNull();
+      expect(one('address-field-region')).not.toBeNull();
+      expect(one('address-field-landmark')).toBeNull();
+      expect(text()).toContain('Include the country code');
+    });
+
+    it('sends the country and the region, and no district or landmark', async () => {
+      await open([]);
+
+      choose('address-field-country', 'US');
+      type('address-field-recipient', 'Ann Lee');
+      type('address-field-phone', '+1 202 555 0143');
+      type('address-field-line1', '1600 Pennsylvania Avenue NW');
+      type('address-field-city', 'Washington');
+      type('address-field-region', 'DC');
+      type('address-field-postal', '20500');
+      submit();
+
+      const request = http.expectOne(
+        (candidate) => candidate.url === '/api/account/addresses' && candidate.method === 'POST',
+      );
+
+      expect(request.request.body).toMatchObject({
+        countryCode: 'US',
+        region: 'DC',
+        districtId: null,
+        landmark: null,
+        postalCode: '20500',
+      });
+
+      request.flush([], { status: 201, statusText: 'Created' });
+      await settle();
+    });
+
+    it('shows the country on an overseas card, and no district', async () => {
+      await open([
+        address({
+          countryCode: 'GB',
+          countryName: 'United Kingdom',
+          region: 'Greater London',
+          districtId: null,
+          districtName: null,
+          city: 'London',
+          postalCode: 'SW1A 2AA',
+        }),
+      ]);
+
+      expect(one('address-country')?.textContent?.trim()).toBe('United Kingdom');
+      expect(text()).toContain('Greater London');
+      expect(text()).not.toContain('London, ');
+      expect(one('address-inactive-district')).toBeNull();
+    });
+
+    it('opens an overseas address for editing in its own country', async () => {
+      await open([
+        address({ countryCode: 'AE', countryName: 'United Arab Emirates', districtId: null, districtName: null }),
+      ]);
+
+      (one('address-edit') as HTMLButtonElement | null)?.click();
+      await settle();
+
+      expect((field('address-field-country') as HTMLSelectElement).value).toBe('AE');
+      expect(one('address-field-district')).toBeNull();
     });
   });
 });

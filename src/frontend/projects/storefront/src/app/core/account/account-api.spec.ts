@@ -160,6 +160,8 @@ describe('AccountApi (ACC-01, ACC-02)', () => {
         postalCode: null,
         landmark: null,
         isDefault: false,
+        countryCode: 'LK',
+        region: null,
       };
 
       const calls: readonly [() => void, string, string][] = [

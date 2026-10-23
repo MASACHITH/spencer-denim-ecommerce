@@ -52,7 +52,22 @@ internal static class PlaceOrderValidator
     /// them, would be four wrong messages on top of the one true one.
     /// </para>
     /// </param>
-    public static IReadOnlyList<ValidationError> Validate(PlaceOrderCommand command, bool? requiresAddress)
+    /// <remarks>A Sri Lankan order, validated exactly as every order was before overseas delivery existed.</remarks>
+    public static IReadOnlyList<ValidationError> Validate(PlaceOrderCommand command, bool? requiresAddress) =>
+        Validate(command, requiresAddress, DestinationRules.SriLanka);
+
+    /// <summary>Every reason the request cannot be acted on, for the destination the handler resolved.</summary>
+    /// <param name="command">The request.</param>
+    /// <param name="requiresAddress">As in the two-argument overload.</param>
+    /// <param name="country">
+    /// The destination country, resolved by the handler from <see cref="PlaceOrderCommand.CountryCode"/>
+    /// (Sri Lanka when the request names none). <see langword="null"/> means the code was malformed or names no
+    /// country, which is one error of its own; the address is then checked only for what every country needs.
+    /// </param>
+    public static IReadOnlyList<ValidationError> Validate(
+        PlaceOrderCommand command,
+        bool? requiresAddress,
+        Abstractions.CheckoutCountry? country)
     {
         ArgumentNullException.ThrowIfNull(command);
 
@@ -114,7 +129,12 @@ internal static class PlaceOrderValidator
 
         Optional(errors, "customerNote", command.CustomerNote, MaxCustomerNoteLength);
 
-        ValidateDelivery(command, requiresAddress, errors);
+        if (country is null)
+        {
+            errors.Add(DestinationRules.UnknownCountry("countryCode"));
+        }
+
+        ValidateDelivery(command, requiresAddress, country, errors);
 
         return errors.AsReadOnly();
     }
@@ -122,6 +142,7 @@ internal static class PlaceOrderValidator
     private static void ValidateDelivery(
         PlaceOrderCommand command,
         bool? requiresAddress,
+        Abstractions.CheckoutCountry? country,
         List<ValidationError> errors)
     {
         if (requiresAddress is not { } needsAddress)
@@ -129,7 +150,11 @@ internal static class PlaceOrderValidator
             return;
         }
 
-        if (!needsAddress)
+        // Overseas (owner decision 2026-10-21): no district and no store pickup. The handler says which method
+        // fits; this only stops a district being demanded of an address that has none.
+        var overseas = country is { IsDomestic: false };
+
+        if (!needsAddress && !overseas)
         {
             // Store pickup. `CK_Orders_Pickup` requires the location, and R7 takes the district from it, so
             // a district on the request is ignored rather than rejected — the shopper did not choose it.
@@ -141,7 +166,13 @@ internal static class PlaceOrderValidator
             return;
         }
 
-        if (command.DistrictId is null or <= 0)
+        if (!needsAddress)
+        {
+            // Store pickup for an overseas country: the handler's method check says so in words.
+            return;
+        }
+
+        if (!overseas && command.DistrictId is null or <= 0)
         {
             errors.Add(new ValidationError("districtId", "Choose the district your order is going to."));
         }
@@ -167,8 +198,22 @@ internal static class PlaceOrderValidator
         Required(errors, "address.city", address.City, MaxCityLength, "Enter the town or city.");
 
         Optional(errors, "address.line2", address.Line2, MaxAddressLineLength);
-        Optional(errors, "address.postalCode", address.PostalCode, MaxPostalCodeLength);
         Optional(errors, "address.landmark", address.Landmark, MaxAddressLineLength);
+
+        if (overseas)
+        {
+            DestinationRules.ValidateOverseasAddress(
+                errors,
+                "address.",
+                country!,
+                address.Region,
+                address.PostalCode,
+                address.Phone);
+        }
+        else
+        {
+            Optional(errors, "address.postalCode", address.PostalCode, MaxPostalCodeLength);
+        }
     }
 
     /// <summary>

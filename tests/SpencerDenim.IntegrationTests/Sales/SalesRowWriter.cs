@@ -40,6 +40,10 @@ public sealed class SalesRowWriter(AppDbContext dbContext)
         ["Email"] = "shopper@example.com",
         ["EmailNormalized"] = "SHOPPER@EXAMPLE.COM",
         ["FirstName"] = "Nimal",
+
+        // Owner decision 2026-10-21: a Sri Lankan order. The columns are NOT NULL with no default.
+        ["DeliveryCountryCode"] = "LK",
+        ["DeliveryCountryName"] = "Sri Lanka",
         ["DeliveryDistrictId"] = 1,
         ["DeliveryDistrictName"] = "Colombo",
         ["DeliveryZone"] = (byte)DeliveryZone.Colombo,
