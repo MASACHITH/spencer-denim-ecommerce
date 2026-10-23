@@ -293,13 +293,14 @@ interface Access {
     .inv__filters { display: grid; gap: var(--space-2); align-items: end; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); }
     .inv__go, .inv__paging, .inv__bar { align-items: center; }
     .inv__bar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-1); }
-    .inv__product { min-width: 8rem; overflow-wrap: anywhere; }
+    .inv__product { min-width: 6rem; overflow-wrap: anywhere; }
     .inv__meta { display: block; font-size: var(--text-small); }
-    .inv__wrap { overflow-wrap: anywhere; min-width: 6.5rem; }
+    .inv__wrap { overflow-wrap: anywhere; min-width: 4rem; }
     .inv__row-actions { flex-wrap: nowrap; white-space: nowrap; gap: var(--space-0-5); }
-    /* Compact row buttons (tester #190, D4a): the three must fit beside the figures at 1280 px and up
-       without the table scrolling inside its card. Still 44 px tall and at least 44 px wide. */
-    .inv__act { padding-inline: var(--space-1); letter-spacing: normal; }
+    /* Compact row buttons (tester #190, D4a): the three must fit beside the figures at 1440 px and up
+       without the table scrolling inside its card. Still 44 px tall and at least 44 px wide (min-width
+       from adm-btn). Below 1440 px the table may scroll inside its card; it never scrolls the page. */
+    .inv__act { padding-inline: var(--space-0-5); letter-spacing: normal; }
     .inv__pick { min-width: var(--tap); justify-content: center; }
     .inv__low { color: var(--color-warning); border-color: var(--color-warning); }
     .inv__results { margin: 0; padding-inline-start: var(--space-2); display: grid; gap: var(--space-0-5); overflow-wrap: anywhere; }

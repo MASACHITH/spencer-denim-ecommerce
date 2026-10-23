@@ -396,8 +396,9 @@ async function measureAtEveryWidth(page: Page, clauses: readonly string[]): Prom
 
     expect(await horizontalOverflow(page), `horizontal overflow at ${width}px`).toBe(0);
 
-    // D4a: from 1280 up the list fits its card; below that it may scroll inside it, never the page.
-    if (width >= 1280) {
+    // D4a: from 1440 up the list fits its card; below that it may scroll inside it, never the page.
+    // (1440 px minus the 256 px sidebar gives 1184 px content — the column budget matches main.css.)
+    if (width >= 1440) {
       const inner = await page.locator('[data-testid="inventory-table"]').locator('xpath=..').evaluate((element) => element.scrollWidth - element.clientWidth);
       expect(inner, `the table scrolls inside its card at ${width}px`).toBeLessThanOrEqual(0);
     }
