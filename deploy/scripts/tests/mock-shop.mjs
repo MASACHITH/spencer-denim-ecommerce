@@ -54,6 +54,9 @@ const known = (h) => {
   return bare === host || (args.www === 'true' && bare === `www.${host}`);
 };
 
+// What another tenant's static Angular front end looks like: a bare <app-root>, none of our headers or SSR markers.
+const otherTenantPage = '<!doctype html><html><head><title>OtherTenantFrontend</title></head><body><app-root></app-root></body></html>';
+
 const ssrPage = fault('no-ssr')
   ? '<!doctype html><html><head><title>shop</title></head><body><app-root></app-root></body></html>'
   : fault('ssr-twice')
@@ -106,6 +109,7 @@ function handle(req, res, secure) {
   if (!secure) {
     if (!known(reqHost)) {
       if (fault('unknown-host-200')) return send(200, ssrPage, shopHeaders());
+      if (fault('unknown-host-other-tenant')) return send(200, otherTenantPage);
       req.socket.destroy();
       return;
     }
@@ -117,7 +121,12 @@ function handle(req, res, secure) {
   }
 
   if (!known(reqHost)) {
-    // Only reachable with the unknown-host-200 fault (otherwise the TLS handshake already refused the name).
+    // Only reachable with an unknown-host fault (otherwise the TLS handshake already refused the name).
+    if (fault('unknown-host-other-tenant')) {
+      // Straight to the socket: send() would add our HSTS and Referrer-Policy, which the other tenant does not send.
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(otherTenantPage);
+    }
     return send(200, ssrPage);
   }
   if (args.www === 'true' && bareHost(reqHost) === `www.${host}`) {
@@ -191,7 +200,7 @@ const httpsServer = https.createServer(
     cert,
     // Like ssl_reject_handshake: a name nobody here owns gets no certificate and no answer.
     SNICallback: (servername, cb) => {
-      if (known(servername) || fault('unknown-host-200')) cb(null, secureContext);
+      if (known(servername) || fault('unknown-host-200') || fault('unknown-host-other-tenant')) cb(null, secureContext);
       else cb(new Error(`no site for ${servername}`));
     },
   },

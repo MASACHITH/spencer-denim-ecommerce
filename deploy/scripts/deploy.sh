@@ -35,9 +35,9 @@ docker network inspect "sd-$env-db" >/dev/null 2>&1 \
   || die "network sd-$env-db does not exist: start the database first ($app/scripts/db-up.sh $env)"
 
 # Directories the containers write to must exist with the right owner, or Docker creates them as root.
-install -d -m 700 -o "$SD_API_UID" -g "$SD_API_UID" \
+owned_dir 700 "$SD_API_UID:$SD_API_UID" \
   "$app/data/dataprotection-keys" "$app/data/media-private" "$app/data/upload-spool"
-install -d -m 755 -o "$SD_API_UID" -g "$SD_API_UID" "$app/data/media-public"
+owned_dir 755 "$SD_API_UID:$SD_API_UID" "$app/data/media-public"
 
 if [ "$env" = production ] && [ "$skip_backup" -eq 0 ]; then
   "$(dirname "$(readlink -f "$0")")/backup-db.sh" "$env" "pre-deploy-$tag"

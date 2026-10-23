@@ -24,15 +24,15 @@ install -d -m 755 "$app" "$app/compose" "$app/scripts" "$app/data"
 install -d -m 700 "$app/config"
 # Where scripts/make-dp-cert.sh puts the optional Data Protection certificate (#195): root-owned, readable by the
 # API's group only, mounted read-only into the API container. Empty until a certificate is made; never cleaned here.
-install -d -m 750 -o root -g "$SD_API_UID" "$app/config/dataprotection"
+owned_dir 750 "root:$SD_API_UID" "$app/config/dataprotection"
 # Written by the API (uid 1654) only: the key ring, the uploads and the upload spool.
-install -d -m 700 -o "$SD_API_UID" -g "$SD_API_UID" \
+owned_dir 700 "$SD_API_UID:$SD_API_UID" \
   "$app/data/dataprotection-keys" "$app/data/media-private" "$app/data/upload-spool"
-install -d -m 755 -o "$SD_API_UID" -g "$SD_API_UID" "$app/data/media-public"
+owned_dir 755 "$SD_API_UID:$SD_API_UID" "$app/data/media-public"
 
 install -d -m 755 "$db" "$db/compose" "$db/scripts"
 install -d -m 700 "$db/config"
-install -d -m 770 -o "$SD_MSSQL_UID" -g 0 "$db/data" "$db/backups"
+owned_dir 770 "$SD_MSSQL_UID:0" "$db/data" "$db/backups"
 
 # Application stack files.
 install -m 644 "$repo/deploy/app/compose.yml" "$repo/deploy/app/compose.$env.yml" "$app/compose/"
