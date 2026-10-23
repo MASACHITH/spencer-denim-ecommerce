@@ -235,6 +235,20 @@ public sealed class MediaService(
         // lock was granted and so after any save holding it committed. Lock order: the asset row first, in
         // both paths (doc 08 §5.3). Changes are accepted only after the commit, so a retried attempt still
         // has the soft delete to write.
+        //
+        // The same order now covers every owner that saves through a lock (#223): sale campaigns, homepage
+        // items, size guides, mega-menu cards, products, categories and departments. This path takes only the
+        // one asset row, so it can never be the far end of a cycle.
+        //
+        // **The stamp is fixed before the first attempt (#223 edge case 2).** If the commit lands but its
+        // acknowledgement is lost, the execution strategy runs the attempt again. That retry must recognise
+        // its own committed delete and answer 204 rather than 404 (or, before #223, a 500 from re-deleting the
+        // poster usage row it had already deleted). datetime2(3) keeps milliseconds, so the stamp is truncated
+        // to them here or the comparison below could never match what was stored.
+        var stampTicks = DateTime.UtcNow.Ticks;
+        var deletedAtUtc = new DateTime(stampTicks - (stampTicks % TimeSpan.TicksPerMillisecond), DateTimeKind.Utc);
+        var commitAttempted = false;
+
         var strategy = dbContext.Database.CreateExecutionStrategy();
 
         var outcome = await strategy.ExecuteAsync<MediaDeleteOutcome>(
@@ -242,10 +256,27 @@ public sealed class MediaService(
             {
                 await using var transaction = await dbContext.Database.BeginTransactionAsync(token);
 
-                await dbContext.Database
-                    .SqlQuery<int>(
-                        $"SELECT 1 AS Value FROM media.MediaAssets WITH (UPDLOCK, READCOMMITTEDLOCK, ROWLOCK) WHERE Id = {asset.Id}")
+                var locked = await dbContext.Database
+                    .SqlQuery<LockedForDelete>(
+                        $"SELECT IsDeleted, DeletedAtUtc, DeletedByUserId FROM media.MediaAssets WITH (UPDLOCK, READCOMMITTEDLOCK, ROWLOCK) WHERE Id = {asset.Id}")
                     .ToListAsync(token);
+
+                // **Re-checked under the lock (#223 edge case 1).** The asset was found through the soft-delete
+                // filter before the lock, so a second delete of the same asset that waited here for the first
+                // one's commit would otherwise soft-delete it again: a second 204 overwriting DeletedAtUtc and
+                // DeletedByUserId. Now it sees the committed delete and answers what a delete of an already
+                // deleted asset always answers: 404. The one exception is this request's own commit, retried
+                // after a lost acknowledgement, which is recognised by the stamp it wrote and answered as the
+                // success it was.
+                if (locked.Count == 0 || locked[0].IsDeleted)
+                {
+                    var ours = commitAttempted
+                        && locked.Count == 1
+                        && locked[0].DeletedAtUtc == deletedAtUtc
+                        && locked[0].DeletedByUserId == deletedByUserId;
+
+                    return ours ? new MediaDeleteOutcome.Deleted() : new MediaDeleteOutcome.NotFound();
+                }
 
                 var usages = await LoadUsagesAsync(asset.Id, token);
                 if (usages.Count > 0)
@@ -336,6 +367,64 @@ public sealed class MediaService(
                         .ToList());
                 }
 
+                // **A department's hero and a category's pictures, by their real foreign keys (#223)**, for the
+                // reason a campaign's banner is checked above: before #223 neither the admin department save nor
+                // the category save wrote a usage row (only the client-asset importer recorded a department's
+                // hero), so every department and category saved before it holds its pictures with no row for the
+                // guard to find. The global filter leaves removed categories out; a removed category releases its
+                // usage rows too (RemoveCategoryCommandHandler).
+                var departments = await dbContext.Departments
+                    .AsNoTracking()
+                    .Where(department => department.HeroImageAssetId == asset.Id)
+                    .OrderBy(department => department.Id)
+                    .Select(department => new { department.Id, department.Name, department.CreatedAtUtc })
+                    .ToListAsync(token);
+
+                var categories = await dbContext.Categories
+                    .AsNoTracking()
+                    .Where(category => category.ImageAssetId == asset.Id || category.BannerAssetId == asset.Id)
+                    .OrderBy(category => category.Id)
+                    .Select(category => new
+                    {
+                        category.Id,
+                        category.Name,
+                        category.CreatedAtUtc,
+                        IsImage = category.ImageAssetId == asset.Id,
+                        IsBanner = category.BannerAssetId == asset.Id,
+                    })
+                    .ToListAsync(token);
+
+                if (departments.Count > 0 || categories.Count > 0)
+                {
+                    var held = departments
+                        .Select(department => new MediaUsageDto(
+                            MediaUsageOwnerTypes.Department,
+                            department.Id.ToString(CultureInfo.InvariantCulture),
+                            MediaUsageRoles.Hero,
+                            department.Name,
+                            department.CreatedAtUtc))
+                        .ToList();
+
+                    foreach (var category in categories)
+                    {
+                        var ownerKey = category.Id.ToString(CultureInfo.InvariantCulture);
+
+                        if (category.IsImage)
+                        {
+                            held.Add(new MediaUsageDto(
+                                MediaUsageOwnerTypes.Category, ownerKey, MediaUsageRoles.Image, category.Name, category.CreatedAtUtc));
+                        }
+
+                        if (category.IsBanner)
+                        {
+                            held.Add(new MediaUsageDto(
+                                MediaUsageOwnerTypes.Category, ownerKey, MediaUsageRoles.Banner, category.Name, category.CreatedAtUtc));
+                        }
+                    }
+
+                    return new MediaDeleteOutcome.InUse(held);
+                }
+
                 // Doc 08 §3.3: "An owner's save rewrites its usage rows in the same transaction." A soft delete
                 // is such a save, so the rows this asset *owns* — what it uses, today only a video's poster —
                 // go with it, in the same SaveChangesAsync below.
@@ -346,16 +435,22 @@ public sealed class MediaService(
                 // lookup reads through that same filter. The rows recording what *other* owners use of this
                 // asset are deliberately untouched — those belong to those owners, and the guard above has
                 // already refused the delete if any exist.
+                //
+                // **Set-based, with no row count expected (#223 edge case 2).** These rows used to be loaded and
+                // removed through the change tracker, which expects each DELETE to affect one row. A retry after
+                // a lost commit acknowledgement re-sent the DELETE for rows the committed attempt had already
+                // removed, got 0 rows, and answered 500 with a concurrency exception. A statement that deletes
+                // whatever is there is the same on every attempt.
                 var ownerId = asset.Id.ToString(CultureInfo.InvariantCulture);
-                var owned = await dbContext.MediaUsages
+                await dbContext.MediaUsages
                     .Where(usage => usage.OwnerType == MediaUsageOwnerTypes.MediaAsset && usage.OwnerId == ownerId)
-                    .ToListAsync(token);
-
-                dbContext.MediaUsages.RemoveRange(owned);
+                    .ExecuteDeleteAsync(token);
 
                 // Doc 08 §3.3: soft delete now, files purged after 30 days (MediaRetention).
-                asset.SoftDelete(DateTime.UtcNow, deletedByUserId);
+                asset.SoftDelete(deletedAtUtc, deletedByUserId);
                 await dbContext.SaveChangesAsync(acceptAllChangesOnSuccess: false, token);
+
+                commitAttempted = true;
                 await transaction.CommitAsync(token);
 
                 return new MediaDeleteOutcome.Deleted();
@@ -373,6 +468,9 @@ public sealed class MediaService(
 
         return outcome;
     }
+
+    /// <summary>The asset row as the delete reads it under its lock.</summary>
+    private sealed record LockedForDelete(bool IsDeleted, DateTime? DeletedAtUtc, int? DeletedByUserId);
 
     // ------------------------------------------------------------------ images
 

@@ -244,7 +244,7 @@ public sealed class PageViewRecordingTests(SqlServerDatabaseFixture sqlServer)
 
             // A published page of this test's own: other suites publish and unpublish the seeded ones, so "the first
             // published page" is an order-dependent assumption (the whole-assembly run found none left published).
-            contentSlug = "w403-page-" + Guid.NewGuid().ToString("N")[..8];
+            contentSlug = "w403-page-" + Guid.NewGuid().ToString("N")[..6];
             db.ContentPages.Add(new Domain.Content.ContentPage
             {
                 Slug = contentSlug,

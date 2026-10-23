@@ -7,6 +7,7 @@ using SpencerDenim.Application.Catalog.Admin.Abstractions;
 using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Catalog;
+using SpencerDenim.Domain.Media;
 
 namespace SpencerDenim.Application.Catalog.Admin;
 
@@ -96,6 +97,29 @@ internal static class CategoryWriteRules
         ["seoTitle"] = category.SeoTitle,
         ["seoDescription"] = category.SeoDescription,
     };
+
+    /// <summary>
+    /// The pictures a category save points at, for the store to lock and re-check inside the save's transaction
+    /// and to record as the category's <c>MediaUsages</c> rows (#223): the tile image as <c>Image</c>, the banner
+    /// as <c>Banner</c>. Before #223 a category wrote no usage row at all, so the media library would delete a
+    /// picture a category tile was showing.
+    /// </summary>
+    public static CatalogMediaClaim MediaClaim(int? imageAssetId, int? bannerAssetId)
+    {
+        var slots = new List<CatalogMediaSlot>(2);
+
+        if (imageAssetId is { } image)
+        {
+            slots.Add(new CatalogMediaSlot(image, MediaUsageRoles.Image, "imageAssetId"));
+        }
+
+        if (bannerAssetId is { } banner)
+        {
+            slots.Add(new CatalogMediaSlot(banner, MediaUsageRoles.Banner, "bannerAssetId"));
+        }
+
+        return new CatalogMediaClaim(slots) { UsageOwnerType = MediaUsageOwnerTypes.Category };
+    }
 
     /// <summary>The position a category takes when it joins a sibling list: the end of it.</summary>
     public static int NextSortOrder(IReadOnlyList<Category> siblings) =>
@@ -215,6 +239,7 @@ public sealed class CreateCategoryCommandHandler(
         };
 
         var occurredAtUtc = clock.UtcNow.UtcDateTime;
+        var media = CategoryWriteRules.MediaClaim(category.ImageAssetId, category.BannerAssetId);
 
         var outcome = await store.AddCategoryAsync(
             category,
@@ -230,10 +255,11 @@ public sealed class CreateCategoryCommandHandler(
                 after: CategoryWriteRules.Snapshot(inserted),
                 command.Actor,
                 occurredAtUtc)),
+            media,
             command.Actor.UserId,
             cancellationToken);
 
-        return CatalogWriteSupport.ToResult(outcome, category.Id);
+        return CatalogWriteSupport.ToResult(outcome, category.Id, media);
     }
 }
 
@@ -445,10 +471,13 @@ public sealed class UpdateCategoryCommandHandler(
         // The stored summary is put right in the same request, so a shopper is never shown a discount the
         // bag will refuse — nor denied one the bag would give. On anything but a move `repriced` is empty
         // and this is one branch, not a query.
+        var media = CategoryWriteRules.MediaClaim(category.ImageAssetId, category.BannerAssetId);
+
         return await CatalogWriteSupport.WithCampaignPricingForAsync(
             CatalogWriteSupport.ToResult(
-                await store.SaveAsync(command.Actor.UserId, cancellationToken),
-                category.Id),
+                await store.SaveWithMediaAsync(category.Id, media, command.Actor.UserId, cancellationToken),
+                category.Id,
+                media),
             campaigns,
             repriced,
             cancellationToken);
@@ -650,9 +679,16 @@ public sealed class RemoveCategoryCommandHandler(
             command.Actor,
             occurredAtUtc));
 
+        // A removed category holds nothing (#223): its usage rows go in the same transaction, the way a removed
+        // sale campaign's do, so its pictures can be deleted from the library. ADM-11 has no restore, and the
+        // library's "used in…" panel could not even name a removed category (its label lookup reads through the
+        // soft-delete filter). An empty claim takes no asset lock.
+        var media = CategoryWriteRules.MediaClaim(null, null);
+
         return CatalogWriteSupport.ToResult(
-            await store.SaveAsync(command.Actor.UserId, cancellationToken),
-            category.Id);
+            await store.SaveWithMediaAsync(category.Id, media, command.Actor.UserId, cancellationToken),
+            category.Id,
+            media);
     }
 
     /// <summary>

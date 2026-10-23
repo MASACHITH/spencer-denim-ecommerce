@@ -6,6 +6,7 @@ using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Inventory;
 using SpencerDenim.Domain.Media;
+using SpencerDenim.Infrastructure.Media;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Interceptors;
 
@@ -399,11 +400,13 @@ internal sealed class ProductWriteStore(AppDbContext dbContext, AuditAndSoftDele
     public async Task<CatalogSaveOutcome> AddProductAsync(
         Product product,
         Func<Product, CancellationToken, Task> afterInsert,
+        CatalogMediaClaim media,
         int? actingUserId,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(product);
         ArgumentNullException.ThrowIfNull(afterInsert);
+        ArgumentNullException.ThrowIfNull(media);
 
         auditColumns.CurrentUserId = actingUserId;
 
@@ -425,6 +428,16 @@ internal sealed class ProductWriteStore(AppDbContext dbContext, AuditAndSoftDele
             ResetIdentityValues(product);
 
             await using var transaction = await dbContext.Database.BeginTransactionAsync(token);
+
+            // #223: every asset the product will point at, locked by ascending id and re-checked, before any
+            // write (doc 08 §5.3). A media-library delete that committed first is seen here; one that comes
+            // second waits for this commit and then finds the usage rows.
+            media.Unavailable = await MediaAssetRowLocks.LockAndRecheckAsync(dbContext, media, token);
+            if (media.Unavailable.Count > 0)
+            {
+                await transaction.RollbackAsync(token);
+                return CatalogSaveOutcome.MediaUnavailable;
+            }
 
             dbContext.Products.Add(product);
 
@@ -522,6 +535,68 @@ internal sealed class ProductWriteStore(AppDbContext dbContext, AuditAndSoftDele
         {
             return CatalogSaveOutcome.DuplicateKey;
         }
+    }
+
+    public async Task<CatalogSaveOutcome> SaveWithMediaAsync(
+        CatalogMediaClaim media,
+        int? actingUserId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(media);
+
+        auditColumns.CurrentUserId = actingUserId;
+
+        if (!dbContext.ChangeTracker.HasChanges())
+        {
+            return CatalogSaveOutcome.NothingToSave;
+        }
+
+        // #223. Until now this was one SaveChanges with no lock, so a media-library delete could commit between
+        // the handler's RCSI read of an asset and this write, leaving a gallery row, and a usage row, on a
+        // soft-deleted picture. Now: one transaction; every claimed asset locked by ascending id
+        // (MediaAssetRowLocks) and re-checked; then the whole graph in one SaveChanges. MediaService.DeleteAsync
+        // takes the same lock on its asset row first, so exactly one of the two wins (doc 08 §5.3). Changes are
+        // accepted only after the commit, so a retried attempt still has every edit to write.
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+
+        var outcome = await strategy.ExecuteAsync(async token =>
+        {
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(token);
+
+            media.Unavailable = await MediaAssetRowLocks.LockAndRecheckAsync(dbContext, media, token);
+            if (media.Unavailable.Count > 0)
+            {
+                await transaction.RollbackAsync(token);
+                return CatalogSaveOutcome.MediaUnavailable;
+            }
+
+            try
+            {
+                await dbContext.SaveChangesAsync(acceptAllChangesOnSuccess: false, token);
+                await transaction.CommitAsync(token);
+                return CatalogSaveOutcome.Saved;
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                // Nothing was written: the UPDATE's RowVersion predicate matched no row and the transaction
+                // goes with it. The caller reloads and re-applies (doc 08 §1.5).
+                await transaction.RollbackAsync(token);
+                return CatalogSaveOutcome.ConcurrencyConflict;
+            }
+            catch (DbUpdateException exception) when (IsDuplicateKey(exception))
+            {
+                await transaction.RollbackAsync(token);
+                return CatalogSaveOutcome.DuplicateKey;
+            }
+        },
+        cancellationToken);
+
+        if (outcome == CatalogSaveOutcome.Saved)
+        {
+            dbContext.ChangeTracker.AcceptAllChanges();
+        }
+
+        return outcome;
     }
 
     /// <summary>

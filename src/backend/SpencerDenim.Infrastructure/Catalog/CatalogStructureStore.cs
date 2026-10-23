@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Application.Catalog.Admin.Abstractions;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Media;
+using SpencerDenim.Infrastructure.Media;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Interceptors;
 
@@ -109,11 +110,13 @@ internal sealed class CatalogStructureStore(AppDbContext dbContext, AuditAndSoft
         Category category,
         string? parentPath,
         Action<Category> enlistAuditRow,
+        CatalogMediaClaim media,
         int? actingUserId,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(category);
         ArgumentNullException.ThrowIfNull(enlistAuditRow);
+        ArgumentNullException.ThrowIfNull(media);
 
         auditColumns.CurrentUserId = actingUserId;
 
@@ -141,6 +144,14 @@ internal sealed class CatalogStructureStore(AppDbContext dbContext, AuditAndSoft
 
             await using var transaction = await dbContext.Database.BeginTransactionAsync(token);
 
+            // #223: the pictures first, before any write (doc 08 §5.3).
+            media.Unavailable = await MediaAssetRowLocks.LockAndRecheckAsync(dbContext, media, token);
+            if (media.Unavailable.Count > 0)
+            {
+                await transaction.RollbackAsync(token);
+                return CatalogSaveOutcome.MediaUnavailable;
+            }
+
             dbContext.Categories.Add(category);
 
             try
@@ -151,6 +162,11 @@ internal sealed class CatalogStructureStore(AppDbContext dbContext, AuditAndSoft
                 category.Depth = CategoryPath.DepthOf(category.Path);
 
                 enlistAuditRow(category);
+
+                if (media.UsageOwnerType is { } ownerType)
+                {
+                    await MediaAssetRowLocks.SyncUsagesAsync(dbContext, ownerType, category.Id, media.Slots, token);
+                }
 
                 await dbContext.SaveChangesAsync(token);
                 await transaction.CommitAsync(token);
@@ -190,6 +206,73 @@ internal sealed class CatalogStructureStore(AppDbContext dbContext, AuditAndSoft
         {
             return CatalogSaveOutcome.DuplicateKey;
         }
+    }
+
+    public async Task<CatalogSaveOutcome> SaveWithMediaAsync(
+        int ownerId,
+        CatalogMediaClaim media,
+        int? actingUserId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(media);
+
+        auditColumns.CurrentUserId = actingUserId;
+
+        // #223. One transaction, and nothing written before the locks: the department row when the claim names
+        // one, then every asset by ascending id (MediaAssetRowLocks), then the re-check, then the usage rows and
+        // the owner row together. MediaService.DeleteAsync locks the same asset row first, so a delete racing
+        // this save either commits before the lock is granted (and the re-check refuses the save) or waits for
+        // this commit (and finds the usage row). Changes are accepted only after the commit, so a retried
+        // attempt still has every edit to write.
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+
+        var outcome = await strategy.ExecuteAsync(async token =>
+        {
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(token);
+
+            media.Unavailable = await MediaAssetRowLocks.LockAndRecheckAsync(dbContext, media, token);
+            if (media.Unavailable.Count > 0)
+            {
+                await transaction.RollbackAsync(token);
+                return CatalogSaveOutcome.MediaUnavailable;
+            }
+
+            if (media.UsageOwnerType is { } ownerType)
+            {
+                await MediaAssetRowLocks.SyncUsagesAsync(dbContext, ownerType, ownerId, media.Slots, token);
+            }
+
+            if (!dbContext.ChangeTracker.HasChanges())
+            {
+                await transaction.RollbackAsync(token);
+                return CatalogSaveOutcome.NothingToSave;
+            }
+
+            try
+            {
+                await dbContext.SaveChangesAsync(acceptAllChangesOnSuccess: false, token);
+                await transaction.CommitAsync(token);
+                return CatalogSaveOutcome.Saved;
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                await transaction.RollbackAsync(token);
+                return CatalogSaveOutcome.ConcurrencyConflict;
+            }
+            catch (DbUpdateException exception) when (IsDuplicateKey(exception))
+            {
+                await transaction.RollbackAsync(token);
+                return CatalogSaveOutcome.DuplicateKey;
+            }
+        },
+        cancellationToken);
+
+        if (outcome == CatalogSaveOutcome.Saved)
+        {
+            dbContext.ChangeTracker.AcceptAllChanges();
+        }
+
+        return outcome;
     }
 
     /// <summary>

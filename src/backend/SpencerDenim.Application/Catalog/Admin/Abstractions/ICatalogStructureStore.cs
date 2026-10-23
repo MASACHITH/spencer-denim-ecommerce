@@ -98,11 +98,17 @@ public interface ICatalogStructureStore
     /// tracker, because a retry on a context still holding the failed attempt's edits is worse than no
     /// retry (the W1-13 lesson).
     /// </para>
+    /// <para>
+    /// <paramref name="media"/> is locked and re-checked inside the same transaction before the insert, and the
+    /// new category's usage rows are written once its id exists (#223, doc 08 §5.3). A failed re-check answers
+    /// <see cref="CatalogSaveOutcome.MediaUnavailable"/> and inserts nothing.
+    /// </para>
     /// </summary>
     Task<CatalogSaveOutcome> AddCategoryAsync(
         Category category,
         string? parentPath,
         Action<Category> enlistAuditRow,
+        CatalogMediaClaim media,
         int? actingUserId,
         CancellationToken cancellationToken);
 
@@ -111,6 +117,19 @@ public interface ICatalogStructureStore
     /// columns of doc 08 §1.5 [A].
     /// </summary>
     Task<CatalogSaveOutcome> SaveAsync(int? actingUserId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// <see cref="SaveAsync"/> for a save that points a department or category at pictures (#223): one
+    /// transaction that locks the claim's department row (if any), then each claimed asset by ascending id,
+    /// re-checks every asset, rewrites the owner's usage rows (<see cref="CatalogMediaClaim.UsageOwnerType"/>,
+    /// <paramref name="ownerId"/>), and only then writes. A failed re-check answers
+    /// <see cref="CatalogSaveOutcome.MediaUnavailable"/> and writes nothing.
+    /// </summary>
+    Task<CatalogSaveOutcome> SaveWithMediaAsync(
+        int ownerId,
+        CatalogMediaClaim media,
+        int? actingUserId,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>What still references a category (doc 08 §3.2's soft-delete guard).</summary>
@@ -152,4 +171,11 @@ public enum CatalogSaveOutcome
     /// race, not the ordinary case.
     /// </summary>
     DuplicateKey,
+
+    /// <summary>
+    /// A picture the row would point at was deleted, or stopped being a ready public file of its slot's kind,
+    /// before the save could lock it (#223). Nothing was written; <see cref="CatalogMediaClaim.Unavailable"/>
+    /// names the slots.
+    /// </summary>
+    MediaUnavailable,
 }

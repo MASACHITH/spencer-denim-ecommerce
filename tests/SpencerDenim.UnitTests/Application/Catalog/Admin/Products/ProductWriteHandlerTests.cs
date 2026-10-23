@@ -49,6 +49,75 @@ public sealed class ProductWriteHandlerTests
         _store.SizeGuideIds.Add(70);
     }
 
+    // ---- #223: every picture and the video claimed under the lock -----------------------------------
+
+    [Fact]
+    public async Task A_create_claims_every_picture_the_video_and_the_swatch_against_the_fields_that_carried_them()
+    {
+        var photo = _store.AddImageAsset();
+        var video = _store.AddVideoAsset();
+        var swatch = _store.AddImageAsset();
+
+        var result = await Create(Form(
+            colours: [new ProductColourInput(null, "Indigo Rinse", 51, null, swatch, 0)],
+            variants: [Variant("Indigo Rinse", 61, "SKU-S")],
+            media:
+            [
+                new ProductMediaInput(photo, null, ProductMediaRole.Gallery, 0, "Front view"),
+                new ProductMediaInput(video, null, ProductMediaRole.Video, 0, null),
+            ]));
+
+        Assert.IsType<CatalogWriteResult.Succeeded>(result);
+        var slots = _store.LastMediaClaim!.Slots;
+
+        Assert.Contains(new CatalogMediaSlot(_store.MediaAssets[photo].Id, MediaUsageRoles.Gallery, "media[0].assetPublicId"), slots);
+        Assert.Contains(new CatalogMediaSlot(_store.MediaAssets[photo].Id, MediaUsageRoles.Card, "media[0].assetPublicId"), slots);
+        Assert.Contains(new CatalogMediaSlot(_store.MediaAssets[swatch].Id, MediaUsageRoles.Swatch, "colours[0].swatchAssetPublicId"), slots);
+
+        var videoSlot = Assert.Single(slots, slot => slot.UsageRole == MediaUsageRoles.Video);
+        Assert.Equal(_store.MediaAssets[video].Id, videoSlot.MediaAssetId);
+        Assert.Equal(MediaAssetType.Video, videoSlot.ExpectedType);
+        Assert.All(slots.Where(slot => slot.UsageRole != MediaUsageRoles.Video), slot => Assert.Equal(MediaAssetType.Image, slot.ExpectedType));
+    }
+
+    [Fact]
+    public async Task A_create_whose_picture_was_deleted_before_the_lock_is_a_field_error_and_nothing_is_created()
+    {
+        var photo = _store.AddImageAsset();
+        _store.UnusableAssetIds.Add(_store.MediaAssets[photo].Id);
+
+        var result = await Create(Form(
+            colours: [Colour("Indigo Rinse", 51)],
+            variants: [Variant("Indigo Rinse", 61, "SKU-S")],
+            media: [new ProductMediaInput(photo, null, ProductMediaRole.Gallery, 0, "Front view")]));
+
+        var error = Assert.Single(Assert.IsType<CatalogWriteResult.Invalid>(result).Errors);
+        Assert.Equal("media[0].assetPublicId", error.Field);
+        Assert.Empty(_store.Products);
+    }
+
+    [Fact]
+    public async Task An_edit_whose_new_picture_was_deleted_before_the_lock_is_a_field_error_and_nothing_is_saved()
+    {
+        var product = await Seed();
+        var photo = _store.AddImageAsset();
+        var swatch = _store.AddImageAsset();
+        _store.UnusableAssetIds.UnionWith([_store.MediaAssets[photo].Id, _store.MediaAssets[swatch].Id]);
+        var saves = _store.Saves;
+
+        var form = FormFrom(product) with
+        {
+            Colours = [new ProductColourInput(product.Colours.Single().Id, "Indigo Rinse", 51, null, swatch, 0)],
+            Media = [new ProductMediaInput(photo, null, ProductMediaRole.Gallery, 0, "Front view")],
+        };
+
+        var result = await Update(product.Id, form);
+
+        var fields = Assert.IsType<CatalogWriteResult.Invalid>(result).Errors.Select(error => error.Field).Order();
+        Assert.Equal(["colours[0].swatchAssetPublicId", "media[0].assetPublicId"], fields);
+        Assert.Equal(saves, _store.Saves);
+    }
+
     // ---- create ---------------------------------------------------------------------------------
 
     [Fact]

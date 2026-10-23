@@ -1,7 +1,9 @@
 using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Catalog.Admin;
+using SpencerDenim.Application.Catalog.Admin.Abstractions;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Catalog;
+using SpencerDenim.Domain.Media;
 
 namespace SpencerDenim.UnitTests.Application.Catalog.Admin;
 
@@ -109,6 +111,51 @@ public sealed class DepartmentWriteHandlerTests
 
         Assert.IsType<CatalogWriteResult.Succeeded>(await Update(Edit(women) with { HeroImageAssetId = 41 }));
         Assert.Equal(41, women.HeroImageAssetId);
+    }
+
+    /// <summary>
+    /// #223: the hero is handed to the store as a claim — locked after this department's own row and recorded as
+    /// a <c>Department</c>/<c>Hero</c> usage row — so the media library refuses to delete it.
+    /// </summary>
+    [Fact]
+    public async Task A_hero_save_claims_the_picture_after_locking_the_department_row()
+    {
+        var women = _store.Departments.Single(department => department.Id == 1);
+
+        Assert.IsType<CatalogWriteResult.Succeeded>(await Update(Edit(women) with { HeroImageAssetId = 41 }));
+
+        var (ownerId, claim) = _store.LastMediaSave!.Value;
+        Assert.Equal(1, ownerId);
+        Assert.Equal(1, claim.LockDepartmentId);
+        Assert.Equal(MediaUsageOwnerTypes.Department, claim.UsageOwnerType);
+        Assert.Equal(new CatalogMediaSlot(41, MediaUsageRoles.Hero, "heroImageAssetId"), Assert.Single(claim.Slots));
+        Assert.Single(_store.Usages[(MediaUsageOwnerTypes.Department, 1)]);
+    }
+
+    [Fact]
+    public async Task Clearing_the_hero_releases_its_usage_row()
+    {
+        var women = _store.Departments.Single(department => department.Id == 1);
+        Assert.IsType<CatalogWriteResult.Succeeded>(await Update(Edit(women) with { HeroImageAssetId = 41 }));
+
+        Assert.IsType<CatalogWriteResult.Succeeded>(await Update(Edit(women) with { HeroImageAssetId = null }));
+
+        Assert.Empty(_store.Usages[(MediaUsageOwnerTypes.Department, 1)]);
+    }
+
+    /// <summary>#223: a delete that locked the picture first is a 400 on the field, in the handler's own shape.</summary>
+    [Fact]
+    public async Task A_hero_deleted_before_the_save_could_lock_it_is_a_field_error()
+    {
+        var women = _store.Departments.Single(department => department.Id == 1);
+        _store.UnusableAssetIds.Add(41);
+
+        var result = await Update(Edit(women) with { HeroImageAssetId = 41 });
+
+        var error = Assert.Single(Assert.IsType<CatalogWriteResult.Invalid>(result).Errors);
+        Assert.Equal("heroImageAssetId", error.Field);
+        Assert.Contains("removed from the media library", error.Message, StringComparison.Ordinal);
+        Assert.Equal(0, _store.Saves);
     }
 
     [Fact]

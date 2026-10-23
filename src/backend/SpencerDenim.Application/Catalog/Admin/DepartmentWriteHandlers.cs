@@ -6,6 +6,7 @@ using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Catalog.Admin.Abstractions;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Catalog;
+using SpencerDenim.Domain.Media;
 
 namespace SpencerDenim.Application.Catalog.Admin;
 
@@ -83,9 +84,24 @@ public sealed class UpdateDepartmentCommandHandler(
         }
 
         auditLog.Enlist(audit);
+
+        // #223. Before this the admin department save wrote no usage row and took no lock, so the media library
+        // could delete the hero a department was showing (only the client-asset importer recorded one). Now the
+        // save records the hero as the client-asset importer does (OwnerType Department, role Hero) and follows
+        // doc 08 §5.3's order: this department's row first, then the hero's asset row, then the writes — the
+        // order a mega-menu card's save takes, which locks the same department row before its own picture.
+        var media = new CatalogMediaClaim(department.HeroImageAssetId is { } hero
+            ? [new CatalogMediaSlot(hero, MediaUsageRoles.Hero, "heroImageAssetId")]
+            : [])
+        {
+            LockDepartmentId = department.Id,
+            UsageOwnerType = MediaUsageOwnerTypes.Department,
+        };
+
         return CatalogWriteSupport.ToResult(
-            await store.SaveAsync(command.Actor.UserId, cancellationToken),
-            department.Id);
+            await store.SaveWithMediaAsync(department.Id, media, command.Actor.UserId, cancellationToken),
+            department.Id,
+            media);
     }
 
     /// <summary>

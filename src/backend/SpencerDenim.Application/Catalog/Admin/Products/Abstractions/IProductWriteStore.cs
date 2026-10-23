@@ -122,9 +122,15 @@ public interface IProductWriteStore
     /// holding the failed attempt's edits is worse than no retry (the W1-13 lesson, as
     /// <c>CatalogStructureStore.AddCategoryAsync</c> records it).
     /// </param>
+    /// <param name="media">
+    /// Every picture and video the product will point at, locked (ascending id) and re-checked inside the
+    /// transaction before the insert (#223, doc 08 §5.3). A failed re-check answers
+    /// <see cref="CatalogSaveOutcome.MediaUnavailable"/> and inserts nothing.
+    /// </param>
     Task<CatalogSaveOutcome> AddProductAsync(
         Product product,
         Func<Product, CancellationToken, Task> afterInsert,
+        CatalogMediaClaim media,
         int? actingUserId,
         CancellationToken cancellationToken);
 
@@ -153,6 +159,17 @@ public interface IProductWriteStore
     /// columns of doc 08 §1.5 [A].
     /// </summary>
     Task<CatalogSaveOutcome> SaveAsync(int? actingUserId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// <see cref="SaveAsync"/> for a product edit (#223): one transaction that locks every asset in
+    /// <paramref name="media"/> by ascending id, re-checks each (not deleted, ready, public, of its slot's kind)
+    /// and only then writes the product, its media rows and its usage rows. A failed re-check answers
+    /// <see cref="CatalogSaveOutcome.MediaUnavailable"/> and writes nothing.
+    /// </summary>
+    Task<CatalogSaveOutcome> SaveWithMediaAsync(
+        CatalogMediaClaim media,
+        int? actingUserId,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>

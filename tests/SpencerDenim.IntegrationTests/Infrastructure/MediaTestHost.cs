@@ -59,10 +59,12 @@ public sealed class MediaTestHost : IAsyncDisposable
     /// and <c>UseExceptionHandler</c> turns the throw into a 500, so the status an admin screen gets otherwise
     /// depends on which environment it is talking to.
     /// </param>
+    /// <param name="configureServices">Extra service registrations, e.g. an EF interceptor that counts deadlocks.</param>
     public static MediaTestHost Create(
         string connectionString,
         IReadOnlyDictionary<string, string?>? configure = null,
-        string environment = "Testing")
+        string environment = "Testing",
+        Action<IServiceCollection>? configureServices = null)
     {
         var root = Path.Combine(Path.GetTempPath(), "sd-media-it-" + Guid.NewGuid().ToString("N"));
         var publicRoot = Path.Combine(root, "public-volume");
@@ -85,7 +87,7 @@ public sealed class MediaTestHost : IAsyncDisposable
         }
 
         return new MediaTestHost(
-            new ApiFactory(connectionString, environment, configuration),
+            new ApiFactory(connectionString, environment, configuration, configureServices: configureServices),
             root,
             publicRoot,
             privateRoot);
