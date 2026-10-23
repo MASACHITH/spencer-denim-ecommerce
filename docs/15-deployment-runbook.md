@@ -419,8 +419,8 @@ and full address to a log.
 | Gateway error log (same stream) | Level `crit` only: a crashed worker, a failed start or reload, and (rarely) a temporary file nginx could not write, which DOES carry the request: see the paragraph below | as above |
 | **Host nginx access log** (production and staging sites) | **Off.** The gateway's log is the only access log. The port-80 redirect is off too, because it would otherwise land in the server-wide log the client's other sites share | — |
 | Host nginx error log | `/var/log/nginx/spencer-denim/<env>.error.log`, level `crit`: normally empty | 3 days (`/etc/logrotate.d/spencer-denim`, from `deploy/host-nginx/spencer-denim.logrotate`) |
-| API (Serilog, JSON) | See "Still open" below | Docker, 10 MB × 5 |
-| Storefront (Node) | See "Still open" below | Docker, 10 MB × 5 |
+| API (Serilog, JSON) | One line per request (method, the **redacted path**, status, time) and the application's own events. No query string, no address, no order token, no database error's text: see "The API's and the storefront's own logs" below | Docker, 10 MB × 5 |
+| Storefront (Node) | Errors and render failures, with the redacted path only (#201) | Docker, 10 MB × 5 |
 
 The gateway line, exactly (one line in the log; wrapped here):
 
@@ -510,19 +510,39 @@ investigation** (a flood from one source, a fraud pattern), decide it with the o
 (IPv4 `/24`, IPv6 `/48`, by a `map` on `$remote_addr`), in its own field, and with a retention of days. It is not
 in the log by default.
 
-### Still open (found while checking the rest of the stack for #179; not fixed here)
+### The API's and the storefront's own logs (#201, #207 review)
 
-- **The API's request log writes the order token.** `UseSerilogRequestLogging` logs
-  `HTTP GET /api/orders/{publicId} responded 200 in …` at `Information` for every request, with `RequestPath`
-  holding the **path** (not the query; confirmed on the built API image: a `GET /api/orders/<guid>?token=abc` logs the
-  GUID and not `abc`). So the order token, the PayPal path ids and staff's order ids are in the API container's log.
-  No IP and no query string. A fix needs a small change in
-  `SerilogSetup.cs` (redact `RequestPath` with the same rules as the gateway's) and is a separate issue.
-- **The storefront's render-failure line writes the full address.** `server/render-failure.ts` logs
-  `GET <originalUrl> failed` with the query string, to stderr, when a render fails unexpectedly. Rare, but
-  `/order/{token}` and `/account/reset-password?token=` are both rendered there. Also a code change.
-- Both containers keep 10 MB × 5 and are recreated by a deploy that changes the image, which bounds the exposure
-  but does not remove it. Treat their logs as secret until those two are fixed.
+Both were still writing credentials when the gateway was fixed (#179); #201 fixed them, and the #207 review closed
+one more hole. What they write now, and the rules that keep it so:
+
+- **The path is redacted on every event, not only the request line.** The API's request line prints
+  `RequestPathRedaction.ForLog` of the path (the same table as `$sd_log_path` above), and an enricher redacts the
+  `RequestPath` property on every other event too (ASP.NET Core's hosting scope copies the raw path onto each one).
+  The storefront prints `server/log-path.ts`'s port of the same rule. No query string, no address.
+- **Below Warning, ASP.NET Core's own categories are not written at all, whatever the configuration says.** Those
+  lines ("Request starting HTTP/1.1 GET https://host/api/orders/{token}?…", the routing matcher's "candidates for
+  the request path", Kestrel's refused targets) print the full request target. `appsettings.json` already sets
+  `Microsoft.AspNetCore` to Warning, and the API drops anything lower from those categories in code
+  (`SerilogSetup.IsAspNetCoreBelowWarning`), so **setting `Serilog__MinimumLevel__Override__Microsoft.AspNetCore`
+  to `Information` or `Debug` to chase a problem has no effect on them**: raising the floor is configuration,
+  lowering it is not available. Warning and above (an unhandled exception, an antiforgery failure) are written, with
+  the path redacted.
+- **A database error is written as its number, never its text.** SQL Server quotes the row in several messages: a
+  duplicate key ends `The duplicate key value is (…)` and a truncation `Truncated value: '…'`. On this shop that
+  value is a checkout key (which `POST /api/checkout/orders` answers with the whole order: in effect the order's
+  token) or a shopper's e-mail address, and before the #207 review a double-submitted checkout or a registration
+  race wrote it at Error. Now EF Core's `SaveChangesFailed`, `CommandError` and `QueryIterationFailed` are written at
+  Debug (`AppDbContext.DatabaseErrorEvents`; production writes EF Core at Warning and above, so not at all), and every
+  event passes `SqlErrorRedactingSink` before any sink writes it: an exception that holds a `SqlException` is written
+  as `SQL Server error 2601 (class 14, state 1, line 1): duplicate key in unique index 'UX_Orders_CheckoutIdempotencyKey'
+  on 'sales.Orders' (the value is withheld).`, with its original stack trace. Other errors keep number, class, state,
+  procedure and line, and keep their message only when it names schema objects alone (208 "Invalid object name",
+  547 a foreign-key conflict, a timeout). The same description is what `sales.PaymentEvents.LastError` stores and
+  what `/health/ready` shows when seeding fails. **To see a database error's full text**, reproduce it against
+  staging or a local database; the production log does not have it.
+- Both containers keep 10 MB × 5 and are recreated by a deploy that changes the image. Keep their logs readable by
+  the `docker` group only, like the gateway's: the rules above cover what the code is known to write, not every
+  line a future change might add.
 
 ### The page-view rate limit
 

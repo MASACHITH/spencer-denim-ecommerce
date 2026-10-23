@@ -605,15 +605,21 @@ internal sealed partial class CatalogSeedHostedService(
     /// EF wraps everything in "An error occurred while saving the entity changes. See the inner exception
     /// for details", which is the least useful sentence in .NET and was all that reached
     /// <c>/health/ready</c>. The inner chain is where "Invalid object name 'catalog.Departments'" and
-    /// "Cannot insert duplicate key row" actually live, and those are the two an operator needs.
+    /// "Cannot insert duplicate key row" actually live, and those are the two an operator needs (the second now
+    /// as its error number and index name, without the value).
     /// </remarks>
     private static string Explain(Exception exception)
     {
         var parts = new List<string>();
+        var replacements = SqlErrorRedaction.Replacements(exception);
 
+        // Each message through SqlErrorRedaction (#207 review): a database error is its number, class, state and
+        // (for a duplicate key) the index, and keeps its text only when that text names schema objects alone,
+        // as "Invalid object name" (208) does. "The duplicate key value is (…)" is not written into a health
+        // report or the log.
         for (var current = exception; current is not null; current = current.InnerException)
         {
-            parts.Add(current.Message);
+            parts.Add(SqlErrorRedaction.SafeMessage(current, replacements));
         }
 
         return string.Join(" -> ", parts);

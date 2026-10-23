@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
+using SpencerDenim.Infrastructure.Persistence;
 
 namespace SpencerDenim.Infrastructure.Sales.Payments;
 
@@ -89,7 +90,7 @@ internal sealed partial class PaymentEventRetryRunner(
 
                     await events.MarkFailedAsync(
                         paymentEvent.EventId,
-                        $"{exception.GetType().Name}: {Clip(exception.Message)}",
+                        $"{exception.GetType().Name}: {Clip(SqlErrorRedaction.SafeMessage(exception))}",
                         next,
                         CancellationToken.None);
                 }
