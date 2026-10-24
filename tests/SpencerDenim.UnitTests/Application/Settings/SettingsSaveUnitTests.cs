@@ -51,6 +51,7 @@ public sealed class SettingsSaveUnitTests
                 new[] { SettingKeys.Bank.Group },
                 new[] { SettingKeys.PayPal.Group },
                 new[] { SettingKeys.Traffic.Group },
+                new[] { SettingKeys.CurrencyDisplay.Group },
                 new[] { SettingKeys.Reviews.Group },
                 new[] { SettingKeys.Smtp.Group },
             ],

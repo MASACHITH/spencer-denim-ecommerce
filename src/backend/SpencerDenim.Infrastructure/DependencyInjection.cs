@@ -306,6 +306,7 @@ public static class DependencyInjection
         // purpose: the public one has no method that could reach a secret, a permission or an unseeded key.
         services.AddScoped<ISettingsStore, SettingsStore>();
         services.AddScoped<ISiteSettingsReader, SiteSettingsReader>();
+        services.AddScoped<ICurrencyRatesReader, CurrencyRatesReader>();
         services.AddScoped<ISettingSecretProtector, SettingSecretProtector>();
 
         // Doc 08 §3.8's sixty-second cache. A singleton, because a cache scoped to one request caches

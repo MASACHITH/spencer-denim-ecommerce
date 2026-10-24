@@ -381,6 +381,12 @@ public static class DependencyInjection
             ICommandHandler<UpdateTrafficSettingsCommand, SettingsWriteResult>,
             UpdateTrafficSettingsCommandHandler>();
 
+        // Issue #248: the five display-only exchange rates (Settings.Edit), and the public feed that reads them.
+        services.AddScoped<
+            ICommandHandler<UpdateCurrencyRatesCommand, SettingsWriteResult>,
+            UpdateCurrencyRatesCommandHandler>();
+        services.AddScoped<IQueryHandler<GetCurrencyRatesQuery, IReadOnlyList<CurrencyRateDto>>, GetCurrencyRatesQueryHandler>();
+
         // Issue #189: the review approval switch (Settings.Edit).
         services.AddScoped<
             ICommandHandler<UpdateReviewSettingsCommand, SettingsWriteResult>,
