@@ -369,70 +369,88 @@ test.describe('the outcome of Save is in the window (tester round, major 1)', ()
     await page.locator(SELECTORS.save).click();
   }
 
+  /**
+   * Save pressed wherever a click leaves it: the page is at the top, Save is below the fold, and the click scrolls it
+   * into view, about halfway down the window. This is how the tester met the defect (Save about 490 px down at 390x844,
+   * the message 160 px above the window), and the other staging cannot show it: with Save on the bottom edge of the
+   * window, a message above the form is still inside it, because the form is shorter than the window.
+   */
+  async function pressSaveWhereAClickLeavesIt(page: Page): Promise<void> {
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.locator(SELECTORS.save).click();
+  }
+
+  const STAGINGS = [
+    { name: 'on the bottom edge of the window', press: pressSaveFromTheBottomEdge },
+    { name: 'where a click leaves it', press: pressSaveWhereAClickLeavesIt },
+  ] as const;
+
   for (const size of SIZES) {
     test.describe(`at ${size.width}x${size.height}`, () => {
       for (const outcome of OUTCOMES) {
-        test(`shows the ${outcome} outcome inside the window`, async ({ page }) => {
-          await page.setViewportSize(size);
-          await ownState(page, 'currency-outcome');
-          await reopen(page);
+        for (const staging of STAGINGS) {
+          test(`shows the ${outcome} outcome inside the window, Save pressed ${staging.name}`, async ({ page }) => {
+            await page.setViewportSize(size);
+            await ownState(page, 'currency-outcome');
+            await reopen(page);
 
-          const refuse = (status: number, body: object) =>
-            page.route('**/api/admin/settings/currency-rates', (route) =>
-              route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }),
-            );
+            const refuse = (status: number, body: object) =>
+              page.route('**/api/admin/settings/currency-rates', (route) =>
+                route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }),
+              );
 
-          if (outcome === 'saved') {
-            await enter(page, 'gbp', '399.5');
-            await pressSaveFromTheBottomEdge(page);
-            await expect(page.locator(SELECTORS.saved)).toHaveText('Rates saved.');
-            await expectInWindow(page, SELECTORS.saved, 'the saved message');
-          }
+            if (outcome === 'saved') {
+              await enter(page, 'gbp', '399.5');
+              await staging.press(page);
+              await expect(page.locator(SELECTORS.saved)).toHaveText('Rates saved.');
+              await expectInWindow(page, SELECTORS.saved, 'the saved message');
+            }
 
-          if (outcome === 'nothing to save') {
-            await pressSaveFromTheBottomEdge(page);
-            await expect(page.locator(SELECTORS.saved)).toHaveText('There is nothing to save: no rate has changed.');
-            await expectInWindow(page, SELECTORS.saved, 'the nothing-to-save message');
-          }
+            if (outcome === 'nothing to save') {
+              await staging.press(page);
+              await expect(page.locator(SELECTORS.saved)).toHaveText('There is nothing to save: no rate has changed.');
+              await expectInWindow(page, SELECTORS.saved, 'the nothing-to-save message');
+            }
 
-          if (outcome === 'rejected rate') {
-            // A rate the screen accepts and the server does not: its message is beside its box, and the box has focus.
-            await refuse(400, { title: 'One or more fields are invalid.', errors: { gbp: ['Use at most 4 decimal places.'] } });
-            await enter(page, 'gbp', '399.5');
-            await pressSaveFromTheBottomEdge(page);
-            await expect(error(page, 'gbp')).toHaveText('Use at most 4 decimal places.');
-            await expect(field(page, 'gbp')).toBeFocused();
-            await expectInWindow(page, '[data-testid="currency-error-gbp"]', 'the rejected rate\'s message');
-            await expectInWindow(page, '[data-testid="currency-field-gbp"]', 'the rejected rate\'s box');
-          }
+            if (outcome === 'rejected rate') {
+              // A rate the screen accepts and the server does not: its message is beside its box, and the box has focus.
+              await refuse(400, { title: 'One or more fields are invalid.', errors: { gbp: ['Use at most 4 decimal places.'] } });
+              await enter(page, 'gbp', '399.5');
+              await staging.press(page);
+              await expect(error(page, 'gbp')).toHaveText('Use at most 4 decimal places.');
+              await expect(field(page, 'gbp')).toBeFocused();
+              await expectInWindow(page, '[data-testid="currency-error-gbp"]', 'the rejected rate\'s message');
+              await expectInWindow(page, '[data-testid="currency-field-gbp"]', 'the rejected rate\'s box');
+            }
 
-          if (outcome === 'conflict') {
-            await refuse(409, { detail: table.messages.staleRowVersion, code: 'stale_row_version' });
-            await enter(page, 'gbp', '399.5');
-            await pressSaveFromTheBottomEdge(page);
-            await expect(page.locator(SELECTORS.alert)).toContainText(table.messages.staleRowVersion);
-            await expectInWindow(page, SELECTORS.alert, 'the conflict alert');
-            await expectInWindow(page, '[data-testid="currency-reload"]', 'its Load the latest rates button');
-          }
+            if (outcome === 'conflict') {
+              await refuse(409, { detail: table.messages.staleRowVersion, code: 'stale_row_version' });
+              await enter(page, 'gbp', '399.5');
+              await staging.press(page);
+              await expect(page.locator(SELECTORS.alert)).toContainText(table.messages.staleRowVersion);
+              await expectInWindow(page, SELECTORS.alert, 'the conflict alert');
+              await expectInWindow(page, '[data-testid="currency-reload"]', 'its Load the latest rates button');
+            }
 
-          if (outcome === 'server error') {
-            await refuse(500, { title: 'Server error' });
-            await enter(page, 'gbp', '399.5');
-            await pressSaveFromTheBottomEdge(page);
-            await expect(page.locator(SELECTORS.alert)).toBeVisible();
-            await expectInWindow(page, SELECTORS.alert, 'the server-error alert');
-            // Focus was not moved to the message.
-            await expect(page.locator(SELECTORS.save)).toBeFocused();
-          }
+            if (outcome === 'server error') {
+              await refuse(500, { title: 'Server error' });
+              await enter(page, 'gbp', '399.5');
+              await staging.press(page);
+              await expect(page.locator(SELECTORS.alert)).toBeVisible();
+              await expectInWindow(page, SELECTORS.alert, 'the server-error alert');
+              // Focus was not moved to the message.
+              await expect(page.locator(SELECTORS.save)).toBeFocused();
+            }
 
-          if (outcome === 'offline') {
-            await page.route('**/api/admin/settings/currency-rates', (route) => route.abort('connectionrefused'));
-            await enter(page, 'gbp', '399.5');
-            await pressSaveFromTheBottomEdge(page);
-            await expect(page.locator(SELECTORS.alert)).toContainText('could not reach the server');
-            await expectInWindow(page, SELECTORS.alert, 'the offline alert');
-          }
-        });
+            if (outcome === 'offline') {
+              await page.route('**/api/admin/settings/currency-rates', (route) => route.abort('connectionrefused'));
+              await enter(page, 'gbp', '399.5');
+              await staging.press(page);
+              await expect(page.locator(SELECTORS.alert)).toContainText('could not reach the server');
+              await expectInWindow(page, SELECTORS.alert, 'the offline alert');
+            }
+          });
+        }
       }
     });
   }
