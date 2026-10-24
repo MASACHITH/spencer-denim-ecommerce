@@ -51,6 +51,21 @@ public static class AdminWriteRequest
                 "not_json"));
         }
 
+        // A charset the runtime has no encoding for makes ReadFromJsonAsync throw InvalidOperationException
+        // (issue #147), which is neither of the exceptions caught below, so it answered 500 for a header the
+        // caller chose. It is decided from the header, with the parser the framework itself uses, rather than by
+        // catching InvalidOperationException: that type is also what a bug inside the server throws, and
+        // reporting one of those as "your request was wrong" would hide it.
+        var contentType = request.GetTypedHeaders().ContentType;
+        if (contentType is { Charset.HasValue: true, Encoding: null })
+        {
+            return (null, Problem(
+                StatusCodes.Status415UnsupportedMediaType,
+                "Unsupported charset",
+                "Send the request body as UTF-8.",
+                "unsupported_charset"));
+        }
+
         try
         {
             var body = await request.ReadFromJsonAsync<TBody>(cancellationToken);

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -326,6 +327,34 @@ public sealed class AdminCatalogEndpointTests(SqlServerDatabaseFixture sqlServer
             CategoriesUrl, "{\"departmentId\":\"one\"}", Token);
         Assert.Equal(HttpStatusCode.BadRequest, typeStatus);
         Assert.Equal("malformed_json", typeBody.GetProperty("code").GetString());
+    }
+
+    /// <summary>
+    /// Issue <b>#147</b>: a body declaring a charset the runtime has no encoding for answered <b>500</b> on every
+    /// admin write that reads its body through <c>AdminWriteRequest.ReadJsonAsync</c>. It is the caller's header,
+    /// so it is a named 415. One route stands for all of them: the fault, and the fix, are in the shared reader.
+    /// </summary>
+    [Theory]
+    [InlineData("Testing")]
+    [InlineData("Development")]
+    public async Task A_charset_the_runtime_does_not_know_is_a_415_rather_than_a_500(string environment)
+    {
+        var factory = await HostAsync(environment);
+        var client = await AdminCatalogApiClient.SignInAsync(factory, "charset", FullCatalogueRights, Token);
+        var body = Encoding.UTF8.GetBytes("{\"departmentId\":1,\"name\":\"Scarves\"}");
+
+        var (status, problem) = await client.PostWithContentTypeHeaderAsync(
+            CategoriesUrl, body, "application/json; charset=not-a-real-charset", Token);
+
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, status);
+        Assert.Equal("unsupported_charset", problem.GetProperty("code").GetString());
+
+        // A body that is not valid in the charset it declares was never a 500, and stays a 400.
+        var (invalidStatus, invalidProblem) = await client.PostWithContentTypeHeaderAsync(
+            CategoriesUrl, body, "application/json; charset=utf-16", Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, invalidStatus);
+        Assert.Equal("malformed_json", invalidProblem.GetProperty("code").GetString());
     }
 
     [Fact]
