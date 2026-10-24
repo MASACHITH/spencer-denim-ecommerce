@@ -246,6 +246,7 @@ export class InventoryReportView implements OnInit {
    * line after the next render — `afterNextRender`, never `queueMicrotask` (#109).
    */
   private load(target: number): void {
+    this.exportNote.set(null);
     const request = ++this.requests;
     const { status, search } = this.applied();
 

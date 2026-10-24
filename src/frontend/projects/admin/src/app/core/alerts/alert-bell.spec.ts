@@ -269,6 +269,56 @@ describe('AlertBell (doc 08 §3.8 N2)', () => {
       expect(element.querySelector('[data-testid="alert-count"]')).toBeNull();
     });
 
+    it('draws nothing on a sign-in page, whatever the last session left on screen', async () => {
+      // Signing out is a navigation inside the page, not a reload: the previous user's red count and panel (alert titles,
+      // order numbers, links) stayed on the sign-in screen (tester, #256).
+      const router = TestBed.inject(Router);
+      router.resetConfig([{ path: '**', children: [] }]);
+      await open();
+      expect(element.querySelector('[data-testid="alert-bell"]')).not.toBeNull();
+
+      await router.navigateByUrl('/login');
+      await settle();
+
+      // Nothing is asked of the server there (http.verify() in afterEach would fail on a request).
+      expect(element.querySelector('[data-testid="alert-bell"]')).toBeNull();
+      expect(element.querySelector('[data-testid="alert-panel"]')).toBeNull();
+      expect(element.querySelector('[data-testid="alert-count"]')).toBeNull();
+      expect(text()).not.toContain('SD-2026-000123');
+    });
+
+    it('closes on Escape pressed anywhere on the page, not only inside the panel', async () => {
+      await open();
+      (document.activeElement as HTMLElement | null)?.blur();
+
+      // The reader pressed on the panel's own text, so focus is on the page.
+      expect(document.activeElement).toBe(document.body);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await settle();
+
+      expect(element.querySelector('[data-testid="alert-panel"]')).toBeNull();
+      expect(document.activeElement).toBe(element.querySelector('[data-testid="alert-bell"]'));
+    });
+
+    it('closes when focus moves on to something outside, but not when a press lands on plain text', async () => {
+      await open();
+      const outside = document.createElement('button');
+      document.body.appendChild(outside);
+      const inside = element.querySelector('[data-testid="alert-ack-7"]') as HTMLElement;
+
+      // Plain text: focus goes nowhere (relatedTarget null). The outside-press rule decides that case.
+      inside.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+      await settle();
+      expect(element.querySelector('[data-testid="alert-panel"]')).not.toBeNull();
+
+      // Tab on to the next thing on the page, which would otherwise be hidden under the panel.
+      inside.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }));
+      await settle();
+      expect(element.querySelector('[data-testid="alert-panel"]')).toBeNull();
+
+      outside.remove();
+    });
+
     it("stays open when the page's first navigation finishes after the bell was pressed", async () => {
       // A slow screen chunk lets the first NavigationEnd arrive after the bell is drawn and pressed. Shutting
       // the panel then closed it under the staff member's finger: the browser suite hit it about one run in three.

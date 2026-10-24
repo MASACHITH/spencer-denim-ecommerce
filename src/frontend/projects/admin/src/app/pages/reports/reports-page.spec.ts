@@ -179,6 +179,34 @@ describe('ReportsPage (ADM-19)', () => {
     expect(byTestId('sales-export-note')!.textContent).toContain('Downloads');
   });
 
+  it('does not leave an old export note on screen after the filters change', async () => {
+    configure({});
+    await open(['Reports.View', 'Reports.Export']);
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/sales').flush(SALES);
+    await settle();
+
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+
+    byTestId<HTMLButtonElement>('sales-export')!.click();
+    await settle();
+    http.expectOne('/api/admin/auth/antiforgery-token').flush({ token: 'tok' });
+    http
+      .expectOne((candidate) => candidate.url === '/api/admin/reports/sales/export')
+      .flush(new Blob(['x']), { headers: { 'Content-Disposition': 'attachment; filename=sales-report-2026-09-16-to-2026-10-15.csv' } });
+    await settle();
+    expect(byTestId('sales-export-note')).not.toBeNull();
+
+    byTestId<HTMLButtonElement>('sales-apply')!.click();
+    await settle();
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/sales').flush(SALES);
+    await settle();
+
+    // The note was about the file for the old filters.
+    expect(byTestId('sales-export-note')).toBeNull();
+  });
+
   it('shows on the screen, with the server’s own words, why an export failed', async () => {
     configure({});
     await open(['Reports.View', 'Reports.Export']);

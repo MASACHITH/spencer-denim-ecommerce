@@ -160,6 +160,24 @@ describe('CustomersListPage (ADM-15)', () => {
     expect(byTestId('country-41').textContent).toContain('Canada');
   });
 
+  it('keeps a chosen country in the box even if a later answer no longer lists it', async () => {
+    await open();
+
+    const select = byTestId<HTMLSelectElement>('customer-country');
+    select.value = 'CA';
+    select.dispatchEvent(new Event('change'));
+    await settle();
+
+    // The last customer in Canada has gone: the server's list no longer has it.
+    http.expectOne(`${AdminCustomerApi.url}?page=1&pageSize=25&countryCode=CA`).flush(
+      page({ rows: [], totalCount: 0, countries: [{ code: 'LK', name: 'Sri Lanka' }] }),
+    );
+    await settle();
+
+    // Still the chosen one, not "Every country" while CA is still being sent.
+    expect(byTestId<HTMLSelectElement>('customer-country').value).toBe('CA');
+  });
+
   it('hides the district filter, and drops a district already chosen, while another country is chosen', async () => {
     await open();
 

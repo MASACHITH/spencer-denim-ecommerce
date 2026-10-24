@@ -322,6 +322,7 @@ export class CustomerReportView {
 
   /** The current page stays until the next arrives, so the paging buttons are never removed under the keyboard. */
   private load(target: number): void {
+    this.exportNote.set(null);
     const request = ++this.requests;
     const { period, search } = this.applied();
 

@@ -76,7 +76,7 @@ const PAGE_SIZE = 25;
             (change)="chooseCountry($event)"
           >
             <option value="" [selected]="countryCode() === null">Every country</option>
-            @for (country of countries(); track country.code) {
+            @for (country of countryChoices(); track country.code) {
               <option [value]="country.code" [selected]="countryCode() === country.code">
                 {{ country.name }}
               </option>
@@ -293,6 +293,16 @@ export class CustomersListPage {
   protected readonly districtId = signal<number | null>(null);
   /** The chosen country's ISO code, or null for every country. */
   protected readonly countryCode = signal<string | null>(null);
+
+  /** The server's countries, plus the chosen one if a later answer no longer lists it, so the box never says "Every country" while one is still sent. */
+  protected readonly countryChoices = computed<readonly AdminCountryOption[]>(() => {
+    const chosen = this.countryCode();
+    const listed = this.countries();
+
+    return chosen === null || listed.some((country) => country.code === chosen)
+      ? listed
+      : [...listed, { code: chosen, name: chosen }];
+  });
 
   /** A district belongs to Sri Lanka: it is offered for every country and for Sri Lanka, never for another. */
   protected readonly districtApplies = computed(() => this.countryCode() === null || this.countryCode() === 'LK');

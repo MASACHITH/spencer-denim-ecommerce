@@ -240,6 +240,7 @@ export class SalesReportView {
   }
 
   private load(): void {
+    this.exportNote.set(null);
     const request = ++this.requests;
     const { period, groupBy } = this.applied();
 

@@ -426,8 +426,12 @@ export class AlertBell {
     }
   }
 
-  /** Escape shuts the panel and puts focus back on the bell, so a keyboard user is not left on a node that vanished. */
-  @HostListener('keydown.escape')
+  /**
+   * Escape shuts the panel and puts focus back on the bell, so a keyboard user is not left on a node that vanished.
+   * Heard on the whole document, not only inside the panel: a press on the panel's own text sends focus to the page,
+   * and Escape would then have done nothing (tester, #256).
+   */
+  @HostListener('document:keydown.escape')
   protected closeOnEscape(): void {
     if (!this.open()) {
       return;
@@ -435,6 +439,20 @@ export class AlertBell {
 
     this.open.set(false);
     this.bellButton()?.nativeElement.focus();
+  }
+
+  /**
+   * Tabbing out of the panel shuts it, so focus never lands on a field hidden underneath it (WCAG 2.2 SC 2.4.11).
+   * Only when focus goes to something else that can take it: a press on plain text sends focus nowhere
+   * (`relatedTarget` null), and that case is the outside-press rule's.
+   */
+  @HostListener('focusout', ['$event'])
+  protected closeWhenFocusLeaves(event: FocusEvent): void {
+    const next = event.relatedTarget;
+
+    if (this.open() && next instanceof Node && !this.host.nativeElement.contains(next)) {
+      this.open.set(false);
+    }
   }
 
   protected heading(): string {
@@ -531,6 +549,15 @@ export class AlertBell {
   private load(): void {
     if (this.onSignInPage()) {
       // No session yet, so the call could only ever be a 401. Skipped rather than made and swallowed.
+      //
+      // **And whatever the last session left is cleared.** Signing out is a navigation inside the page, not a reload, so
+      // the previous user's count and panel (alert titles, order numbers, links) stayed on the sign-in screen.
+      this.available.set(false);
+      this.open.set(false);
+      this.alerts.set([]);
+      this.moreThanShown.set(false);
+      this.cleared.set(new Map());
+      this.failure.set(new Map());
       return;
     }
 
