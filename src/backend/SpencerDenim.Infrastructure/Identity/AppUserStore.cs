@@ -34,7 +34,9 @@ namespace SpencerDenim.Infrastructure.Identity;
 /// </para>
 /// <para>
 /// A user this context has not loaded (detached) has no original values to compare with, so it is still written in
-/// full, as Identity always did.
+/// full, as Identity always did. That branch is reachable only by calling this store directly: through
+/// <c>UserManager</c> its validator loads the user first, so the user is tracked by the time it is saved (and attaching
+/// a second instance with the same key throws, as it always did).
 /// </para>
 /// </summary>
 public sealed class AppUserStore(AppDbContext context, IdentityErrorDescriber? describer = null)
