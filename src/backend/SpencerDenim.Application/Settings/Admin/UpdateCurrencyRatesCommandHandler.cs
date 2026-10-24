@@ -53,7 +53,8 @@ public sealed class UpdateCurrencyRatesCommandHandler(
     ISettingsStore store,
     IAuditLogWriter auditLog,
     IEffectivePermissionsProvider permissionsProvider,
-    IClock clock)
+    IClock clock,
+    ICurrencyRatesCache cache)
     : ICommandHandler<UpdateCurrencyRatesCommand, SettingsWriteResult>
 {
     /// <summary>
@@ -111,13 +112,13 @@ public sealed class UpdateCurrencyRatesCommandHandler(
                         target.Field,
                         "Use a rate above 0 and no more than "
                         + SettingKeys.CurrencyDisplay.MaxRate.ToString("N0", CultureInfo.InvariantCulture)
-                        + $". It is how many rupees one {target.Name.ToLowerInvariant()} is worth."));
+                        + $". It is how many rupees one {target.Name} is worth."));
                     break;
 
                 default:
                     errors.Add(new ValidationError(
                         target.Field,
-                        $"Enter the {target.Name.ToLowerInvariant()} rate as digits with an optional decimal "
+                        $"Enter the {target.Name} rate as digits with an optional decimal "
                         + "point, such as 399.5: no signs, commas, spaces or letters. Leave it empty to stop "
                         + $"offering {target.Code}."));
                     break;
@@ -206,12 +207,20 @@ public sealed class UpdateCurrencyRatesCommandHandler(
 
         var outcome = await store.SaveAsync(command.Actor.UserId, cancellationToken);
 
-        return outcome == SettingsSaveOutcome.ConcurrencyConflict
-            ? new SettingsWriteResult.Conflict(
+        if (outcome == SettingsSaveOutcome.ConcurrencyConflict)
+        {
+            return new SettingsWriteResult.Conflict(
                 SettingsConflictCodes.StaleRowVersion,
                 "Somebody else changed the currency rates while your change was being saved, so nothing was "
-                + "written. Reload the page and try again.")
-            : new SettingsWriteResult.Succeeded(changed);
+                + "written. Reload the page and try again.");
+        }
+
+        // Only after a write that happened: a refused or conflicting save changed nothing the shop shows. The public
+        // feed is cached for a minute, and without this a staff member who has just saved a rate would see the old
+        // one on the shop for the rest of it (the site-settings feed is evicted the same way).
+        cache.Evict();
+
+        return new SettingsWriteResult.Succeeded(changed);
     }
 
     /// <summary>

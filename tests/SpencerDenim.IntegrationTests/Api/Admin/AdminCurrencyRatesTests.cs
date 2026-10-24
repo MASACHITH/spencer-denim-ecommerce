@@ -252,6 +252,7 @@ public sealed class AdminCurrencyRatesTests(SqlServerDatabaseFixture sqlServer)
     [InlineData("1 5")]
     [InlineData(".5")]
     [InlineData("399.12345")]
+    [InlineData("0.00010")]
     [InlineData("1000000.01")]
     [InlineData("99999999999999999999999999999999")]
     public async Task A_rate_that_breaks_the_rules_is_a_400_on_that_field_and_nothing_is_written(string value)
@@ -332,6 +333,102 @@ public sealed class AdminCurrencyRatesTests(SqlServerDatabaseFixture sqlServer)
             Assert.Equal(HttpStatusCode.BadRequest, status);
             Assert.Equal("invalid_antiforgery_token", problem.GetProperty("code").GetString());
             Assert.Null(await ValueAsync(factory, SettingKeys.CurrencyDisplay.UsdLkrPerUnit));
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    // ---- the two bodies that used to be a 500 (#147, on main since a9b7798) ------------------------------
+
+    /// <summary>
+    /// The independent tester saw two 500s on this route before the merge with <c>main</c>: a property named twice, and
+    /// an escape that spells half a surrogate pair. #247 fixed them in the shared body reader, and this proves it
+    /// through <b>this</b> route, with the real pipeline, as a 400 that names the problem and writes nothing.
+    /// <para>
+    /// The escape is built from a backslash and the letters, never typed as one sequence, so the test file cannot
+    /// have it decoded into a plain letter on the way in.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("a property named twice", "repeats a property name")]
+    [InlineData("a property named twice in another letter case", "repeats a property name")]
+    [InlineData("half a surrogate pair in a value", "not valid Unicode")]
+    [InlineData("half a surrogate pair in a name", "not valid Unicode")]
+    public async Task A_body_that_repeats_a_property_or_holds_half_a_surrogate_pair_is_a_400_and_not_a_500(string shape, string expectedDetail)
+    {
+        const char Backslash = '\\';
+
+        var raw = shape switch
+        {
+            "a property named twice" => "{\"usd\":\"1\",\"usd\":\"2\"}",
+            "a property named twice in another letter case" => "{\"usd\":\"1\",\"USD\":\"2\"}",
+            "half a surrogate pair in a value" => "{\"usd\":\"" + Backslash + "ud800\"}",
+            "half a surrogate pair in a name" => "{\"" + Backslash + "ud800\":\"1\"}",
+            _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+        };
+
+        await using var factory = await StartAsync();
+        using var client = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+
+        try
+        {
+            using var content = new StringContent(raw, System.Text.Encoding.UTF8, "application/json");
+            using var response = await client.PutAsync(new Uri(RatesUrl, UriKind.Relative), content, Token);
+            var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, Token);
+
+            Assert.True(response.StatusCode == HttpStatusCode.BadRequest, $"{shape}: answered {(int)response.StatusCode}, expected 400.");
+            Assert.Equal("malformed_json", problem.GetProperty("code").GetString());
+            Assert.Contains(expectedDetail, problem.GetProperty("detail").GetString(), StringComparison.Ordinal);
+            Assert.Null(await ValueAsync(factory, SettingKeys.CurrencyDisplay.UsdLkrPerUnit));
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    // ---- what the settings routes do with a field they do not know (m8) ---------------------------------
+
+    /// <summary>
+    /// A field the route does not know, and a body with nothing but the token, answer 204 and write nothing. That is
+    /// not special to this route: the Traffic and the contact-and-social routes do exactly the same, and this puts
+    /// the three side by side so a change to one of them is a change to all of them on purpose. (Each reads only the
+    /// fields it owns, so a name such as <c>jpy</c> is never looked at, and a save with nothing in it is "unchanged".)
+    /// </summary>
+    [Fact]
+    public async Task An_unknown_field_and_a_body_with_only_the_token_are_204_and_write_nothing_on_this_route_and_its_siblings()
+    {
+        await using var factory = await StartAsync();
+        using var client = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+
+        try
+        {
+            var auditBefore = await AuditMaxIdAsync(factory);
+            var trafficBefore = await ValueAsync(factory, SettingKeys.Traffic.RawRetentionDays);
+
+            var (currencyUnknown, _) = await PutToAsync(
+                client, RatesUrl, new { jpy = "5", rowVersion = await VersionAsync(factory) });
+            var (currencyTokenOnly, _) = await PutToAsync(
+                client, RatesUrl, new { rowVersion = await VersionAsync(factory) });
+            var (trafficUnknown, _) = await PutToAsync(
+                client, "/api/admin/settings/traffic", new { jpy = "5", rowVersion = await VersionAsync(factory, SettingKeys.Traffic.Group) });
+            var (contactUnknown, _) = await PutToAsync(
+                client, "/api/admin/settings/contact-social", new { jpy = "5", rowVersion = await VersionAsync(factory, SettingKeys.Contact.Group) });
+
+            Assert.Equal(HttpStatusCode.NoContent, currencyUnknown);
+            Assert.Equal(HttpStatusCode.NoContent, currencyTokenOnly);
+            Assert.Equal(HttpStatusCode.NoContent, trafficUnknown);
+            Assert.Equal(HttpStatusCode.NoContent, contactUnknown);
+
+            foreach (var currency in DisplayCurrencies.All)
+            {
+                Assert.Null(await ValueAsync(factory, currency.SettingKey));
+            }
+
+            Assert.Equal(trafficBefore, await ValueAsync(factory, SettingKeys.Traffic.RawRetentionDays));
+            Assert.Equal(auditBefore, await AuditMaxIdAsync(factory));
         }
         finally
         {
@@ -540,12 +637,20 @@ public sealed class AdminCurrencyRatesTests(SqlServerDatabaseFixture sqlServer)
         return (response.StatusCode, string.IsNullOrWhiteSpace(payload) ? default : JsonSerializer.Deserialize<JsonElement>(payload, JsonOptions));
     }
 
-    /// <summary>The save unit's token, computed from the rows exactly as the read model publishes it.</summary>
-    private static async Task<string> VersionAsync(ApiFactory factory)
+    private static async Task<(HttpStatusCode Status, JsonElement Body)> PutToAsync(HttpClient client, string url, object body)
+    {
+        using var response = await client.PutAsJsonAsync(new Uri(url, UriKind.Relative), body, JsonOptions, Token);
+        var payload = await response.Content.ReadAsStringAsync(Token);
+
+        return (response.StatusCode, string.IsNullOrWhiteSpace(payload) ? default : JsonSerializer.Deserialize<JsonElement>(payload, JsonOptions));
+    }
+
+    /// <summary>A save unit's token (the currency rates' by default), computed from the rows exactly as the read model publishes it.</summary>
+    private static async Task<string> VersionAsync(ApiFactory factory, string group = SettingKeys.CurrencyDisplay.Group)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var keys = SettingCatalog.KeysInSaveUnitFor(SettingKeys.CurrencyDisplay.Group);
+        var keys = SettingCatalog.KeysInSaveUnitFor(group);
 
         return SettingsGroupVersion.For(await db.Settings.AsNoTracking().Where(row => keys.Contains(row.Key)).ToListAsync(Token));
     }

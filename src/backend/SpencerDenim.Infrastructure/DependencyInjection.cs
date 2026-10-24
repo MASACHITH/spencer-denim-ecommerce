@@ -313,6 +313,9 @@ public static class DependencyInjection
         // nothing — and this payload is read during the server render of every page on the site.
         services.AddSingleton<ISiteSettingsCache, SiteSettingsCache>();
 
+        // The currency feed's cache (issue #248): the same sixty seconds, the same singleton, the same eviction on save.
+        services.AddSingleton<ICurrencyRatesCache, CurrencyRatesCache>();
+
         // Checkout (W3-02, CHK-01..04). `NumberSeriesAllocator` implements doc 08 §3.5's
         // UPDATE … OUTPUT deleted.NextValue exactly; `OrderPlacementStore` is doc 08 §5.4's one
         // transaction; `CheckoutReader` is the single repricing read where an order's prices are frozen.

@@ -405,6 +405,181 @@ public sealed class UpdateCurrencyRatesCommandHandlerTests
         Assert.IsType<SettingsWriteResult.Forbidden>(result);
     }
 
+    /// <summary>
+    /// <b>The permission is checked for every currency, one at a time.</b> The first version of this suite proved it
+    /// for the US dollar only, and a mutation that skipped the check for the dirham alone survived 187 unit and 36
+    /// integration tests: a per-currency skip is exactly what a loop over the table can get wrong.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(EveryCurrency))]
+    public async Task Each_currency_is_permission_checked_on_its_own(string code, string field, string key)
+    {
+        var store = new FakeSettingsStore();
+
+        var result = await Handler(store, permissions: [Permissions.Settings.Payments, Permissions.Settings.View])
+            .HandleAsync(Command(store, (field, "123.5")), Token);
+
+        var forbidden = Assert.IsType<SettingsWriteResult.Forbidden>(result);
+        Assert.Equal([key], forbidden.Keys);
+        Assert.True(store.Rows[key].Value is null, $"{code} was written by a caller without Settings.Edit.");
+        Assert.Equal(0, store.Saves);
+    }
+
+    [Theory]
+    [MemberData(nameof(EveryCurrency))]
+    public async Task Each_currency_is_allowed_for_a_caller_who_may_edit_settings(string code, string field, string key)
+    {
+        var store = new FakeSettingsStore();
+
+        var result = await Handler(store, permissions: [Permissions.Settings.Edit])
+            .HandleAsync(Command(store, (field, "123.5")), Token);
+
+        var succeeded = Assert.IsType<SettingsWriteResult.Succeeded>(result);
+        Assert.True(succeeded.ChangedKeys.SequenceEqual([key]), $"{code} was not written for a Settings.Edit holder.");
+    }
+
+    [Fact]
+    public async Task A_save_of_all_five_by_a_caller_without_permission_names_all_five_keys()
+    {
+        var store = new FakeSettingsStore();
+
+        var result = await Handler(store, permissions: [Permissions.Settings.Payments])
+            .HandleAsync(
+                Command(store, (Usd, "1"), (Gbp, "2"), (Eur, "3"), ("aud", "4"), ("aed", "5")),
+                Token);
+
+        var forbidden = Assert.IsType<SettingsWriteResult.Forbidden>(result);
+        Assert.Equal(DisplayCurrencies.All.Select(currency => currency.SettingKey), forbidden.Keys);
+    }
+
+    // ---- the words staff read (m3) ----------------------------------------------------------------------
+
+    /// <summary>
+    /// The names are written out in full where they are used ("pound sterling", "UAE dirham"), not lower-cased from
+    /// a capitalised name, which is how "us dollar" and "uae dirham" reached a staff member.
+    /// </summary>
+    [Theory]
+    [InlineData("usd", "US dollar", "USD")]
+    [InlineData("gbp", "pound sterling", "GBP")]
+    [InlineData("eur", "euro", "EUR")]
+    [InlineData("aud", "Australian dollar", "AUD")]
+    [InlineData("aed", "UAE dirham", "AED")]
+    public async Task The_messages_name_each_currency_properly(string field, string name, string code)
+    {
+        var store = new FakeSettingsStore();
+
+        var notANumber = AssertRefused(await Handler(store).HandleAsync(Command(store, (field, "abc")), Token), field);
+        var outOfRange = AssertRefused(await Handler(store).HandleAsync(Command(store, (field, "0")), Token), field);
+
+        Assert.Equal(
+            $"Enter the {name} rate as digits with an optional decimal point, such as 399.5: no signs, commas, "
+            + $"spaces or letters. Leave it empty to stop offering {code}.",
+            notANumber.Message);
+        Assert.Equal(
+            $"Use a rate above 0 and no more than 1,000,000. It is how many rupees one {name} is worth.",
+            outOfRange.Message);
+    }
+
+    /// <summary>Two of the five spelled out in full, so the template cannot be wrong in both places at once.</summary>
+    [Fact]
+    public async Task The_exact_words_for_the_two_names_that_used_to_be_lower_cased()
+    {
+        var store = new FakeSettingsStore();
+
+        var dollar = AssertRefused(await Handler(store).HandleAsync(Command(store, (Usd, "x")), Token), Usd);
+        var dirham = AssertRefused(await Handler(store).HandleAsync(Command(store, ("aed", "-3")), Token), "aed");
+
+        Assert.Equal(
+            "Enter the US dollar rate as digits with an optional decimal point, such as 399.5: no signs, commas, "
+            + "spaces or letters. Leave it empty to stop offering USD.",
+            dollar.Message);
+        Assert.Equal(
+            "Enter the UAE dirham rate as digits with an optional decimal point, such as 399.5: no signs, commas, "
+            + "spaces or letters. Leave it empty to stop offering AED.",
+            dirham.Message);
+        Assert.DoesNotContain("us dollar", dollar.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("uae dirham", dirham.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("399.12345")]
+    [InlineData("0.00010")]
+    [InlineData("1.50000")]
+    public async Task More_than_four_places_is_refused_even_when_the_extra_places_are_zeros(string value)
+    {
+        var store = new FakeSettingsStore();
+
+        var error = AssertRefused(await Handler(store).HandleAsync(Command(store, (Usd, value)), Token), Usd);
+
+        Assert.Equal("Use at most 4 decimal places.", error.Message);
+    }
+
+    // ---- the feed's cache is dropped by a real write and only by one ------------------------------------
+
+    [Fact]
+    public async Task A_successful_save_evicts_the_feed_cache_once()
+    {
+        var store = new FakeSettingsStore();
+        var cache = new FakeCache();
+
+        var result = await Handler(store, cache: cache).HandleAsync(Command(store, (Usd, "301.5"), (Gbp, "399.5")), Token);
+
+        Assert.IsType<SettingsWriteResult.Succeeded>(result);
+        Assert.Equal(1, cache.Evictions);
+    }
+
+    [Fact]
+    public async Task Clearing_a_rate_evicts_the_cache_too()
+    {
+        var store = new FakeSettingsStore();
+        store.Rows[SettingKeys.CurrencyDisplay.UsdLkrPerUnit].Value = "301.5";
+        var cache = new FakeCache();
+
+        await Handler(store, cache: cache).HandleAsync(Command(store, (Usd, string.Empty)), Token);
+
+        Assert.Equal(1, cache.Evictions);
+    }
+
+    /// <summary>A save that wrote nothing changed nothing the shop shows, so nothing is dropped.</summary>
+    [Fact]
+    public async Task An_unchanged_save_does_not_evict()
+    {
+        var store = new FakeSettingsStore();
+        store.Rows[SettingKeys.CurrencyDisplay.UsdLkrPerUnit].Value = "301.5";
+        var cache = new FakeCache();
+
+        var result = await Handler(store, cache: cache).HandleAsync(Command(store, (Usd, "301.50")), Token);
+
+        Assert.IsType<SettingsWriteResult.Unchanged>(result);
+        Assert.Equal(0, cache.Evictions);
+    }
+
+    [Fact]
+    public async Task A_refused_save_does_not_evict_whatever_the_reason()
+    {
+        var cache = new FakeCache();
+
+        var invalid = new FakeSettingsStore();
+        Assert.IsType<SettingsWriteResult.Invalid>(
+            await Handler(invalid, cache: cache).HandleAsync(Command(invalid, (Usd, "abc")), Token));
+
+        var forbidden = new FakeSettingsStore();
+        Assert.IsType<SettingsWriteResult.Forbidden>(
+            await Handler(forbidden, permissions: [Permissions.Settings.Payments], cache: cache)
+                .HandleAsync(Command(forbidden, (Usd, "301.5")), Token));
+
+        var stale = new FakeSettingsStore();
+        Assert.IsType<SettingsWriteResult.Conflict>(
+            await Handler(stale, cache: cache).HandleAsync(
+                new UpdateCurrencyRatesCommand(Fields((Usd, "301.5")), null, Actor), Token));
+
+        var lost = new FakeSettingsStore { NextSaveOutcome = SettingsSaveOutcome.ConcurrencyConflict };
+        Assert.IsType<SettingsWriteResult.Conflict>(
+            await Handler(lost, cache: cache).HandleAsync(Command(lost, (Usd, "301.5")), Token));
+
+        Assert.Equal(0, cache.Evictions);
+    }
+
     // ---- the contract with the endpoint -----------------------------------------------------------------
 
     [Fact]
@@ -418,12 +593,14 @@ public sealed class UpdateCurrencyRatesCommandHandlerTests
     private static UpdateCurrencyRatesCommandHandler Handler(
         FakeSettingsStore store,
         RecordingAuditLog? audit = null,
-        string[]? permissions = null) =>
+        string[]? permissions = null,
+        FakeCache? cache = null) =>
         new(
             store,
             audit ?? new RecordingAuditLog(),
             new FakePermissions(permissions is null, permissions ?? []),
-            new FixedClock());
+            new FixedClock(),
+            cache ?? new FakeCache());
 
     private static UpdateCurrencyRatesCommand Command(FakeSettingsStore store, params (string Field, string? Value)[] fields) =>
         new(Fields(fields), TokenOf(store), Actor);
@@ -538,5 +715,19 @@ public sealed class UpdateCurrencyRatesCommandHandlerTests
     private sealed class FixedClock : IClock
     {
         public DateTimeOffset UtcNow => new(2026, 10, 24, 9, 0, 0, TimeSpan.Zero);
+    }
+
+    /// <summary>The feed's cache, counting only how often the save asks for it to be dropped.</summary>
+    private sealed class FakeCache : ICurrencyRatesCache
+    {
+        public int Evictions { get; private set; }
+
+        public IReadOnlyList<SpencerDenim.Application.Settings.Contracts.CurrencyRateDto>? GetRates() => null;
+
+        public void SetRates(IReadOnlyList<SpencerDenim.Application.Settings.Contracts.CurrencyRateDto> rates)
+        {
+        }
+
+        public void Evict() => Evictions++;
     }
 }

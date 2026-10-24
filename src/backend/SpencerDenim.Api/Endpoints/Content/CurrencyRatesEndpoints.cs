@@ -26,8 +26,12 @@ internal static class CurrencyRatesEndpoints
     private static readonly string[] ReadMethods = [HttpMethods.Get, HttpMethods.Head];
 
     /// <summary>
-    /// Sixty seconds, doc 08 §3.8's lifetime for settings that are read on every page. A rate moves weekly at most,
-    /// and a staff member who has just saved one should see it on the site within about a minute.
+    /// <b>Two different sixty-second lifetimes, and only one of them is doc 08's.</b> Doc 08 §3.8 ("Options classes
+    /// are cached for 60 s and evicted on save") describes the in-process cache behind this endpoint
+    /// (<c>ICurrencyRatesCache</c>), which the save evicts. This header is the endpoint's own choice, made to match
+    /// it: a browser or proxy should not hold an answer longer than the server does. It cannot be evicted, so a
+    /// saved rate can take up to this long to reach a browser that already has the old list, which is fine for a
+    /// figure that moves weekly.
     /// </summary>
     private const string CacheControlValue = "public, max-age=60";
 

@@ -414,8 +414,12 @@ public static class SettingCatalog
         // longer than people) that only holds if both are compared under one token.
         [SettingKeys.Traffic.Group],
 
-        // The five display rates (issue #248): one form, one permission (Settings.Edit). One token for all five,
-        // so two staff members editing different currencies at once cannot silently overwrite each other's row.
+        // The five display rates (issue #248): one form, one permission (Settings.Edit). One token for all five, so
+        // a screen that read the rates before somebody else's save is refused (409) and told to reload, instead of
+        // saving over what it never saw. That is a check on a stale read, not a lock: two saves that read the same
+        // version and arrive together, on DIFFERENT currencies, both succeed, and no value is lost, because each
+        // writes only its own rows. Two that touch the SAME currency collide on that row's own row version and the
+        // second is refused.
         [SettingKeys.CurrencyDisplay.Group],
 
         // The review approval switch (issue #189): one form, one permission (Settings.Edit).

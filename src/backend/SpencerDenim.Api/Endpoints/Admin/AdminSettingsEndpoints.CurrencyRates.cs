@@ -53,6 +53,14 @@ internal static partial class AdminSettingsEndpoints
     /// Presence-aware like every other settings write: a field the body omits is not written. Numbers arrive as
     /// text, as the screen's other numeric boxes send them; a JSON number is a named field error rather than a
     /// silent coercion, for the reason <see cref="ReadString"/> gives.
+    /// <para>
+    /// <b>A field this route does not know, and a body that carries nothing but the token, are answered 204 and write
+    /// nothing</b> (the first reads only the five fields, so a name like <c>jpy</c> is never looked at; the second
+    /// has nothing to write). That is how the Traffic and contact-and-social routes behave too, and a test pins the
+    /// Traffic one beside this one, so the settings routes agree and a screen that sends a field a newer server
+    /// ignores is not broken by an older one. It is not a place to hide a typo: the response does not say a field
+    /// was ignored, and the screen only ever sends the five.
+    /// </para>
     /// </remarks>
     private static async Task<IResult> UpdateCurrencyRatesAsync(
         HttpContext httpContext,

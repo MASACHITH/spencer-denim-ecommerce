@@ -55,3 +55,43 @@ public sealed class GetCurrencyRatesQueryHandler(ICurrencyRatesReader reader)
         return offered;
     }
 }
+
+/// <summary>
+/// The same read, through doc 08 §3.8's sixty-second cache (<see cref="ICurrencyRatesCache"/>), arranged exactly as
+/// <see cref="CachedSiteSettingsQueryHandler"/> is: decorated, so the uncached handler stays testable and the cache
+/// stays one concern.
+/// <para>
+/// <b>Only an answer is cached, and a failure is not one.</b> If the reader throws, nothing is stored and the
+/// exception travels to the endpoint, which answers with the empty list and no cache lifetime, so a database blip is
+/// never pinned in memory for a minute. A <i>successful</i> read that finds no rate set is cached like any other
+/// (it is the true state of a shop that has not set one, and the common one before launch), and the save evicts it,
+/// so the first rate an admin saves appears at once.
+/// </para>
+/// </summary>
+public sealed class CachedCurrencyRatesQueryHandler(
+    IQueryHandler<GetCurrencyRatesQuery, IReadOnlyList<CurrencyRateDto>> inner,
+    ICurrencyRatesCache cache)
+    : IQueryHandler<GetCurrencyRatesQuery, IReadOnlyList<CurrencyRateDto>>
+{
+    public async Task<IReadOnlyList<CurrencyRateDto>> HandleAsync(
+        GetCurrencyRatesQuery query,
+        CancellationToken cancellationToken)
+    {
+        if (cache.GetRates() is { } cached)
+        {
+            return cached;
+        }
+
+        var rates = await inner.HandleAsync(query, cancellationToken);
+        cache.SetRates(rates);
+
+        return rates;
+    }
+}
+
+/// <summary>The cache's lifetime, in one place so the test and the cache agree.</summary>
+public static class CurrencyRatesCachePolicy
+{
+    /// <summary>Doc 08 §3.8: sixty seconds.</summary>
+    public static TimeSpan Lifetime { get; } = TimeSpan.FromSeconds(60);
+}
