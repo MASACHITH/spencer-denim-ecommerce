@@ -48,7 +48,7 @@ const BREAKPOINTS = [320, 375, 390, 768, 1024, 1280, 1440, 1920] as const;
 /** Sets which pages the stub reports as published. The switch is reset by every test that uses it. */
 async function publish(
   page: Page,
-  state: 'none' | 'all' | 'contact' | 'custom' | 'hostile',
+  state: 'none' | 'all' | 'store' | 'contact' | 'custom' | 'hostile',
 ): Promise<void> {
   const response = await page.request.get(`${contentPagesApiURL}/__test__/content-pages?state=${state}`);
   expect(response.ok(), 'the content-pages switch did not answer').toBe(true);
@@ -1014,5 +1014,151 @@ test.describe('the Shipping and Returns pages and the product page links (#33)',
 
     const results = await new AxeBuilder({ page }).include('main').analyze();
     expect(results.violations.map((violation) => `${violation.id}: ${violation.help}`)).toEqual([]);
+  });
+});
+
+/**
+ * Issue #252: the About us, Privacy policy and Terms and conditions pages, drawn with the words the shop ships.
+ *
+ * The state is `store`, which serves `support/store-pages.json` - a file `StorePagesCopyTests` keeps equal to
+ * `PolicyPageContent` - so what is measured here is the real copy: its headings, its two long lists and its longest
+ * sentences, at a phone's width and a desktop's. The rest of this file measures the pages with a fixture built to
+ * carry every allowed element and a table wider than 320 px; neither stands in for the other.
+ *
+ * **What is not asserted, deliberately.** Opening a page from the footer lands at the *top* only when the router
+ * scrolls there, and on this branch it does not (nothing in the storefront configures scroll restoration; that is a
+ * separate fix in flight). Asserting it here would pin a defect or fail on one, so the footer test below proves only
+ * what is true: the link reaches the page. A full page load of the same address does open at the top, and that is
+ * asserted.
+ */
+test.describe('the About, Privacy and Terms pages (#252)', () => {
+  const PAGES = [
+    { slug: 'about', title: 'About us', section: 'Delivery and returns' },
+    { slug: 'privacy', title: 'Privacy policy', section: 'What we collect and why' },
+    { slug: 'terms', title: 'Terms and conditions', section: 'Placing an order' },
+  ] as const;
+
+  const WIDTHS = [
+    { width: 390, height: 844 },
+    { width: 1280, height: 900 },
+  ] as const;
+
+  test.beforeEach(async ({ page }) => {
+    await publish(page, 'store');
+    await useStubApi(page);
+  });
+
+  test.afterEach(async ({ page }) => {
+    await publish(page, 'none');
+  });
+
+  for (const { slug, title, section } of PAGES) {
+    test(`/${slug}: the title is the one heading, the copy is in the HTML on the wire, and nothing is a placeholder`, async ({
+      page,
+    }) => {
+      const response = await page.goto(`/${slug}`);
+
+      expect(response?.status()).toBe(200);
+
+      // Before any script has run: what a crawler reads.
+      const html = (await response?.text()) ?? '';
+      expect(html).toContain(`<h2>${section}</h2>`);
+
+      await expect(page.locator('h1')).toHaveCount(1);
+      await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+      await expect(page.getByRole('heading', { level: 2, name: section })).toBeVisible();
+
+      // Substantial, and finished: a draft shows its work in a journal and a pull request, never on the page.
+      const body = (await page.locator('main').innerText()).replace(/\s+/g, ' ');
+      expect(body.split(' ').length, 'the page body is short').toBeGreaterThan(200);
+      expect(body).not.toMatch(/lorem|placeholder|\bTODO\b|\bTBD\b|\bdraft\b|\{\{|\}\}|\[[A-Z ]+\]/i);
+    });
+
+    for (const { width, height } of WIDTHS) {
+      test(`/${slug} at ${width}px: nothing scrolls sideways and nothing is clipped`, async ({ page }) => {
+        await page.setViewportSize({ width, height });
+        await page.goto(`/${slug}`);
+        await expect(page.locator('h1')).toBeVisible();
+
+        expect(await horizontalOverflow(page), `horizontal scroll at ${width}px`).toBeLessThanOrEqual(1);
+
+        // The longest unbroken text in the copy must wrap inside the column, not past it.
+        const clipped = await page.evaluate(() => {
+          const main = document.querySelector('main');
+          const limit = document.documentElement.clientWidth;
+          return [...(main?.querySelectorAll('h1, h2, p, li') ?? [])]
+            .filter((node) => node.getBoundingClientRect().right > limit + 1)
+            .map((node) => (node.textContent ?? '').slice(0, 60));
+        });
+        expect(clipped, `text past the right edge at ${width}px`).toEqual([]);
+      });
+
+      test(`/${slug} at ${width}px has no axe violations`, async ({ page }) => {
+        await page.setViewportSize({ width, height });
+        await page.goto(`/${slug}`);
+        await expect(page.locator('h1')).toBeVisible();
+
+        const results = await new AxeBuilder({ page })
+          .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+          .analyze();
+
+        expect(
+          results.violations,
+          JSON.stringify(results.violations.map((violation) => violation.id), null, 2),
+        ).toEqual([]);
+      });
+    }
+
+    test(`/${slug}: opened by address it starts at the top`, async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto(`/${slug}`);
+      await expect(page.locator('h1')).toBeVisible();
+
+      expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    });
+
+    for (const { width, height } of WIDTHS) {
+      test(`the footer link to /${slug} reaches the page at ${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height });
+        await page.goto('/');
+
+        const link = page.locator('footer').locator(`a[href="/${slug}"]`).first();
+        await link.scrollIntoViewIfNeeded();
+        await link.click();
+
+        await expect(page).toHaveURL(new RegExp(`/${slug}$`));
+        await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+        await expect(page.getByRole('heading', { level: 2, name: section })).toBeVisible();
+      });
+    }
+  }
+
+  test('no copy carries an address of its own, because the client can edit a slug', async ({
+    page,
+  }) => {
+    // The copy writes no address of its own (a slug is the client's to edit), so no link inside any body may exist.
+    for (const { slug } of PAGES) {
+      await page.goto(`/${slug}`);
+      await expect(page.locator('h1')).toBeVisible();
+      await expect(page.locator('main a'), `${slug} carries a link inside its copy`).toHaveCount(0);
+    }
+  });
+
+  test('the Privacy policy names the three cookies the shop sets, and no more', async ({ page }) => {
+    await page.goto('/privacy');
+
+    for (const cookie of ['sd_cart', 'sd_customer_auth', 'sd_vs']) {
+      await expect(page.locator('main strong', { hasText: cookie })).toHaveCount(1);
+    }
+    await expect(page.locator('main')).not.toContainText('sd_admin');
+  });
+
+  test('the Terms say PayPal for everyone and bank transfer for Sri Lanka only', async ({ page }) => {
+    await page.goto('/terms');
+
+    const main = page.locator('main');
+    await expect(main).toContainText('PayPal is available for every order');
+    await expect(main).toContainText('For a delivery within Sri Lanka we may also offer payment by bank transfer');
+    await expect(main).not.toContainText(/cash on delivery/i);
   });
 });
