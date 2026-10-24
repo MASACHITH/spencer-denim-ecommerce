@@ -57,7 +57,8 @@ describe('overseas delivery rules', () => {
   it('words every refusal', () => {
     expect(refusalText('MethodDisabled')).toContain('International delivery');
     expect(refusalText('RegionDisabled')).toContain('region');
-    expect(refusalText('NotPriced')).toContain('No fee');
+    expect(refusalText('NotPriced')).toContain('No standard fee');
+    expect(refusalText('ExpressNotPriced')).toContain('express fee');
     expect(refusalText('CountryDisabled')).toContain('country');
     expect(refusalText('Something new')).toBe('Not available');
   });

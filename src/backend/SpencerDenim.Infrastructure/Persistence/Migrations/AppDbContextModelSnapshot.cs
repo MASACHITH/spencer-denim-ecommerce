@@ -3303,7 +3303,7 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_DeliveryRegions_EstimatedDays", "[EstimatedDaysMin] <= [EstimatedDaysMax]");
 
-                            t.HasCheckConstraint("CK_DeliveryRegions_ExpressDays", "[ExpressDaysMin] >= 1 AND [ExpressDaysMax] <= 90 AND [ExpressDaysMin] <= [ExpressDaysMax]");
+                            t.HasCheckConstraint("CK_DeliveryRegions_ExpressDays", "[ExpressDaysMin] <= [ExpressDaysMax]");
 
                             t.HasCheckConstraint("CK_DeliveryRegions_ExpressFee", "[ExpressFee] IS NULL OR [ExpressFee] >= 0");
 
