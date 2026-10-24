@@ -66,6 +66,9 @@ export function freshDeliveryState() {
       fee,
       estimatedDaysMin: min,
       estimatedDaysMax: max,
+      expressFee: null,
+      expressDaysMin: 3,
+      expressDaysMax: 7,
       isEnabled: true,
       rowVersion: nextVersion(),
     })),
@@ -77,6 +80,9 @@ export function freshDeliveryState() {
       deliveryFeeOverride: null,
       estimatedDaysMinOverride: null,
       estimatedDaysMaxOverride: null,
+      expressFeeOverride: null,
+      expressDaysMinOverride: null,
+      expressDaysMaxOverride: null,
       postalCodeRequired: postal,
       regionRequired: region,
       rowVersion: nextVersion(),
@@ -119,6 +125,37 @@ function quote(delivery, country) {
   };
 }
 
+/** `OverseasDeliveryRate.ResolveExpress`, in the same order. */
+function expressQuote(delivery, country) {
+  const region = delivery.regions.find((candidate) => candidate.code === country.regionCode);
+
+  if (!delivery.internationalEnabled) {
+    return { refusal: 'MethodDisabled' };
+  }
+
+  if (!country.isShippingEnabled) {
+    return { refusal: 'CountryDisabled' };
+  }
+
+  if (!region || !region.isEnabled) {
+    return { refusal: 'RegionDisabled' };
+  }
+
+  const fee = country.expressFeeOverride ?? region.expressFee;
+  if (fee === null || fee < 0) {
+    return { refusal: 'ExpressNotPriced' };
+  }
+
+  const own = country.expressDaysMinOverride !== null && country.expressDaysMaxOverride !== null;
+
+  return {
+    refusal: 'None',
+    fee,
+    min: own ? country.expressDaysMinOverride : region.expressDaysMin,
+    max: own ? country.expressDaysMaxOverride : region.expressDaysMax,
+  };
+}
+
 function screen(delivery) {
   return {
     internationalEnabled: delivery.internationalEnabled,
@@ -129,6 +166,9 @@ function screen(delivery) {
       fee: region.fee,
       estimatedDaysMin: region.estimatedDaysMin,
       estimatedDaysMax: region.estimatedDaysMax,
+      expressFee: region.expressFee,
+      expressDaysMin: region.expressDaysMin,
+      expressDaysMax: region.expressDaysMax,
       isEnabled: region.isEnabled,
       countryCount: delivery.countries.filter((country) => country.regionCode === region.code).length,
       rowVersion: region.rowVersion,
@@ -138,6 +178,8 @@ function screen(delivery) {
       .map((country) => {
         const offered = quote(delivery, country);
         const available = offered.refusal === 'None';
+        const expressOffered = expressQuote(delivery, country);
+        const expressAvailable = expressOffered.refusal === 'None';
 
         return {
           code: country.code,
@@ -147,6 +189,9 @@ function screen(delivery) {
           deliveryFeeOverride: country.deliveryFeeOverride,
           estimatedDaysMinOverride: country.estimatedDaysMinOverride,
           estimatedDaysMaxOverride: country.estimatedDaysMaxOverride,
+          expressFeeOverride: country.expressFeeOverride,
+          expressDaysMinOverride: country.expressDaysMinOverride,
+          expressDaysMaxOverride: country.expressDaysMaxOverride,
           postalCodeRequired: country.postalCodeRequired,
           regionRequired: country.regionRequired,
           isAvailable: available,
@@ -154,6 +199,10 @@ function screen(delivery) {
           effectiveDaysMin: available ? offered.min : null,
           effectiveDaysMax: available ? offered.max : null,
           refusal: offered.refusal,
+          expressRefusal: expressOffered.refusal,
+          effectiveExpressFee: expressAvailable ? expressOffered.fee : null,
+          effectiveExpressDaysMin: expressAvailable ? expressOffered.min : null,
+          effectiveExpressDaysMax: expressAvailable ? expressOffered.max : null,
           rowVersion: country.rowVersion,
         };
       }),
@@ -423,7 +472,10 @@ export async function handleDeliveryRoute({
     const min = field(body, 'estimatedDaysMin', 'int');
     const max = field(body, 'estimatedDaysMax', 'int');
     const isEnabled = field(body, 'isEnabled', 'bool');
-    if (!fee.ok || !min.ok || !max.ok || !isEnabled.ok) {
+    const expressFee = field(body, 'expressFee', 'decimal');
+    const expressMin = field(body, 'expressDaysMin', 'int');
+    const expressMax = field(body, 'expressDaysMax', 'int');
+    if (!fee.ok || !min.ok || !max.ok || !isEnabled.ok || !expressFee.ok || !expressMin.ok || !expressMax.ok) {
       malformed(problem, response);
       return true;
     }
@@ -431,12 +483,22 @@ export async function handleDeliveryRoute({
     const errors = {};
     const feeError = feeProblem(fee.value);
     const daysError = daysProblem(min.value, max.value, true);
+    const expressFeeError = feeProblem(expressFee.value);
+    const expressDaysError = daysProblem(expressMin.value, expressMax.value, false);
     if (feeError) {
       errors.fee = [feeError];
     }
 
     if (daysError) {
       errors.estimatedDays = [daysError];
+    }
+
+    if (expressFeeError) {
+      errors.expressFee = [expressFeeError];
+    }
+
+    if (expressDaysError) {
+      errors.expressDays = [expressDaysError];
     }
 
     if (isEnabled.value === null) {
@@ -463,7 +525,10 @@ export async function handleDeliveryRoute({
       region.fee !== fee.value ||
       region.estimatedDaysMin !== min.value ||
       region.estimatedDaysMax !== max.value ||
-      region.isEnabled !== isEnabled.value;
+      region.isEnabled !== isEnabled.value ||
+      region.expressFee !== expressFee.value ||
+      region.expressDaysMin !== (expressMin.value ?? region.expressDaysMin) ||
+      region.expressDaysMax !== (expressMax.value ?? region.expressDaysMax);
 
     if (changed) {
       if (supplied !== region.rowVersion) {
@@ -476,6 +541,9 @@ export async function handleDeliveryRoute({
         estimatedDaysMin: min.value,
         estimatedDaysMax: max.value,
         isEnabled: isEnabled.value,
+        expressFee: expressFee.value,
+        expressDaysMin: expressMin.value ?? region.expressDaysMin,
+        expressDaysMax: expressMax.value ?? region.expressDaysMax,
         rowVersion: nextVersion(),
       });
     }
@@ -490,7 +558,10 @@ export async function handleDeliveryRoute({
     const fee = field(body, 'deliveryFeeOverride', 'decimal');
     const min = field(body, 'estimatedDaysMinOverride', 'int');
     const max = field(body, 'estimatedDaysMaxOverride', 'int');
-    if (!enabled.ok || !fee.ok || !min.ok || !max.ok) {
+    const expressFee = field(body, 'expressFeeOverride', 'decimal');
+    const expressMin = field(body, 'expressDaysMinOverride', 'int');
+    const expressMax = field(body, 'expressDaysMaxOverride', 'int');
+    if (!enabled.ok || !fee.ok || !min.ok || !max.ok || !expressFee.ok || !expressMin.ok || !expressMax.ok) {
       malformed(problem, response);
       return true;
     }
@@ -498,12 +569,22 @@ export async function handleDeliveryRoute({
     const errors = {};
     const feeError = feeProblem(fee.value);
     const daysError = daysProblem(min.value, max.value, false);
+    const expressFeeError = feeProblem(expressFee.value);
+    const expressDaysError = daysProblem(expressMin.value, expressMax.value, false);
     if (feeError) {
       errors.deliveryFeeOverride = [feeError];
     }
 
     if (daysError) {
       errors.estimatedDaysOverride = [daysError];
+    }
+
+    if (expressFeeError) {
+      errors.expressFeeOverride = [expressFeeError];
+    }
+
+    if (expressDaysError) {
+      errors.expressDaysOverride = [expressDaysError];
     }
 
     if (enabled.value === null) {
@@ -532,7 +613,10 @@ export async function handleDeliveryRoute({
       country.isShippingEnabled !== enabled.value ||
       country.deliveryFeeOverride !== fee.value ||
       country.estimatedDaysMinOverride !== min.value ||
-      country.estimatedDaysMaxOverride !== max.value;
+      country.estimatedDaysMaxOverride !== max.value ||
+      country.expressFeeOverride !== expressFee.value ||
+      country.expressDaysMinOverride !== expressMin.value ||
+      country.expressDaysMaxOverride !== expressMax.value;
 
     if (changed) {
       if (supplied !== country.rowVersion) {
@@ -545,6 +629,9 @@ export async function handleDeliveryRoute({
         deliveryFeeOverride: fee.value,
         estimatedDaysMinOverride: min.value,
         estimatedDaysMaxOverride: max.value,
+        expressFeeOverride: expressFee.value,
+        expressDaysMinOverride: expressMin.value,
+        expressDaysMaxOverride: expressMax.value,
         rowVersion: nextVersion(),
       });
     }
