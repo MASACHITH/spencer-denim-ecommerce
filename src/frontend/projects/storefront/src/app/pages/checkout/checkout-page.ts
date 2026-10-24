@@ -1095,13 +1095,17 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
                  this sentence now matches. -->
             <!-- Issue #252: the terms and the privacy policy are linked here once the shop has published them. The
                  sentence it replaces said "terms and conditions" with nothing to read, and still does while the
-                 page is unpublished (termsFallback), so nothing is promised that did not exist before. -->
+                 page is unpublished (termsFallback), so nothing is promised that did not exist before. They open in a
+                 NEW TAB (newTab): this form lives in component state with no draft and no route guard, so a link that
+                 navigated away would throw away everything the shopper had typed. -->
             <p class="checkout__muted checkout__fineprint">
               <sd-legal-links
-                lead="By placing this order you agree to our"
+                termsLead="By placing this order you agree to our"
+                privacyLead="How we use your details is explained in our"
                 [terms]="true"
                 [privacy]="true"
                 [termsFallback]="true"
+                [newTab]="true"
               />
               The next page shows your order
               number and its link &mdash; keep that address, because it is how you come back to your order.

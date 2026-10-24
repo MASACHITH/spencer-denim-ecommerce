@@ -753,7 +753,9 @@ describe('CheckoutPage (CHK-01..03)', () => {
         expect(agreement()).not.toMatch(/privacy/i);
       });
 
-      it('links the terms and the privacy policy by their own addresses once both are published', async () => {
+      const NEW_TAB = ' (opens in a new tab)';
+
+      it('links the terms and the privacy policy, in new tabs, once both are published', async () => {
         await openWith(session());
         flushContentPages(http, [
           { slug: 'terms-of-sale', title: 'Terms and conditions', systemKey: 'terms' },
@@ -761,12 +763,35 @@ describe('CheckoutPage (CHK-01..03)', () => {
         ]);
         await settle();
 
+        // Two sentences: agreeing to terms is one act, being told how details are used is another.
         expect(agreement()).toContain(
-          'By placing this order you agree to our Terms and conditions and Privacy policy. The next page',
+          `By placing this order you agree to our terms and conditions${NEW_TAB}. `
+            + `How we use your details is explained in our privacy policy${NEW_TAB}. The next page`,
         );
 
         const links = [...element.querySelectorAll<HTMLAnchorElement>('.checkout__fineprint a')];
         expect(links.map((link) => link.getAttribute('href'))).toEqual(['/terms-of-sale', '/privacy']);
+      });
+
+      /**
+       * The form is component state with no draft and no route guard, so a link that navigated away in this tab
+       * would throw away everything typed so far. The browser proof is `content-pages.e2e.ts`.
+       */
+      it('opens both links in a new tab, so the half-typed form is not lost', async () => {
+        await openWith(session());
+        flushContentPages(http, [
+          { slug: 'terms-of-sale', title: 'Terms and conditions', systemKey: 'terms' },
+          { slug: 'privacy', title: 'Privacy policy', systemKey: 'privacy' },
+        ]);
+        await settle();
+
+        const links = [...element.querySelectorAll<HTMLAnchorElement>('.checkout__fineprint a')];
+        expect(links).toHaveLength(2);
+        for (const link of links) {
+          expect(link.getAttribute('target')).toBe('_blank');
+          expect(link.getAttribute('rel')).toBe('noopener');
+          expect(link.querySelector('.sr-only')?.textContent?.trim()).toBe('(opens in a new tab)');
+        }
       });
 
       it('never names a privacy policy the shop has not published', async () => {
@@ -774,8 +799,20 @@ describe('CheckoutPage (CHK-01..03)', () => {
         flushContentPages(http, [{ slug: 'terms', title: 'Terms and conditions', systemKey: 'terms' }]);
         await settle();
 
-        expect(agreement()).toContain('By placing this order you agree to our Terms and conditions. The next page');
+        expect(agreement()).toContain(`By placing this order you agree to our terms and conditions${NEW_TAB}. The next page`);
         expect(agreement()).not.toMatch(/privacy/i);
+      });
+
+      /** Capitals the same in every state: the words are lower case whether the terms are linked or plain. */
+      it('keeps the same capitals when only the privacy policy is published', async () => {
+        await openWith(session());
+        flushContentPages(http, [{ slug: 'privacy', title: 'Privacy policy', systemKey: 'privacy' }]);
+        await settle();
+
+        expect(agreement()).toContain(
+          `By placing this order you agree to our terms and conditions. `
+            + `How we use your details is explained in our privacy policy${NEW_TAB}. The next page`,
+        );
       });
     });
 

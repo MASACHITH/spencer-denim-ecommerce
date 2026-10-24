@@ -711,9 +711,12 @@ describe('HomePage', () => {
 
       expect(hint.textContent?.replace(/\s+/g, ' ').trim()).toBe(
         'We use your address for Colombo Wardrobe emails only, and record your IP address as proof of consent. ' +
-          'Unsubscribe from any of them. Read our Privacy policy.',
+          'You can ask us to stop at any time through the Contact page. Read our privacy policy.',
       );
       expect(hint.querySelector('a')?.getAttribute('href')).toBe('/privacy-policy');
+      // Leaving the homepage loses nothing, so this link keeps the same tab and says nothing about a new one.
+      expect(hint.querySelector('a')?.hasAttribute('target')).toBe(false);
+      expect(hint.querySelector('.sr-only')).toBeNull();
     });
 
     it('says the same consent wording with no link while the privacy policy is unpublished', async () => {
@@ -725,7 +728,7 @@ describe('HomePage', () => {
 
       expect(hint.textContent?.replace(/\s+/g, ' ').trim()).toBe(
         'We use your address for Colombo Wardrobe emails only, and record your IP address as proof of consent. ' +
-          'Unsubscribe from any of them.',
+          'You can ask us to stop at any time through the Contact page.',
       );
       expect(hint.querySelector('a')).toBeNull();
     });

@@ -180,7 +180,9 @@ describe('RegisterPage (ACC-01)', () => {
       expect(element.querySelector('[data-testid="register-consent"] a')).toBeNull();
     });
 
-    it('links the terms and the privacy policy by their own addresses once both are published', async () => {
+    const NEW_TAB = ' (opens in a new tab)';
+
+    it('links the terms and the privacy policy, in new tabs, once both are published', async () => {
       await settle();
       flushContentPages(http, [
         { slug: 'terms-of-sale', title: 'Terms and conditions', systemKey: 'terms' },
@@ -188,10 +190,34 @@ describe('RegisterPage (ACC-01)', () => {
       ]);
       await settle();
 
-      expect(consent()).toBe('By creating an account you agree to our Terms and conditions and Privacy policy.');
+      expect(consent()).toBe(
+        `By creating an account you agree to our terms and conditions${NEW_TAB}. `
+          + `How we use your details is explained in our privacy policy${NEW_TAB}.`,
+      );
       expect(
         [...element.querySelectorAll('[data-testid="register-consent"] a')].map((link) => link.getAttribute('href')),
       ).toEqual(['/terms-of-sale', '/privacy']);
+    });
+
+    /**
+     * The form's values are component state with no draft and no route guard: following a link in this tab would
+     * throw away the name, email and password already typed. The browser proof is `content-pages.e2e.ts`.
+     */
+    it('opens both links in a new tab, so the half-typed form is not lost', async () => {
+      await settle();
+      flushContentPages(http, [
+        { slug: 'terms-of-sale', title: 'Terms and conditions', systemKey: 'terms' },
+        { slug: 'privacy', title: 'Privacy policy', systemKey: 'privacy' },
+      ]);
+      await settle();
+
+      const links = [...element.querySelectorAll<HTMLAnchorElement>('[data-testid="register-consent"] a')];
+      expect(links).toHaveLength(2);
+      for (const link of links) {
+        expect(link.getAttribute('target')).toBe('_blank');
+        expect(link.getAttribute('rel')).toBe('noopener');
+        expect(link.querySelector('.sr-only')?.textContent?.trim()).toBe('(opens in a new tab)');
+      }
     });
 
     it('names only the page that exists when one of them is unpublished', async () => {
@@ -199,7 +225,7 @@ describe('RegisterPage (ACC-01)', () => {
       flushContentPages(http, [{ slug: 'privacy', title: 'Privacy policy', systemKey: 'privacy' }]);
       await settle();
 
-      expect(consent()).toBe('By creating an account you agree to our Privacy policy.');
+      expect(consent()).toBe(`How we use your details is explained in our privacy policy${NEW_TAB}.`);
     });
   });
 

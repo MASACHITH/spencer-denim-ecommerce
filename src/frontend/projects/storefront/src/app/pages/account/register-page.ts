@@ -211,13 +211,16 @@ import { LegalLinks } from '../../ui/legal-links/legal-links';
 
         <!-- Issue #252: consent where an account is made. Linked pages only: with neither published there is
              no sentence at all, rather than one that points nowhere, and the empty host takes no row of the
-             form's grid (legal-links.ts hides it with :empty). -->
+             form's grid (legal-links.ts hides it with :empty). The links open in a NEW TAB (newTab): the form's
+             values live in component state, and following a link in this tab would throw away what was typed. -->
         <sd-legal-links
           class="acc-hint"
           data-testid="register-consent"
-          lead="By creating an account you agree to our"
+          termsLead="By creating an account you agree to our"
+          privacyLead="How we use your details is explained in our"
           [terms]="true"
           [privacy]="true"
+          [newTab]="true"
         />
 
         <div class="acc-actions">
