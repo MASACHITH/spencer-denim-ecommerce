@@ -24,6 +24,7 @@ import {
 import { DELIVERY_DISTRICTS } from '../../core/delivery/district.data';
 import { DELIVERY_DISTRICT_STORAGE_KEY } from '../../core/delivery/delivery-district.service';
 import { DELIVERY_COUNTRY_STORAGE_KEY } from '../../core/delivery/delivery-country.service';
+import { flushContentPages } from '../../core/content/content-pages.testing';
 
 const COLOMBO: DistrictDto = { id: 1, name: 'Colombo', deliveryZone: 1 };
 const JAFFNA: DistrictDto = { id: 10, name: 'Jaffna', deliveryZone: 3 };
@@ -379,6 +380,8 @@ describe('CheckoutPage (CHK-01..03)', () => {
   });
 
   afterEach(() => {
+    // The consent line asks for the published-page index (issue #252), as the footer does on every page.
+    flushContentPages(TestBed.inject(HttpTestingController));
     TestBed.inject(HttpTestingController).verify();
     localStorage.removeItem(DELIVERY_DISTRICT_STORAGE_KEY);
   });
@@ -728,6 +731,52 @@ describe('CheckoutPage (CHK-01..03)', () => {
       await openWith(session());
 
       expect(text()).toContain('keep that address');
+    });
+
+    /**
+     * Issue #252. The line that has always said "you agree to our terms and conditions" now points at the pages,
+     * but only the pages that exist: the sentence must read as it did before while nothing is published, and must
+     * never link to a page the shop has not published.
+     */
+    describe('the agreement line', () => {
+      function agreement(): string {
+        return (element.querySelector('.checkout__fineprint')?.textContent ?? '').replace(/\s+/g, ' ').trim();
+      }
+
+      it('reads as it always did, in plain words, while neither page is published', async () => {
+        await openWith(session());
+        flushContentPages(http, []);
+        await settle();
+
+        expect(agreement()).toContain('By placing this order you agree to our terms and conditions. The next page');
+        expect(element.querySelector('.checkout__fineprint a')).toBeNull();
+        expect(agreement()).not.toMatch(/privacy/i);
+      });
+
+      it('links the terms and the privacy policy by their own addresses once both are published', async () => {
+        await openWith(session());
+        flushContentPages(http, [
+          { slug: 'terms-of-sale', title: 'Terms and conditions', systemKey: 'terms' },
+          { slug: 'privacy', title: 'Privacy policy', systemKey: 'privacy' },
+        ]);
+        await settle();
+
+        expect(agreement()).toContain(
+          'By placing this order you agree to our Terms and conditions and Privacy policy. The next page',
+        );
+
+        const links = [...element.querySelectorAll<HTMLAnchorElement>('.checkout__fineprint a')];
+        expect(links.map((link) => link.getAttribute('href'))).toEqual(['/terms-of-sale', '/privacy']);
+      });
+
+      it('never names a privacy policy the shop has not published', async () => {
+        await openWith(session());
+        flushContentPages(http, [{ slug: 'terms', title: 'Terms and conditions', systemKey: 'terms' }]);
+        await settle();
+
+        expect(agreement()).toContain('By placing this order you agree to our Terms and conditions. The next page');
+        expect(agreement()).not.toMatch(/privacy/i);
+      });
     });
 
     /** The field stays: the address is stored on the order and W3-06 will send to it. */

@@ -5,6 +5,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ContentApi, newsletterErrorMessage } from '../../../core/content/content-api';
 import { HomeSectionDto } from '../../../core/content/content.model';
 import { BRAND } from '@spencer-denim/shared';
+import { LegalLinks } from '../../../ui/legal-links/legal-links';
 
 /** What the form is doing, which is what it renders around. */
 type SignupPhase = 'idle' | 'sending' | 'done' | 'error';
@@ -26,6 +27,7 @@ type SignupPhase = 'idle' | 'sending' | 'done' | 'error';
  */
 @Component({
   selector: 'sd-newsletter-signup',
+  imports: [LegalLinks],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="signup" [attr.aria-labelledby]="headingId()">
@@ -74,10 +76,12 @@ type SignupPhase = 'idle' | 'sending' | 'done' | 'error';
               {{ phase() === 'sending' ? 'Signing up…' : 'Sign up' }}
             </button>
 
-            <!-- TODO(GLB-10): link "privacy policy" to the content page once it is published. -->
+            <!-- Issue #252 answers the TODO(GLB-10) that stood here: the privacy policy is linked once it is published,
+                 and the sentence ends where it did before until then. -->
             <p class="signup__hint" [id]="hintId()">
               We use your address for {{ brand }} emails only, and record your IP address as
               proof of consent. Unsubscribe from any of them.
+              <sd-legal-links lead="Read our" [privacy]="true" />
             </p>
 
             <!-- Always in the DOM so a screen reader is watching it before the message arrives;
