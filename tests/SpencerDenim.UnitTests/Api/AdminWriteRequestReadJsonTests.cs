@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using SpencerDenim.Api.Http;
@@ -29,6 +30,16 @@ public sealed class AdminWriteRequestReadJsonTests
         httpContext.Request.Body = new MemoryStream(bytes);
 
         return await AdminWriteRequest.ReadJsonAsync<Payload>(
+            httpContext.Request, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<(JsonObject? Body, IResult? Problem)> ReadObjectAsync(string contentType, byte[] bytes)
+    {
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.ContentType = contentType;
+        httpContext.Request.Body = new MemoryStream(bytes);
+
+        return await AdminWriteRequest.ReadJsonAsync<JsonObject>(
             httpContext.Request, TestContext.Current.CancellationToken);
     }
 
@@ -68,6 +79,13 @@ public sealed class AdminWriteRequestReadJsonTests
     [InlineData("application/json; charset=not-a-real-charset")]
     [InlineData("application/json; charset=\"x-nonexistent\"")]
     [InlineData("application/json; charset=utf-99")]
+    // UTF-7 is a name the runtime knows and refuses: Encoding.GetEncoding throws NotSupportedException ("Support for
+    // UTF-7 is disabled"), a different exception type from an unknown name, and MediaTypeHeaderValue.Encoding lets it
+    // out rather than answering null.
+    [InlineData("application/json; charset=utf-7")]
+    [InlineData("application/json; charset=UTF-7")]
+    [InlineData("application/json; charset=unicode-1-1-utf-7")]
+    [InlineData("application/json; charset=csunicode11utf7")]
     // RFC 9110 allows a quoted parameter value, but the framework does not unquote it: "utf-8" with its quotes is
     // looked up as an encoding name, so it answered 500 before this and cannot be read now. Nothing that sends
     // JSON from a browser or from Angular quotes it, so it is refused cleanly rather than handled.
@@ -81,27 +99,38 @@ public sealed class AdminWriteRequestReadJsonTests
     }
 
     /// <summary>
-    /// The refusal must not be wider than the fault: every charset the framework does read has to keep reading,
-    /// including a different case and no space after the semicolon.
+    /// The refusal must not be wider than the fault: every charset the framework does read has to keep reading. The
+    /// body is encoded <i>in</i> the charset it declares, so this proves the request is read and not just let past
+    /// the header check (a refusal of <c>iso-8859-1</c> or <c>utf-16BE</c> would otherwise go unnoticed).
     /// </summary>
     [Theory]
-    [InlineData("application/json")]
-    [InlineData("application/json; charset=utf-8")]
-    [InlineData("application/json; charset=UTF-8")]
-    [InlineData("application/json;charset=utf-8")]
-    [InlineData("application/problem+json; charset=utf-8")]
-    public async Task Every_charset_the_framework_reads_still_reads(string contentType)
+    [InlineData("application/json", "utf-8")]
+    [InlineData("application/json; charset=utf-8", "utf-8")]
+    [InlineData("application/json; charset=UTF-8", "utf-8")]
+    [InlineData("application/json;charset=utf-8", "utf-8")]
+    [InlineData("application/problem+json; charset=utf-8", "utf-8")]
+    [InlineData("application/json; charset=utf-16", "utf-16")]
+    [InlineData("application/json; charset=utf-16BE", "utf-16BE")]
+    [InlineData("application/json; charset=utf-32", "utf-32")]
+    [InlineData("application/json; charset=utf-32BE", "utf-32BE")]
+    [InlineData("application/json; charset=iso-8859-1", "iso-8859-1")]
+    [InlineData("application/json; charset=us-ascii", "us-ascii")]
+    [InlineData("application/json; charset=latin1", "iso-8859-1")]
+    public async Task Every_charset_the_framework_reads_still_reads(string contentType, string encodingName)
     {
-        var (body, problem) = await ReadAsync(contentType, ValidUtf8);
+        var bytes = Encoding.GetEncoding(encodingName).GetBytes("{\"name\":\"linen\"}");
+
+        var (body, problem) = await ReadAsync(contentType, bytes);
 
         Assert.Null(problem);
         Assert.Equal("linen", body!.Name);
     }
 
     /// <summary>
-    /// Bytes that are not valid in the declared charset. The issue also names these as a 500; measured on the
-    /// reader they already answer 400 <c>malformed_json</c>, because <c>System.Text.Json</c> reports them as a
-    /// <c>JsonException</c>. They are kept here so that stays true.
+    /// Bytes that are not valid in the declared charset, in a body bound to a <b>record</b>. Those already answer
+    /// 400 <c>malformed_json</c>, because the serializer decodes every string while it builds the record and reports
+    /// a failure as a <c>JsonException</c>; they are kept here so that stays true. A body bound to a
+    /// <see cref="JsonObject"/> does not fail at that point: see the tests below.
     /// </summary>
     [Theory]
     [InlineData("application/json", new byte[] { 0x7B, 0x22, 0x6E, 0x61, 0x6D, 0x65, 0x22, 0x3A, 0x22, 0xFF, 0xFE, 0x22, 0x7D })]
@@ -116,6 +145,69 @@ public sealed class AdminWriteRequestReadJsonTests
 
         AssertProblem(problem, StatusCodes.Status400BadRequest, "malformed_json");
     }
+
+    /// <summary>
+    /// Issue #147's second trigger, on the call sites that matter: 29 of the 44 callers read a
+    /// <see cref="JsonObject"/>, which is parsed <b>lazily</b>. Text that cannot be decoded does not fail at the read;
+    /// it failed later, with an <c>InvalidOperationException</c>, the first time a handler asked for a string (a 500),
+    /// where a record body fails inside the deserializer and is already a 400. Two shapes: bytes that are not UTF-8,
+    /// and an escape that spells half a surrogate pair, which is plain ASCII on the wire and only invalid once it is
+    /// turned into a string. Keys count as much as values, and so does nesting.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(UndecodableObjectBodies))]
+    public async Task A_json_object_body_with_text_that_cannot_be_decoded_is_a_400_problem(string label, byte[] bytes)
+    {
+        var (body, problem) = await ReadObjectAsync("application/json", bytes);
+
+        Assert.True(problem is not null, $"'{label}' was handed to the handler as a body; it would fail there as a 500.");
+        Assert.Null(body);
+        AssertProblem(problem, StatusCodes.Status400BadRequest, "malformed_json");
+    }
+
+    public static TheoryData<string, byte[]> UndecodableObjectBodies() => new()
+    {
+        { "invalid UTF-8 in a value", Join("{\"code\":\"", [0xFF, 0xFE], "\"}") },
+        { "invalid UTF-8 in a key", Join("{\"", [0xFF], "\":\"a\"}") },
+        { "a truncated UTF-8 sequence in a value", Join("{\"code\":\"", [0xC3], "\"}") },
+        { "an escaped lone high surrogate in a value", Ascii("{\"code\":\"\\ud800\"}") },
+        { "an escaped lone high surrogate in a key", Ascii("{\"\\ud800\":\"a\"}") },
+        { "an escaped lone low surrogate in a value", Ascii("{\"code\":\"\\udc00\"}") },
+        { "invalid UTF-8 inside an array inside an object", Join("{\"a\":[{\"b\":\"", [0xFF], "\"}]}") },
+        { "an escaped lone surrogate two levels down", Ascii("{\"a\":{\"b\":[\"\\ud800\"]}}") },
+    };
+
+    /// <summary>
+    /// The check must not be wider than the fault either: a body that is fine still reaches the handler, with the
+    /// value it sent. An escaped surrogate <i>pair</i> is one character and is fine, as are numbers, nulls,
+    /// booleans, empty strings and an object with no properties.
+    /// </summary>
+    [Fact]
+    public async Task A_valid_json_object_body_still_reaches_the_handler()
+    {
+        const string Json =
+            "{\"name\":\"linen\",\"n\":5,\"on\":true,\"none\":null,\"empty\":\"\","
+            + "\"emoji\":\"\ud83d\ude00\",\"escaped\":\"\\ud83d\\ude00\",\"tags\":[\"a\",\"b\"],"
+            + "\"nested\":{\"k\":\"v\",\"deeper\":[{\"x\":\"y\"}]}}";
+
+        var (body, problem) = await ReadObjectAsync("application/json", Encoding.UTF8.GetBytes(Json));
+
+        Assert.Null(problem);
+        Assert.Equal("linen", body!["name"]!.GetValue<string>());
+        Assert.Equal(5, body["n"]!.GetValue<int>());
+        Assert.Equal("\ud83d\ude00", body["emoji"]!.GetValue<string>());
+        Assert.Equal("\ud83d\ude00", body["escaped"]!.GetValue<string>());
+        Assert.Equal("y", body["nested"]!["deeper"]![0]!["x"]!.GetValue<string>());
+
+        var (empty, emptyProblem) = await ReadObjectAsync("application/json", Encoding.UTF8.GetBytes("{}"));
+        Assert.Null(emptyProblem);
+        Assert.Empty(empty!);
+    }
+
+    private static byte[] Ascii(string text) => Encoding.ASCII.GetBytes(text);
+
+    private static byte[] Join(string before, byte[] bad, string after) =>
+        [.. Encoding.ASCII.GetBytes(before), .. bad, .. Encoding.ASCII.GetBytes(after)];
 
     /// <summary>
     /// A UTF-16 body that is genuinely UTF-16 is one the framework transcodes and reads, so the fix is not

@@ -343,11 +343,15 @@ public sealed class AdminCatalogEndpointTests(SqlServerDatabaseFixture sqlServer
         var client = await AdminCatalogApiClient.SignInAsync(factory, "charset", FullCatalogueRights, Token);
         var body = Encoding.UTF8.GetBytes("{\"departmentId\":1,\"name\":\"Scarves\"}");
 
-        var (status, problem) = await client.PostWithContentTypeHeaderAsync(
-            CategoriesUrl, body, "application/json; charset=not-a-real-charset", Token);
+        // An unknown name, and UTF-7, which the runtime knows and refuses with a different exception.
+        foreach (var charset in new[] { "not-a-real-charset", "utf-7" })
+        {
+            var (status, problem) = await client.PostWithContentTypeHeaderAsync(
+                CategoriesUrl, body, $"application/json; charset={charset}", Token);
 
-        Assert.Equal(HttpStatusCode.UnsupportedMediaType, status);
-        Assert.Equal("unsupported_charset", problem.GetProperty("code").GetString());
+            Assert.True(status == HttpStatusCode.UnsupportedMediaType, $"charset={charset} answered {(int)status}.");
+            Assert.Equal("unsupported_charset", problem.GetProperty("code").GetString());
+        }
 
         // A body that is not valid in the charset it declares was never a 500, and stays a 400.
         var (invalidStatus, invalidProblem) = await client.PostWithContentTypeHeaderAsync(
@@ -355,6 +359,39 @@ public sealed class AdminCatalogEndpointTests(SqlServerDatabaseFixture sqlServer
 
         Assert.Equal(HttpStatusCode.BadRequest, invalidStatus);
         Assert.Equal("malformed_json", invalidProblem.GetProperty("code").GetString());
+    }
+
+    /// <summary>
+    /// Issue <b>#147</b>, the second trigger, on a route whose body is a <c>JsonObject</c> (the promo-code create
+    /// route; 29 of the 44 callers of the shared reader). The object is parsed lazily, so bytes that are not UTF-8 and
+    /// an escaped lone surrogate used to reach the handler and fail there, as a <b>500</b>, the first time it read a
+    /// string. A record-bodied route (the category create above) was already a 400, which is why the first fix missed it.
+    /// </summary>
+    [Theory]
+    [InlineData("Testing")]
+    [InlineData("Development")]
+    public async Task Undecodable_text_in_a_json_object_body_is_a_400_rather_than_a_500(string environment)
+    {
+        var factory = await HostAsync(environment);
+        var client = await AdminCatalogApiClient.SignInAsync(
+            factory, "objectbody", [Permissions.Promotions.Create, Permissions.Promotions.Edit], Token);
+        const string PromoCodes = "/api/admin/marketing/promo-codes";
+
+        var bodies = new Dictionary<string, byte[]>
+        {
+            ["invalid UTF-8 in a value"] = [.. Encoding.ASCII.GetBytes("{\"code\":\""), 0xFF, 0xFE, .. Encoding.ASCII.GetBytes("\"}")],
+            ["invalid UTF-8 in a key"] = [.. Encoding.ASCII.GetBytes("{\""), 0xFF, .. Encoding.ASCII.GetBytes("\":\"a\"}")],
+            ["an escaped lone high surrogate in a value"] = Encoding.ASCII.GetBytes("{\"code\":\"\\ud800\"}"),
+            ["an escaped lone surrogate in a key"] = Encoding.ASCII.GetBytes("{\"\\ud800\":\"a\"}"),
+        };
+
+        foreach (var (label, bytes) in bodies)
+        {
+            var (status, problem) = await client.PostWithContentTypeHeaderAsync(PromoCodes, bytes, "application/json", Token);
+
+            Assert.True(status == HttpStatusCode.BadRequest, $"{label}: answered {(int)status}, expected 400.");
+            Assert.Equal("malformed_json", problem.GetProperty("code").GetString());
+        }
     }
 
     [Fact]

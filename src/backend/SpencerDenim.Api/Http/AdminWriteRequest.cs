@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Http.HttpResults;
 using SpencerDenim.Application.Abstractions.Auditing;
@@ -17,7 +19,8 @@ public static class AdminWriteRequest
     public const string AntiforgeryHeader = "X-XSRF-TOKEN";
 
     /// <summary>
-    /// Reads and parses a JSON request body, answering with a 400 problem for anything malformed.
+    /// Reads and parses a JSON request body, answering with a 400 problem for anything malformed (including text that
+    /// cannot be decoded), and with a 415 problem when it is not JSON or declares a charset it cannot be read in.
     /// <para>
     /// <b>Why this is not plain minimal-API model binding.</b> Issue <b>#47</b> is open because
     /// <c>POST /api/admin/auth/login</c> with a body of <c>{bad</c> — or with <c>{"email":123}</c>, a
@@ -53,11 +56,10 @@ public static class AdminWriteRequest
 
         // A charset the runtime has no encoding for makes ReadFromJsonAsync throw InvalidOperationException
         // (issue #147), which is neither of the exceptions caught below, so it answered 500 for a header the
-        // caller chose. It is decided from the header, with the parser the framework itself uses, rather than by
-        // catching InvalidOperationException: that type is also what a bug inside the server throws, and
+        // caller chose. It is decided from the header, before the body is touched, rather than by catching
+        // InvalidOperationException around the read: that type is also what a bug inside the server throws, and
         // reporting one of those as "your request was wrong" would hide it.
-        var contentType = request.GetTypedHeaders().ContentType;
-        if (contentType is { Charset.HasValue: true, Encoding: null })
+        if (DeclaresUnusableCharset(request))
         {
             return (null, Problem(
                 StatusCodes.Status415UnsupportedMediaType,
@@ -70,13 +72,29 @@ public static class AdminWriteRequest
         {
             var body = await request.ReadFromJsonAsync<TBody>(cancellationToken);
 
-            return body is null
-                ? (null, Problem(
+            if (body is null)
+            {
+                return (null, Problem(
                     StatusCodes.Status400BadRequest,
                     "Empty request body",
                     "The request body is empty, or is the JSON literal null.",
-                    "empty_body"))
-                : (body, null);
+                    "empty_body"));
+            }
+
+            // Issue #147: a record is built from every string in the body while it is read, so text that cannot be
+            // decoded already fails above as a JsonException. A JsonObject (29 of the 44 callers) is parsed lazily
+            // and hands the problem to whichever handler first asks for a string, as a 500. Asking for every
+            // string here puts it in the same place for both.
+            if (body is JsonNode node && !AllTextIsDecodable(node))
+            {
+                return (null, Problem(
+                    StatusCodes.Status400BadRequest,
+                    "Malformed JSON",
+                    "The request body contains text that is not valid Unicode.",
+                    "malformed_json"));
+            }
+
+            return (body, null);
         }
         catch (JsonException exception)
         {
@@ -95,6 +113,78 @@ public static class AdminWriteRequest
                 "Bad request body",
                 exception.Message,
                 "malformed_json"));
+        }
+    }
+
+    /// <summary>
+    /// True when the request declares a <c>charset</c> the body cannot be read in. The framework looks the name up
+    /// with <see cref="Encoding.GetEncoding(string)"/>, which throws <see cref="ArgumentException"/> for a name it
+    /// does not know (the typed header reports that as a <see langword="null"/> encoding) and
+    /// <see cref="NotSupportedException"/> for UTF-7, which the runtime knows and refuses. The typed header lets the
+    /// second one out, so it counts here as well. A quoted value (<c>charset="utf-8"</c>) is not unquoted by the
+    /// framework either, so it is refused cleanly instead of answering 500.
+    /// </summary>
+    private static bool DeclaresUnusableCharset(HttpRequest request)
+    {
+        var contentType = request.GetTypedHeaders().ContentType;
+        if (contentType is not { Charset.HasValue: true })
+        {
+            return false;
+        }
+
+        try
+        {
+            return contentType.Encoding is null;
+        }
+        catch (NotSupportedException)
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Turns every string in a lazily parsed body, keys included, into a <see cref="string"/>, which is when
+    /// <c>System.Text.Json</c> finds out that it cannot be one: bytes that are not UTF-8, or an escape such as
+    /// <c>\ud800</c> that spells half a surrogate pair. It reports that as an <see cref="InvalidOperationException"/>.
+    /// Catching that type is safe here, and only here: nothing else in this walk can throw it, because the body is
+    /// already parsed and the walk only reads it.
+    /// </summary>
+    private static bool AllTextIsDecodable(JsonNode node)
+    {
+        try
+        {
+            Touch(node);
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static void Touch(JsonNode? node)
+    {
+        switch (node)
+        {
+            case JsonObject properties:
+                foreach (var (_, child) in properties)
+                {
+                    Touch(child);
+                }
+
+                break;
+
+            case JsonArray items:
+                foreach (var item in items)
+                {
+                    Touch(item);
+                }
+
+                break;
+
+            case JsonValue scalar when scalar.GetValueKind() == JsonValueKind.String:
+                _ = scalar.GetValue<string>();
+                break;
         }
     }
 
