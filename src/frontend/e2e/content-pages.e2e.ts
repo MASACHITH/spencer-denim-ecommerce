@@ -1061,6 +1061,28 @@ async function openCheckoutPage(page: Page): Promise<void> {
 }
 
 /**
+ * Chooses Colombo and the standard delivery method and waits for each re-quote, which is what makes the address
+ * fields appear (the form asks for them only once a district is chosen) - the order `checkout.e2e.ts` uses.
+ */
+async function chooseDistrictAndMethod(page: Page): Promise<void> {
+  const district = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/checkout'
+      && new URL(response.url()).searchParams.get('districtId') === '1',
+  );
+  await page.locator('#co-district').selectOption('1');
+  await district;
+
+  const method = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/checkout'
+      && new URL(response.url()).searchParams.get('deliveryMethodId') === '1',
+  );
+  await page.locator('input[name="deliveryMethodId"][value="1"]').check();
+  await method;
+}
+
+/**
  * Presses each consent link of a page that holds a half-typed form and proves, in a real browser, what the shopper
  * needs: the link opens a **new tab** showing the page, and the original tab is still on the same address with
  * every value still in its field. `values` maps a field selector to what was typed into it.
@@ -1251,6 +1273,7 @@ test.describe('the About, Privacy and Terms pages (#252)', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await addOneToBag(page, 2);
     await openCheckoutPage(page);
+    await chooseDistrictAndMethod(page);
 
     await page.locator('#co-firstName').fill('Nimali');
     await page.locator('#co-lastName').fill('Perera');
