@@ -38,8 +38,10 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
     /// W2-11); <b>Shipping and Returns on the shop with the shop's starting terms</b> (owner decision 2026-10-21,
     /// issue #33, from <c>PolicyPageContent</c>); About, Privacy and Terms empty and unpublished.
     /// <para>
-    /// <b>Issue #33 changed which pages carry copy, not the rule behind it:</b> nothing writes words the owner has
-    /// not asked for. Privacy and Terms still wait for a PDPA review and About for the client.
+    /// <b>Issues #33 and #252 changed which pages carry copy, not the rule behind it:</b> nothing writes words the
+    /// owner has not asked for. The owner asked for Shipping and Returns on 2026-10-21 and for About, Privacy and
+    /// Terms on 2026-10-24, as drafts to be reviewed (Privacy and Terms by a lawyer) before the shop goes live.
+    /// Contact is the one page that never gets a body.
     /// </para>
     /// <para>
     /// <b>This is the task's defining constraint, as a test.</b> A returns policy, a privacy policy and
@@ -75,7 +77,7 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
     /// </para>
     /// </summary>
     [Fact]
-    public async Task The_system_pages_are_seeded_with_no_copy_and_only_contact_on_the_shop()
+    public async Task The_system_pages_are_seeded_with_the_owners_copy_and_contact_alone_has_no_body()
     {
         await using var host = await StartAsync();
 
@@ -110,7 +112,14 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
             ContentPageKeys.Seeds.Select(seed => seed.SystemKey).Order(StringComparer.Ordinal),
             pages.Select(page => page.SystemKey!).Order(StringComparer.Ordinal));
 
-        var policyPages = new[] { ContentPageKeys.Shipping, ContentPageKeys.Returns };
+        var policyPages = new[]
+        {
+            ContentPageKeys.Shipping,
+            ContentPageKeys.Returns,
+            ContentPageKeys.About,
+            ContentPageKeys.Privacy,
+            ContentPageKeys.Terms,
+        };
 
         foreach (var page in pages.Where(page => policyPages.Contains(page.SystemKey)))
         {
@@ -123,7 +132,7 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
 
         foreach (var page in pages.Where(page => !policyPages.Contains(page.SystemKey)))
         {
-            // **Empty for the other four, Contact included.** The publish decision below does not relax this:
+            // **Empty for the one that is left, Contact.** The publish decision below does not relax this:
             // Contact's content is the enquiry form and the settings, not copy.
             Assert.True(
                 page.BodyHtml.Length == 0,
@@ -157,7 +166,14 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
         // Said once more as a whole, so "everything is published" and "nothing is" both fail here rather
         // than only inside the loop's per-page message.
         Assert.Equal(
-            [ContentPageKeys.Contact, ContentPageKeys.Returns, ContentPageKeys.Shipping],
+            [
+                ContentPageKeys.About,
+                ContentPageKeys.Contact,
+                ContentPageKeys.Privacy,
+                ContentPageKeys.Returns,
+                ContentPageKeys.Shipping,
+                ContentPageKeys.Terms,
+            ],
             pages.Where(page => page.IsPublished).Select(page => page.SystemKey!).Order(StringComparer.Ordinal));
     }
 
@@ -561,7 +577,7 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
     /// </para>
     /// <para>
     /// The seed itself is asserted by
-    /// <c>The_system_pages_are_seeded_with_no_copy_and_only_contact_on_the_shop</c>, which deletes the
+    /// <c>The_system_pages_are_seeded_with_the_owners_copy_and_contact_alone_has_no_body</c>, which deletes the
     /// rows and runs the real seeder and never calls this.
     /// </para>
     /// </summary>

@@ -8,7 +8,7 @@ namespace SpencerDenim.UnitTests.Architecture;
 /// goes red when something does (GLB-10, doc 11 P13).
 /// <para>
 /// <b>Why it reads source rather than a database.</b> The guarantee already has an integration test —
-/// <c>ContentPageEndpointTests.The_system_pages_are_seeded_with_no_copy_and_only_contact_on_the_shop</c>,
+/// <c>ContentPageEndpointTests.The_system_pages_are_seeded_with_the_owners_copy_and_contact_alone_has_no_body</c>,
 /// which now deletes the rows and runs the real seeder. But the W2-11 tester showed how little that was
 /// worth on its own: it changed the seeder to write <c>&lt;p&gt;We offer a 14-day returns policy on all
 /// items.&lt;/p&gt;</c> into all six pages and <b>the entire unit suite stayed green</b>, 1,643/1,643,
@@ -63,10 +63,10 @@ public sealed class SystemPageCopyTests
 
         Assert.NotEmpty(assignments);
 
-        // Issue #33 (owner decision 2026-10-21): the Shipping and Returns pages are seeded with the shop's starting
-        // terms, from PolicyPageContent and nowhere else. That is the one permitted non-empty right-hand side, and
-        // PolicyPageWritesOnlyShippingAndReturns below pins which pages it can reach — About, Privacy and Terms
-        // still wait for the client's words and a PDPA review.
+        // Issue #33 (owner decision 2026-10-21) and issue #252 (2026-10-24): the policy pages are seeded with the
+        // shop's starting copy, from PolicyPageContent and nowhere else. That is the one permitted non-empty
+        // right-hand side, and Policy_copy_reaches_exactly_the_five_pages_the_owner_chose_and_never_contact below
+        // pins which pages it can reach.
         Assert.All(
             assignments,
             value => Assert.True(
@@ -78,14 +78,35 @@ public sealed class SystemPageCopyTests
     }
 
     /// <summary>
-    /// The policy copy the seeder may write reaches the Shipping and Returns pages and no other (issue #33).
+    /// The policy copy the seeder may write reaches exactly five pages, and <b>Contact is the one that never gets a
+    /// body</b>: its content is the enquiry form and the <c>Contact.*</c> settings.
+    /// <para>
+    /// The set is pinned by name so that a sixth page cannot start receiving copy without this test being edited,
+    /// with the reason. It grew twice, each time on the owner's written instruction: Shipping and Returns on
+    /// 2026-10-21 (issue #33), and About, Privacy and Terms on 2026-10-24 (issue #252), as drafts for the owner and a
+    /// lawyer to review before the shop goes live. Before the second, this test said those three waited for the
+    /// client's words and a PDPA review; they still need the review, which is why they are drafts and why the
+    /// pull request says so.
+    /// </para>
     /// </summary>
     [Fact]
-    public void PolicyPageWritesOnlyShippingAndReturns()
+    public void Policy_copy_reaches_exactly_the_five_pages_the_owner_chose_and_never_contact()
     {
+        var seeded = SpencerDenim.Infrastructure.Persistence.Seeding.PolicyPageContent.Bodies.Keys
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
         Assert.Equal(
-            [ContentPageKeys.Returns, ContentPageKeys.Shipping],
-            SpencerDenim.Infrastructure.Persistence.Seeding.PolicyPageContent.Bodies.Keys.Order(StringComparer.Ordinal));
+            [
+                ContentPageKeys.About,
+                ContentPageKeys.Privacy,
+                ContentPageKeys.Returns,
+                ContentPageKeys.Shipping,
+                ContentPageKeys.Terms,
+            ],
+            seeded);
+
+        Assert.DoesNotContain(ContentPageKeys.Contact, seeded, StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>

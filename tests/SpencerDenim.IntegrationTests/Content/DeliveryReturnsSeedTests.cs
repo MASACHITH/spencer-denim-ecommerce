@@ -109,7 +109,7 @@ public sealed class DeliveryReturnsSeedTests(SqlServerDatabaseFixture sqlServer)
     // ---- the Shipping and Returns pages ----------------------------------------------------------------
 
     [Fact]
-    public async Task A_fresh_database_gets_shipping_and_returns_written_and_published_and_nothing_else()
+    public async Task A_fresh_database_gets_the_five_policy_pages_written_and_published_and_contact_stays_empty()
     {
         sqlServer.SkipIfUnavailable();
         await using var deployment = await FreshDeployment.CreateAsync(sqlServer.ConnectionString, Token);
@@ -118,7 +118,7 @@ public sealed class DeliveryReturnsSeedTests(SqlServerDatabaseFixture sqlServer)
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var counts = await Seeder(db).SeedAsync(Token);
-            Assert.Equal(2, counts.PolicyPages);
+            Assert.Equal(5, counts.PolicyPages);
         }
 
         await using (var scope = deployment.Services.CreateAsyncScope())
@@ -126,20 +126,19 @@ public sealed class DeliveryReturnsSeedTests(SqlServerDatabaseFixture sqlServer)
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var pages = await db.ContentPages.AsNoTracking().Where(page => page.SystemKey != null).ToDictionaryAsync(page => page.SystemKey!, Token);
 
-            Assert.Equal(PolicyPageContent.ShippingBody, pages[ContentPageKeys.Shipping].BodyHtml);
-            Assert.Equal(PolicyPageContent.ReturnsBody, pages[ContentPageKeys.Returns].BodyHtml);
-            Assert.True(pages[ContentPageKeys.Shipping].IsPublished);
-            Assert.True(pages[ContentPageKeys.Returns].IsPublished);
-            Assert.NotNull(pages[ContentPageKeys.Returns].PublishedAtUtc);
-
-            // About, Privacy and Terms wait for the client and a PDPA review.
-            foreach (var key in new[] { ContentPageKeys.About, ContentPageKeys.Privacy, ContentPageKeys.Terms })
+            // All five pages carry exactly the shipped copy and are on the shop (issues #33 and #252).
+            foreach (var (key, body) in PolicyPageContent.Bodies)
             {
-                Assert.Equal(string.Empty, pages[key].BodyHtml);
-                Assert.False(pages[key].IsPublished);
+                Assert.Equal(body, pages[key].BodyHtml);
+                Assert.True(pages[key].IsPublished, key);
+                Assert.NotNull(pages[key].PublishedAtUtc);
             }
 
-            Assert.Equal("1", await MarkerAsync(db, SettingKeys.Seed.PolicyPagesVersion));
+            // Contact is on the shop with no body: its content is the form and the settings.
+            Assert.Equal(string.Empty, pages[ContentPageKeys.Contact].BodyHtml);
+            Assert.True(pages[ContentPageKeys.Contact].IsPublished);
+
+            Assert.Equal("2", await MarkerAsync(db, SettingKeys.Seed.PolicyPagesVersion));
 
             // An admin empties Returns and takes it off the shop: the next deployment leaves it that way.
             await db.ContentPages
@@ -222,6 +221,172 @@ public sealed class DeliveryReturnsSeedTests(SqlServerDatabaseFixture sqlServer)
             var returns = await db.ContentPages.IgnoreQueryFilters().AsNoTracking().SingleAsync(page => page.SystemKey == ContentPageKeys.Returns, Token);
             Assert.Equal(string.Empty, returns.BodyHtml);
             Assert.False(returns.IsPublished);
+        }
+    }
+
+    // ---- About, Privacy and Terms (version 2, issue #252) -----------------------------------------------
+
+    /// <summary>
+    /// UAT's real state: it took version 1, so Shipping and Returns are on the shop; About was published by hand and is
+    /// empty; Privacy and Terms are unpublished shells. Version 2 must give About, Privacy and Terms their copy and
+    /// publish them, <b>and touch nothing else</b>: an admin who emptied Returns after version 1 does not get it
+    /// filled and published again by the bump (the reason copy is offered once per page, not once per version).
+    /// </summary>
+    [Fact]
+    public async Task A_database_that_took_version_one_gets_only_the_three_new_pages()
+    {
+        sqlServer.SkipIfUnavailable();
+        await using var deployment = await FreshDeployment.CreateAsync(sqlServer.ConnectionString, Token);
+
+        await using (var scope = deployment.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await Seeder(db).SeedAsync(Token);
+
+            // Wind the database back to the end of version 1.
+            await db.Settings.Where(setting => setting.Key == SettingKeys.Seed.PolicyPagesVersion)
+                .ExecuteUpdateAsync(update => update.SetProperty(setting => setting.Value, "1"), Token);
+            await db.ContentPages
+                .Where(page => page.SystemKey == ContentPageKeys.Privacy || page.SystemKey == ContentPageKeys.Terms)
+                .ExecuteUpdateAsync(
+                    update => update
+                        .SetProperty(page => page.BodyHtml, string.Empty)
+                        .SetProperty(page => page.IsPublished, false)
+                        .SetProperty(page => page.PublishedAtUtc, (DateTime?)null),
+                    Token);
+            await db.ContentPages
+                .Where(page => page.SystemKey == ContentPageKeys.About)
+                .ExecuteUpdateAsync(update => update.SetProperty(page => page.BodyHtml, string.Empty), Token);
+
+            // An admin emptied Returns and took it off the shop after version 1.
+            await db.ContentPages
+                .Where(page => page.SystemKey == ContentPageKeys.Returns)
+                .ExecuteUpdateAsync(
+                    update => update.SetProperty(page => page.BodyHtml, string.Empty).SetProperty(page => page.IsPublished, false),
+                    Token);
+            db.ChangeTracker.Clear();
+        }
+
+        await using (var scope = deployment.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.Equal(3, (await Seeder(db).SeedAsync(Token)).PolicyPages);
+
+            var pages = await db.ContentPages.AsNoTracking().Where(page => page.SystemKey != null).ToDictionaryAsync(page => page.SystemKey!, Token);
+
+            Assert.Equal(PolicyPageContent.AboutBody, pages[ContentPageKeys.About].BodyHtml);
+            Assert.Equal(PolicyPageContent.PrivacyBody, pages[ContentPageKeys.Privacy].BodyHtml);
+            Assert.Equal(PolicyPageContent.TermsBody, pages[ContentPageKeys.Terms].BodyHtml);
+            Assert.All(
+                new[] { ContentPageKeys.About, ContentPageKeys.Privacy, ContentPageKeys.Terms },
+                key =>
+                {
+                    Assert.True(pages[key].IsPublished, key);
+                    Assert.NotNull(pages[key].PublishedAtUtc);
+                });
+
+            // Version 1's pages: Shipping untouched, Returns still the admin's empty, unpublished page.
+            Assert.Equal(PolicyPageContent.ShippingBody, pages[ContentPageKeys.Shipping].BodyHtml);
+            Assert.Equal(string.Empty, pages[ContentPageKeys.Returns].BodyHtml);
+            Assert.False(pages[ContentPageKeys.Returns].IsPublished);
+
+            Assert.Equal("2", await MarkerAsync(db, SettingKeys.Seed.PolicyPagesVersion));
+
+            // And a second run changes nothing.
+            Assert.Equal(0, (await Seeder(db).SeedAsync(Token)).PolicyPages);
+            var again = await db.ContentPages.AsNoTracking().Where(page => page.SystemKey != null).ToDictionaryAsync(page => page.SystemKey!, Token);
+            Assert.All(pages, pair => Assert.Equal(pair.Value.BodyHtml, again[pair.Key].BodyHtml));
+            Assert.All(pages, pair => Assert.Equal(pair.Value.IsPublished, again[pair.Key].IsPublished));
+        }
+    }
+
+    /// <summary>
+    /// An admin's words are never overwritten and never published for them: a Privacy policy somebody wrote stays,
+    /// and stays unpublished if they left it so; a soft-deleted Terms page stays deleted; an About page they
+    /// published empty (as UAT's was) <i>is</i> filled, because empty is the one state the seeder treats as untouched.
+    /// </summary>
+    [Fact]
+    public async Task On_a_database_that_took_version_one_an_admins_words_survive_and_an_empty_page_is_filled()
+    {
+        sqlServer.SkipIfUnavailable();
+        await using var deployment = await FreshDeployment.CreateAsync(sqlServer.ConnectionString, Token);
+
+        await using (var scope = deployment.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await Seeder(db).SeedAsync(Token);
+
+            await db.Settings.Where(setting => setting.Key == SettingKeys.Seed.PolicyPagesVersion)
+                .ExecuteUpdateAsync(update => update.SetProperty(setting => setting.Value, "1"), Token);
+
+            await db.ContentPages.Where(page => page.SystemKey == ContentPageKeys.About)
+                .ExecuteUpdateAsync(
+                    update => update.SetProperty(page => page.BodyHtml, string.Empty).SetProperty(page => page.IsPublished, true),
+                    Token);
+            await db.ContentPages.Where(page => page.SystemKey == ContentPageKeys.Privacy)
+                .ExecuteUpdateAsync(
+                    update => update.SetProperty(page => page.BodyHtml, "<p>Our own privacy words.</p>").SetProperty(page => page.IsPublished, false),
+                    Token);
+
+            var terms = await db.ContentPages.SingleAsync(page => page.SystemKey == ContentPageKeys.Terms, Token);
+            terms.BodyHtml = string.Empty;
+            terms.IsPublished = false;
+            terms.SoftDelete(DateTime.UtcNow, null);
+            await db.SaveChangesAsync(Token);
+            db.ChangeTracker.Clear();
+        }
+
+        await using (var scope = deployment.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.Equal(1, (await Seeder(db).SeedAsync(Token)).PolicyPages);
+
+            var about = await db.ContentPages.AsNoTracking().SingleAsync(page => page.SystemKey == ContentPageKeys.About, Token);
+            Assert.Equal(PolicyPageContent.AboutBody, about.BodyHtml);
+            Assert.True(about.IsPublished);
+
+            var privacy = await db.ContentPages.AsNoTracking().SingleAsync(page => page.SystemKey == ContentPageKeys.Privacy, Token);
+            Assert.Equal("<p>Our own privacy words.</p>", privacy.BodyHtml);
+            Assert.False(privacy.IsPublished);
+
+            var terms = await db.ContentPages.IgnoreQueryFilters().AsNoTracking().SingleAsync(page => page.SystemKey == ContentPageKeys.Terms, Token);
+            Assert.Equal(string.Empty, terms.BodyHtml);
+            Assert.True(terms.IsDeleted);
+        }
+    }
+
+    /// <summary>
+    /// After the first offer the marker holds: an admin who unpublishes one of the new pages, or empties it, keeps it
+    /// that way through every later deployment, however many times the seeder runs.
+    /// </summary>
+    [Fact]
+    public async Task After_the_first_offer_an_admin_who_unpublishes_or_empties_a_new_page_keeps_it_that_way()
+    {
+        sqlServer.SkipIfUnavailable();
+        await using var deployment = await FreshDeployment.CreateAsync(sqlServer.ConnectionString, Token);
+
+        await using (var scope = deployment.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.Equal(5, (await Seeder(db).SeedAsync(Token)).PolicyPages);
+
+            await db.ContentPages.Where(page => page.SystemKey == ContentPageKeys.Privacy)
+                .ExecuteUpdateAsync(update => update.SetProperty(page => page.IsPublished, false), Token);
+            await db.ContentPages.Where(page => page.SystemKey == ContentPageKeys.Terms)
+                .ExecuteUpdateAsync(update => update.SetProperty(page => page.BodyHtml, string.Empty), Token);
+            db.ChangeTracker.Clear();
+
+            for (var run = 0; run < 3; run++)
+            {
+                Assert.Equal(0, (await Seeder(db).SeedAsync(Token)).PolicyPages);
+            }
+
+            var privacy = await db.ContentPages.AsNoTracking().SingleAsync(page => page.SystemKey == ContentPageKeys.Privacy, Token);
+            Assert.Equal(PolicyPageContent.PrivacyBody, privacy.BodyHtml);
+            Assert.False(privacy.IsPublished);
+
+            var terms = await db.ContentPages.AsNoTracking().SingleAsync(page => page.SystemKey == ContentPageKeys.Terms, Token);
+            Assert.Equal(string.Empty, terms.BodyHtml);
         }
     }
 
