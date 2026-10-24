@@ -25,7 +25,7 @@ namespace SpencerDenim.Infrastructure.Admin.Users;
 /// does not exist, so neither the response nor its timing can tell the two apart.
 /// </para>
 /// </summary>
-internal sealed class StaffUserDirectoryReader(AppDbContext dbContext) : IStaffUserDirectoryReader
+internal sealed class StaffUserDirectoryReader(AppDbContext dbContext, IProtectedStaffAccounts protectedAccounts) : IStaffUserDirectoryReader
 {
     public async Task<PagedResult<StaffUserSummaryDto>> ListAsync(
         GetStaffUsersQuery query,
@@ -73,7 +73,8 @@ internal sealed class StaffUserDirectoryReader(AppDbContext dbContext) : IStaffU
                 u.IsActive,
                 u.MustChangePassword,
                 u.LastLoginAtUtc,
-                rolesByUser.TryGetValue(u.Id, out var roles) ? roles : []));
+                rolesByUser.TryGetValue(u.Id, out var roles) ? roles : [],
+                protectedAccounts.IsProtected(u.Email)));
 
         return new PagedResult<StaffUserSummaryDto>(items, query.Page, query.PageSize, totalCount);
     }
@@ -120,7 +121,8 @@ internal sealed class StaffUserDirectoryReader(AppDbContext dbContext) : IStaffU
             user.CreatedAtUtc,
             grantsAll,
             roles,
-            permissions);
+            permissions,
+            protectedAccounts.IsProtected(user.Email));
     }
 
     /// <summary>

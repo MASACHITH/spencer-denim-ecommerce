@@ -1,5 +1,6 @@
 using SpencerDenim.Application.Admin.CurrentUser;
 using SpencerDenim.Application.Admin.Users;
+using SpencerDenim.Application.Admin.Users.Abstractions;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Domain.Identity;
 
@@ -13,10 +14,10 @@ public sealed class UpdateStaffUserProfileCommandHandlerTests
         public DateTimeOffset UtcNow => new(2026, 9, 30, 9, 0, 0, TimeSpan.Zero);
     }
 
-    private static UpdateStaffUserProfileCommandHandler CreateHandler(FakeStaffUserRoleManagementStore store, EffectivePermissions actorPermissions, RecordingAuditLogWriter audit)
+    private static UpdateStaffUserProfileCommandHandler CreateHandler(FakeStaffUserRoleManagementStore store, EffectivePermissions actorPermissions, RecordingAuditLogWriter audit, IProtectedStaffAccounts? protectedAccounts = null)
     {
         store.AuditWriter = audit;
-        return new(store, new StubEffectivePermissionsProvider(actorPermissions), new StubAdminUserLookup(new AdminUserSummary(1, "actor@example.com", "Actor", null, true, false, "actor-stamp")), new FixedClock());
+        return new(store, new StubEffectivePermissionsProvider(actorPermissions), new StubAdminUserLookup(new AdminUserSummary(1, "actor@example.com", "Actor", null, true, false, "actor-stamp")), protectedAccounts ?? new StubProtectedStaffAccounts(), new FixedClock());
     }
 
     private static RoleGrantSnapshot Role(int id, bool grantsAll, params string[] permissions) => new(id, $"role-{id}", grantsAll, permissions.ToHashSet());
@@ -36,6 +37,48 @@ public sealed class UpdateStaffUserProfileCommandHandlerTests
         var forbidden = Assert.IsType<UpdateStaffUserProfileResult.Forbidden>(result);
         Assert.Equal(RbacDenialReason.EmailChangeRequiresGrantsAll, forbidden.Reason);
         Assert.Empty(audit.Entries);
+    }
+
+    private static StaffUserSnapshot ProtectedTarget() =>
+        new(2, "vendor@example.com", "Vendor", "Support", true, "stamp-0", [Role(99, grantsAll: true)]);
+
+    [Fact]
+    public async Task A_protected_accounts_email_cannot_be_changed_even_by_a_Super_Admin()
+    {
+        var store = new FakeStaffUserRoleManagementStore();
+        store.Users[2] = ProtectedTarget();
+        var audit = new RecordingAuditLogWriter();
+        var handler = CreateHandler(store, new EffectivePermissions(true, []), audit, new StubProtectedStaffAccounts("vendor@example.com"));
+
+        var result = await handler.HandleAsync(new UpdateStaffUserProfileCommand(1, 2, "Vendor", "Support", "renamed@example.com", null, null), TestContext.Current.CancellationToken);
+
+        Assert.IsType<UpdateStaffUserProfileResult.ProtectedEmail>(result);
+        Assert.Empty(audit.Entries);
+    }
+
+    [Fact]
+    public async Task A_protected_accounts_name_can_still_be_changed()
+    {
+        var store = new FakeStaffUserRoleManagementStore();
+        store.Users[2] = ProtectedTarget();
+        var audit = new RecordingAuditLogWriter();
+        var handler = CreateHandler(store, new EffectivePermissions(true, []), audit, new StubProtectedStaffAccounts("vendor@example.com"));
+
+        var result = await handler.HandleAsync(new UpdateStaffUserProfileCommand(1, 2, "Vendor", "Helpdesk", null, null, null), TestContext.Current.CancellationToken);
+
+        Assert.IsType<UpdateStaffUserProfileResult.Success>(result);
+    }
+
+    [Fact]
+    public async Task Sending_a_protected_accounts_own_address_back_in_another_case_is_not_a_change()
+    {
+        var store = new FakeStaffUserRoleManagementStore();
+        store.Users[2] = ProtectedTarget();
+        var handler = CreateHandler(store, new EffectivePermissions(true, []), new RecordingAuditLogWriter(), new StubProtectedStaffAccounts("vendor@example.com"));
+
+        var result = await handler.HandleAsync(new UpdateStaffUserProfileCommand(1, 2, "Vendor", "Support", "VENDOR@example.com", null, null), TestContext.Current.CancellationToken);
+
+        Assert.IsType<UpdateStaffUserProfileResult.Success>(result);
     }
 
     [Fact]

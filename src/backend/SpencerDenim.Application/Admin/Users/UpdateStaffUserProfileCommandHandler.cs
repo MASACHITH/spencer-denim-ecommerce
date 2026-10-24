@@ -21,6 +21,7 @@ public sealed class UpdateStaffUserProfileCommandHandler(
     IStaffUserRoleManagementStore store,
     IEffectivePermissionsProvider permissionsProvider,
     IAdminUserLookup actorLookup,
+    IProtectedStaffAccounts protectedAccounts,
     IClock clock) : ICommandHandler<UpdateStaffUserProfileCommand, UpdateStaffUserProfileResult>
 {
     public async Task<UpdateStaffUserProfileResult> HandleAsync(UpdateStaffUserProfileCommand command, CancellationToken cancellationToken)
@@ -79,6 +80,21 @@ public sealed class UpdateStaffUserProfileCommandHandler(
                 RbacDenialClassifier.Message(RbacDenialReason.EmailChangeRequiresGrantsAll));
         }
 
+        // The protection is keyed on the address: a Super Admin who could rename a protected account could then
+        // deactivate it under its new name. Refused before the in-use check so the answer does not depend on it.
+        if (isEmailChanging && protectedAccounts.IsProtected(target.Email))
+        {
+            return new UpdateStaffUserProfileResult.ProtectedEmail();
+        }
+
+        // A guarded account's address is changed only by a protected account, for the same reason: it is how the
+        // account is recognised.
+        var actorSummary = await actorLookup.FindByIdAsync(command.ActorUserId, cancellationToken);
+        if (isEmailChanging && protectedAccounts.IsGuarded(target.Email) && !protectedAccounts.IsProtected(actorSummary?.Email))
+        {
+            return new UpdateStaffUserProfileResult.GuardedEmail();
+        }
+
         var newEmail = isEmailChanging ? command.NewEmail : null;
         if (newEmail is not null && await store.IsEmailInUseAsync(newEmail, command.TargetUserId, cancellationToken))
         {
@@ -90,7 +106,6 @@ public sealed class UpdateStaffUserProfileCommandHandler(
         // A factory, not a row: EnableRetryOnFailure re-runs the store's transaction on a transient failure and
         // each attempt needs its own AuditLog instance (tester round 3, Major 1).
         var finalEmail = newEmail ?? target.Email;
-        var actorSummary = await actorLookup.FindByIdAsync(command.ActorUserId, cancellationToken);
         AuditLog Audit() => BuildAuditRow(command, actorSummary?.Email, target, finalEmail, isEmailChanging);
 
         var writeResult = await store.UpdateProfileAsync(

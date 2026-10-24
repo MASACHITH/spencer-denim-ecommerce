@@ -21,6 +21,9 @@ public sealed class StaffUserReadVisibilityTests
 
     private static readonly EffectivePermissions SuperAdmin = new(true, []);
 
+    private static StubAdminUserLookup ViewerLookup(string email = "viewer@example.com") =>
+        new(new AdminUserSummary(ViewerId, email, "Viewer", null, true, false, "viewer-stamp"));
+
     private static readonly EffectivePermissions UsersViewOnly = new(false, [Permissions.Users.View]);
 
     // A holder of every Users.* permission is still not a Super Admin, and that is the point of the rule.
@@ -39,7 +42,7 @@ public sealed class StaffUserReadVisibilityTests
     {
         var reader = new RecordingStaffUserDirectoryReader();
         var provider = new RecordingPermissionsProvider(viewer);
-        var handler = new GetStaffUsersQueryHandler(reader, provider);
+        var handler = new GetStaffUsersQueryHandler(reader, provider, ViewerLookup(), new StubProtectedStaffAccounts());
         var query = GetStaffUsersQuery.Create(new StaffUserListCriteria(), ViewerId).Value;
 
         await handler.HandleAsync(query, CancellationToken.None);
@@ -54,7 +57,7 @@ public sealed class StaffUserReadVisibilityTests
     {
         var reader = new RecordingStaffUserDirectoryReader();
         var provider = new RecordingPermissionsProvider(viewer);
-        var handler = new GetStaffUserByIdQueryHandler(reader, provider);
+        var handler = new GetStaffUserByIdQueryHandler(reader, provider, ViewerLookup(), new StubProtectedStaffAccounts());
 
         await handler.HandleAsync(new GetStaffUserByIdQuery(UserId: 3, ActorUserId: ViewerId), CancellationToken.None);
 
@@ -99,7 +102,7 @@ public sealed class StaffUserReadVisibilityTests
         // that through untouched. If it ever substituted its own answer for the hidden case, the two would stop
         // being indistinguishable, which is the whole purpose of the rule.
         var reader = new RecordingStaffUserDirectoryReader { DetailToReturn = null };
-        var handler = new GetStaffUserByIdQueryHandler(reader, new RecordingPermissionsProvider(UsersViewOnly));
+        var handler = new GetStaffUserByIdQueryHandler(reader, new RecordingPermissionsProvider(UsersViewOnly), ViewerLookup(), new StubProtectedStaffAccounts());
 
         var result = await handler.HandleAsync(new GetStaffUserByIdQuery(UserId: 1, ActorUserId: ViewerId), CancellationToken.None);
 
@@ -110,7 +113,7 @@ public sealed class StaffUserReadVisibilityTests
     public async Task A_hidden_page_is_the_empty_page_the_reader_returned_not_a_marked_one()
     {
         var reader = new RecordingStaffUserDirectoryReader();
-        var handler = new GetStaffUsersQueryHandler(reader, new RecordingPermissionsProvider(UsersViewOnly));
+        var handler = new GetStaffUsersQueryHandler(reader, new RecordingPermissionsProvider(UsersViewOnly), ViewerLookup(), new StubProtectedStaffAccounts());
         var query = GetStaffUsersQuery.Create(new StaffUserListCriteria(Page: "2", PageSize: "10"), ViewerId).Value;
 
         var page = await handler.HandleAsync(query, CancellationToken.None);

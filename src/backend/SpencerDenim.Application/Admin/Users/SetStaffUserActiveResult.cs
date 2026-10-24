@@ -23,4 +23,16 @@ public abstract record SetStaffUserActiveResult
 
     /// <summary>Doc 08 §3.1 DB4 rule 4: deactivating this user would leave zero active Super Admins.</summary>
     public sealed record LastSuperAdminGuardTriggered : SetStaffUserActiveResult;
+
+    /// <summary>
+    /// The target is a protected account (<see cref="Abstractions.IProtectedStaffAccounts"/>): it can never be
+    /// deactivated, by anyone. Only returned for a deactivation, never for a reactivation.
+    /// </summary>
+    public sealed record ProtectedAccount : SetStaffUserActiveResult;
+
+    /// <summary>
+    /// The target is a guarded account (<see cref="Abstractions.IProtectedStaffAccounts.IsGuarded"/>) and the actor
+    /// is not a protected account: only one may deactivate or reactivate it. Returned for both directions.
+    /// </summary>
+    public sealed record GuardedAccount : SetStaffUserActiveResult;
 }
