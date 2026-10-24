@@ -105,13 +105,40 @@ describe('UserFormPage (create mode)', () => {
     component.firstName.set('New');
     component.initialPassword.set('Temp-Password-1!');
 
+    // Attached, so that focus can land in it.
+    document.body.appendChild(fixture.nativeElement as HTMLElement);
+
     component.saveProfile();
     fixture.detectChanges();
+    TestBed.tick();
 
     controller.expectNone(UsersApi.usersUrl);
     controller.expectNone('/api/admin/auth/antiforgery-token');
-    const error = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="role-error"]');
+    const root = fixture.nativeElement as HTMLElement;
+    const error = root.querySelector('[data-testid="role-error"]');
     expect(error?.textContent).toContain('Choose at least one role');
+
+    // Tied to the group it is about, and the cursor is put where the fix is (tester, #255).
+    const group = root.querySelector('[data-testid="new-user-roles"]')!;
+    expect(group.getAttribute('aria-describedby')).toContain(error!.id);
+    expect(document.activeElement).toBe(group.querySelector('input[type="checkbox"]:not(:disabled)'));
+
+    root.remove();
+  });
+
+  it('never uses the disabled attribute on the buttons that save, so focus is not thrown to the page', async () => {
+    const fixture = await create();
+    const root = fixture.nativeElement as HTMLElement;
+
+    const create_ = root.querySelector<HTMLButtonElement>('button.user-form__submit')!;
+    expect(create_.hasAttribute('disabled')).toBe(false);
+
+    const component = fixture.componentInstance as unknown as { savingProfile: { set(v: boolean): void } };
+    component.savingProfile.set(true);
+    fixture.detectChanges();
+
+    expect(create_.hasAttribute('disabled')).toBe(false);
+    expect(create_.getAttribute('aria-disabled')).toBe('true');
   });
 
   it('sends the role that was ticked', async () => {

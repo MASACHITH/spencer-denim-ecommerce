@@ -53,7 +53,7 @@ public static class IdentityRegistration
                 o => ConfiguredProtectedStaffAccounts.AllEntriesLookLikeEmails(o.GuardedStaffEmails),
                 "AdminSecurity:GuardedStaffEmails must be email addresses separated by commas, semicolons or spaces. A mistyped address would leave the account unguarded, so the server refuses to start.")
             .Validate(
-                o => string.IsNullOrWhiteSpace(o.GuardedStaffEmails) || !string.IsNullOrWhiteSpace(o.ProtectedStaffEmails),
+                o => ConfiguredProtectedStaffAccounts.Parse(o.GuardedStaffEmails).Count == 0 || ConfiguredProtectedStaffAccounts.Parse(o.ProtectedStaffEmails).Count > 0,
                 "AdminSecurity:GuardedStaffEmails needs AdminSecurity:ProtectedStaffEmails as well: only a protected account may change a guarded one, so with none named the guarded account could never be deactivated or reactivated.")
             .ValidateOnStart();
 

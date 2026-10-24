@@ -1,100 +1,61 @@
-# 2026-10-24 — Protected staff accounts: an account that can never be deactivated
+# 2026-10-24 — Protected and guarded staff accounts (#255)
 
-Branch `feature/protected-staff-accounts`, worktree `worktrees/sd-protect`, cut from `c749181` (the pushed build fix for
-`main`, `fix/blocked-countries-tier-fields`), so it must be rebased onto `main` once that fix is merged. **No migration.**
-Not committed, not pushed. Asked for by the owner's side: `tu2slhosting2@gmail.com` is a Super Admin that must never be
-deactivated, and its Deactivate option must go.
+Branch `feature/protected-staff-accounts`. **No migration.** Asked for by the owner: the technical owner's Super Admin must
+never be deactivated, and the client gets their own Super Admin that only the technical owner's account can switch off or on.
+The real addresses are deliberately in no file in the repository: they go only in each server's `app.env`.
 
 ## What changed
 
-- **The rule is on the server.** `IProtectedStaffAccounts` (Application) is read by `SetStaffUserActiveCommandHandler`: a
-  deactivation of a protected account answers **409 `protected_account`** ("This account is protected and can never be
-  deactivated."), whoever asks, a Super Admin included. A **reactivation is still allowed**. The check runs *after* the
-  permission checks, so a caller who may not manage the user gets the ordinary refusal and learns nothing about the account.
-- **The email address of a protected account cannot be changed** (`UpdateStaffUserProfileCommandHandler`, 409 as above). The
-  protection is keyed on the address, so without this a Super Admin could rename the account and then deactivate it.
-- **The list and the detail carry `isProtected`.** The Staff users list shows "Protected" instead of a Deactivate button; the
-  edit page shows a note instead of the button and disables the email box.
-- **Configuration, not code.** `AdminSecurity__ProtectedStaffEmails` (addresses separated by commas, semicolons or spaces,
-  case-insensitive), passed through by `deploy/app/compose.yml` from **`SD_PROTECTED_STAFF_EMAILS`** in `app.env`
-  (documented in `deploy/app/.env.example`). The address is deliberately in no file in the repository.
-- **A typo stops the server at start-up** (`ValidateOnStart`: every entry needs one `@` with text either side). A mistyped
-  address would otherwise leave the account unprotected and say nothing.
+- **Protected accounts** (`AdminSecurity__ProtectedStaffEmails`, from `SD_PROTECTED_STAFF_EMAILS` in `app.env`). Nobody can
+  deactivate one, a Super Admin included (409 `protected_account`), and its email address cannot be changed (the protection is
+  keyed on the address, so without this it could be renamed and then deactivated). Reactivating is allowed.
+- **Guarded accounts** (`AdminSecurity__GuardedStaffEmails`, from `SD_GUARDED_STAFF_EMAILS`). An account handed to someone else,
+  such as the client's own Super Admin. Only a **protected** account may deactivate it, reactivate it or change its email address
+  (403 `guarded_account`); a name change is still allowed. Read as: nobody else can, the client themself and other Super Admins
+  included. If the owner meant something else it is one handler condition (`IsGuarded && !IsProtected(actor)`).
+- **Server-side**, in `SetStaffUserActiveCommandHandler` and `UpdateStaffUserProfileCommandHandler`, after the permission checks, so
+  a caller who may not manage the user learns nothing about it. A refusal writes no audit row.
+- **The screens are told**: the staff list and detail carry `isProtected` and `lockedForViewer` (per viewer). A protected row shows
+  "Protected" and a locked guarded row "Managed by the technical owner" instead of Deactivate/Reactivate; the edit form shows a
+  note, fixes the email box and does not send the email.
+- **Start-up refuses** a malformed address (a typo would leave the account unprotected without telling anyone), and a guarded list
+  with no protected list (nobody could ever change that account). Separators alone name nobody.
+- **The New staff user form can pick roles.** It had no role boxes, the server refuses a user with no role, and the refusal was never
+  drawn, so Create user looked dead. Now: role checkboxes, "Choose at least one role for the new user." in the form (nothing is
+  sent; the cursor goes to the first box and the message is tied to the group), and any other server refusal is drawn. The form's
+  save buttons use `aria-disabled`, not `disabled` (issue #109), because Create user can now succeed.
 
-## ⚠ Not active until each server is told (the one step left)
+## Before it does anything: each server must be told
 
-The rule protects nobody until a server names an account. On **UAT and on Live**, add this line to `app.env` and redeploy:
+Both default to empty, so merging changes nothing until `app.env` on **UAT and on Live** names the accounts (the second line needs
+the first), then the stack is redeployed (documented in `deploy/app/.env.example` and `docs/15`):
 
 ```
-SD_PROTECTED_STAFF_EMAILS=tu2slhosting2@gmail.com
+SD_PROTECTED_STAFF_EMAILS=<the technical owner's Super Admin address>
+SD_GUARDED_STAFF_EMAILS=<the client's Super Admin address>
 ```
 
-(Several accounts: `a@x.com,b@y.com`.) Nothing in the repository sets it, on purpose (the project rule is that configuration
-comes from the environment, and this keeps the address out of source control). After the deploy, open Staff users: the account
-shows "Protected" and has no Deactivate button.
+Then create the client's account **after** the deploy, so it is guarded from its first minute: sign in as the technical owner →
+Staff users → New staff user → email, first name, last name, a temporary Initial password you choose and hand over yourself (nothing
+is emailed), tick **Super Admin** → Create user. The client must change the password at first sign-in and set up two-factor
+sign-in (an authenticator app), because Super Admins are required to.
 
 ## Tested
 
-Backend unit **4,250 / 4,250** (new: five deactivation, three profile, a configuration-parsing set, three registration, among
-them the start-up refusal of a typo); integration `UserEndpointTests` **27 / 27** against the real API and SQL Server (new: a
-protected account is flagged on the detail and the list, deactivation answers 409 `protected_account` and leaves it active, an
-ordinary colleague with the same role still deactivates, and a protected account can be reactivated). Admin **945 / 945**, lint
-clean, production build clean.
+Backend unit 4,322 / 4,322; integration `UserEndpoint|GuardedStaffAccount|StaffUser` 44 / 44 against SQL Server; admin frontend, lint
+and production build clean (see the pull request for the final counts). An independent tester also drove the rules over HTTP with
+real Super Admin sessions (case and padding in config, every non-protected Super Admin against protected and guarded targets in
+both directions, the audit rows, per-viewer flags). Its five minor findings are fixed or listed below.
 
 ## Limits worth knowing
 
-- It protects against **deactivation and renaming through the app**. Removing the account's Super Admin role is not blocked
-  (not asked for); a database change by hand is, of course, not blocked either.
-- Protected accounts are named per environment, so UAT and Live each need the line above.
-- The user guide (`#199` branch) describes this under Staff users.
-
-# The client's own Super Admin (guarded account) and the New staff user form
-
-The owner asked for a second Super Admin for the client to use on UAT, which only the technical owner's account
-(`tu2slhosting2@gmail.com`, protected above) may activate or deactivate. Read as: **nobody else can switch it off or on,
-or change its email address, the client themself and other Super Admins included.** If the owner meant something else, it is
-one handler condition (`IsGuarded && !IsProtected(actor)`).
-
-## What was built
-
-- **Guarded accounts**, a second server-side list beside the protected one: `AdminSecurity__GuardedStaffEmails`
-  (`SD_GUARDED_STAFF_EMAILS` in `app.env`). `IProtectedStaffAccounts.IsGuarded`. A guarded account can be deactivated,
-  reactivated or renamed **only by a protected account**. Enforced in `SetStaffUserActiveCommandHandler` (`GuardedAccount`,
-  403 `guarded_account`, both directions, whatever state it is already in) and `UpdateStaffUserProfileCommandHandler`
-  (`GuardedEmail`; a name change is still allowed). Start-up refuses a malformed address, and refuses a guarded list with no
-  protected list (nobody could ever change the account).
-- **The screens are told**: `lockedForViewer` on the list row and the detail, set per viewer by the two query handlers. A
-  locked row shows "Managed by the technical owner" instead of Deactivate/Reactivate; the edit form shows a note, fixes the
-  email box and does not send the email.
-- **The New staff user form can pick roles.** It had no role boxes, the server refuses a user with no role, and the form drew
-  no line for the refusal (`roleIds`), so Create user did nothing visible. Now: role checkboxes in the form (the same boxes
-  as the Roles section), a message in the form if none is ticked (nothing is sent), and any server refusal for a field the
-  form has no line for is drawn instead of dropped.
-
-## Not active until each server is told
-
-Add to `app.env` on **UAT and Live** (both lines; the second needs the first), then redeploy:
-
-```
-SD_PROTECTED_STAFF_EMAILS=tu2slhosting2@gmail.com
-SD_GUARDED_STAFF_EMAILS=colombowardrobecompany@gmail.com
-```
-
-Then create the account: sign in as `tu2slhosting2@gmail.com` → Staff users → New staff user → Email (the guarded address),
-First name, Last name, Initial password (a temporary one you choose and hand over yourself: nothing is emailed), tick the
-**Super Admin** role → Create user. The client must change the password at first sign-in and then set up two-factor
-sign-in (an authenticator app on their phone), because Super Admins are required to. Create the account **after** the
-deploy, so it is guarded from its first minute.
-
-## Tested
-
-Backend unit **4,277 / 4,277** (new: `GuardedStaffAccountTests` (handlers and the locked flag), options and registration
-tests); integration `UserEndpointTests` **28 / 28** (new: a colleague is refused both ways and shown the account locked; the
-protected account switches it off and on). Admin **956 / 956**, lint clean, production build clean.
-
-## Limits worth knowing
-
-- Roles are not locked: any Super Admin could take the Super Admin role off the technical owner's or the client's account
-  (not asked for). The protected account then could not switch the guarded one off.
-- The user guide (`#199` branch) says creating a staff user does not work and does not mention guarded accounts; both need
-  updating once this merges.
+- **Roles are not locked**: any Super Admin could take the Super Admin role off the technical owner's or the client's account (not
+  asked for), after which the protected account could no longer switch the guarded one off.
+- **The guard follows the address.** If the protected account renames a guarded account, the new address is not guarded until
+  `SD_GUARDED_STAFF_EMAILS` is changed and the stack redeployed.
+- **A configured address with no account yet can be claimed** by a Super Admin who renames themself or creates a user onto it, and
+  that account is then protected. Only while no such account exists: the technical owner's account is seeded first on every
+  environment, so in practice the address is already taken. Reserving the addresses against rename is a follow-up if wanted.
+- It protects against deactivation and renaming **through the app**; a change made to the database by hand is not blocked.
+- The "Protected" / "Managed by the technical owner" reason on the list rows is a tooltip only (the edit page has the full note).
+- Reset password, unlock and reset 2FA are #254 and are not here.

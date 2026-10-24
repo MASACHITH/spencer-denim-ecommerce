@@ -1,5 +1,5 @@
-import { NgTemplateOutlet } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { DOCUMENT, NgTemplateOutlet } from '@angular/common';
+import { ChangeDetectionStrategy, Component, Injector, afterNextRender, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { forkJoin, of } from 'rxjs';
@@ -117,7 +117,11 @@ interface RoleOption {
             </label>
 
             <!-- The server refuses a user with no role, so the form has to offer them. -->
-            <fieldset class="user-form__roles" aria-describedby="new-user-roles-hint" data-testid="new-user-roles">
+            <fieldset
+              class="user-form__roles"
+              [attr.aria-describedby]="profileFieldError('roleIds') ? 'new-user-roles-hint new-user-roles-error' : 'new-user-roles-hint'"
+              data-testid="new-user-roles"
+            >
               <legend class="user-form__label">Roles</legend>
               <span class="user-form__hint" id="new-user-roles-hint">
                 Choose at least one. The new user can do only what their roles allow.
@@ -143,7 +147,7 @@ interface RoleOption {
             <p class="user-form__error" role="alert">{{ message }}</p>
           }
           @if (profileFieldError('roleIds'); as message) {
-            <p class="user-form__error" role="alert" data-testid="role-error">{{ message }}</p>
+            <p class="user-form__error" role="alert" id="new-user-roles-error" data-testid="role-error">{{ message }}</p>
           }
           <!-- Anything else the server refused, so that no refusal is ever silent. -->
           @for (message of otherFieldErrors(); track $index) {
@@ -151,7 +155,7 @@ interface RoleOption {
           }
 
           <div class="user-form__actions">
-            <button class="user-form__submit" type="submit" [disabled]="savingProfile()">
+            <button class="user-form__submit" type="submit" [attr.aria-disabled]="savingProfile() ? 'true' : null">
               {{ isEditMode() ? (savingProfile() ? 'Saving…' : 'Save profile') : (savingProfile() ? 'Creating…' : 'Create user') }}
             </button>
             <a class="user-form__link" routerLink="/users">Cancel</a>
@@ -176,7 +180,7 @@ interface RoleOption {
             }
 
             <div class="user-form__actions">
-              <button class="user-form__submit" type="submit" [disabled]="savingRoles()">
+              <button class="user-form__submit" type="submit" [attr.aria-disabled]="savingRoles() ? 'true' : null">
                 {{ savingRoles() ? 'Saving…' : 'Save roles' }}
               </button>
             </div>
@@ -201,11 +205,11 @@ interface RoleOption {
                   Only the technical owner's account can activate or deactivate this account, or change its email address.
                 </p>
               } @else if (isActive()) {
-                <button class="user-form__danger" type="button" [disabled]="togglingStatus()" (click)="deactivate()">
+                <button class="user-form__danger" type="button" [attr.aria-disabled]="togglingStatus() ? 'true' : null" (click)="deactivate()">
                   {{ togglingStatus() ? 'Deactivating…' : 'Deactivate' }}
                 </button>
               } @else {
-                <button class="user-form__submit" type="button" [disabled]="togglingStatus()" (click)="reactivate()">
+                <button class="user-form__submit" type="button" [attr.aria-disabled]="togglingStatus() ? 'true' : null" (click)="reactivate()">
                   {{ togglingStatus() ? 'Reactivating…' : 'Reactivate' }}
                 </button>
               }
@@ -255,10 +259,10 @@ interface RoleOption {
       cursor: pointer;
     }
     .user-form__submit { color: var(--color-on-primary); background: var(--color-primary); }
-    .user-form__submit:hover:not(:disabled) { background: var(--color-primary-hover); }
+    .user-form__submit:hover:not([aria-disabled='true']) { background: var(--color-primary-hover); }
     .user-form__danger { color: var(--color-on-primary); background: var(--color-sale); }
-    .user-form__submit:disabled,
-    .user-form__danger:disabled { opacity: 0.6; cursor: not-allowed; }
+    .user-form__submit[aria-disabled='true'],
+    .user-form__danger[aria-disabled='true'] { opacity: 0.6; cursor: not-allowed; }
     .user-form__link { color: var(--color-text); text-decoration: underline; }
 
     .user-form__state { padding: var(--space-3); background: var(--color-surface); border: 1px solid var(--color-border); }
@@ -273,6 +277,9 @@ export class UserFormPage {
 
   private readonly userId = signal<number | null>(null);
   protected readonly isEditMode = computed(() => this.userId() !== null);
+
+  private readonly document = inject(DOCUMENT);
+  private readonly injector = inject(Injector);
 
   protected readonly loading = signal(true);
   protected readonly loadFailure = signal<StaffUserActionFailure | null>(null);
@@ -393,6 +400,21 @@ export class UserFormPage {
     });
   }
 
+  /**
+   * Puts the cursor in the first role box that can be ticked, so the refusal is read where the fix is (and again on a
+   * repeat press, which a message that did not change would not do). Waits for the render, as the other screens do.
+   */
+  private focusFirstRoleBox(): void {
+    afterNextRender(
+      () => {
+        this.document
+          .querySelector<HTMLInputElement>('[data-testid="new-user-roles"] input[type="checkbox"]:not(:disabled)')
+          ?.focus();
+      },
+      { injector: this.injector },
+    );
+  }
+
   protected saveProfile(): void {
     if (this.savingProfile()) {
       return;
@@ -402,6 +424,7 @@ export class UserFormPage {
     if (this.userId() === null && this.selectedRoleIds().size === 0) {
       this.profileError.set(null);
       this.profileFieldErrors.set({ roleIds: ['Choose at least one role for the new user.'] });
+      this.focusFirstRoleBox();
       return;
     }
 

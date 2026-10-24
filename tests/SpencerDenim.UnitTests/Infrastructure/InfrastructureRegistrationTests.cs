@@ -112,6 +112,25 @@ public sealed class InfrastructureRegistrationTests
         Assert.Contains("ProtectedStaffEmails", exception.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>The check reads the addresses, not the raw text: separators alone name nobody (tester, #255).</summary>
+    [Theory]
+    [InlineData(",")]
+    [InlineData(";")]
+    [InlineData(" , ; ")]
+    public void A_protected_list_of_only_separators_names_nobody_so_a_guarded_account_still_stops_the_server(string separatorsOnly)
+    {
+        using var provider = BuildProvider(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Database"] = "Server=example;Database=SpencerDenim;",
+            ["AdminSecurity:ProtectedStaffEmails"] = separatorsOnly,
+            ["AdminSecurity:GuardedStaffEmails"] = "client@example.com",
+        });
+
+        var exception = Assert.Throws<OptionsValidationException>(() => provider.GetRequiredService<IOptions<AdminSecurityOptions>>().Value);
+
+        Assert.Contains("ProtectedStaffEmails", exception.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_guarded_staff_list_is_read_from_the_AdminSecurity_setting_the_server_environment_file_fills()
     {
