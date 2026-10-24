@@ -1404,6 +1404,62 @@ describe('SettingsPage (ADM-22)', () => {
       second.flush(null, { status: 204, statusText: 'No Content' });
       controller.expectOne(AdminSettingsApi.settingsUrl).flush(payloadWithCurrencies());
     });
+
+    /**
+     * Tester round, survivor M25. "Load the latest rates" is the panel's `reload` output; the page must listen to it
+     * and re-read, or the button does nothing and the admin stays stuck on a stale token. Only a browser test caught
+     * a page that had lost the binding.
+     */
+    it('re-reads the settings when the panel asks for the latest rates after a conflict, and the next save carries the new version', async () => {
+      await open(payloadWithCurrencies());
+
+      const input = element.querySelector('[data-testid="currency-field-gbp"]') as HTMLInputElement;
+      input.value = '399.5';
+      input.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      (element.querySelector('[data-testid="save-currency"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      controller.expectOne('/api/admin/auth/antiforgery-token').flush({ token: 'xsrf' });
+      controller.expectOne(AdminSettingsApi.currencyRatesUrl).flush(
+        { detail: 'Somebody else changed the currency rates while you were editing them.', code: 'stale_row_version' },
+        { status: 409, statusText: 'Conflict' },
+      );
+      fixture.detectChanges();
+
+      // Nothing has been re-read yet: a conflict alone does not ask for it, the button does.
+      controller.expectNone(AdminSettingsApi.settingsUrl);
+      const button = element.querySelector('[data-testid="currency-reload"]') as HTMLButtonElement;
+      expect(button).not.toBeNull();
+
+      button.click();
+      fixture.detectChanges();
+
+      const fresh = payloadWithCurrencies({ [SETTING_KEYS.currencyUsd]: '321.5' });
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush({
+        ...fresh,
+        groups: fresh.groups.map((group) =>
+          group.groupKey === 'Currency.Display' ? { ...group, rowVersion: 'currency-rv-9' } : group,
+        ),
+      });
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      // The other person's rate arrived, the typing was kept, the alert is gone.
+      expect((element.querySelector('[data-testid="currency-field-usd"]') as HTMLInputElement).value).toBe('321.5');
+      expect((element.querySelector('[data-testid="currency-field-gbp"]') as HTMLInputElement).value).toBe('399.5');
+      expect(element.querySelector('[data-testid="currency-error"]')).toBeNull();
+
+      (element.querySelector('[data-testid="save-currency"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      controller.expectOne('/api/admin/auth/antiforgery-token').flush({ token: 'xsrf' });
+      const retry = controller.expectOne(AdminSettingsApi.currencyRatesUrl);
+      expect(retry.request.body).toEqual({ gbp: '399.5', rowVersion: 'currency-rv-9' });
+      retry.flush(null, { status: 204, statusText: 'No Content' });
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(payloadWithCurrencies());
+    });
   });
 
   describe('traffic (issue #193)', () => {

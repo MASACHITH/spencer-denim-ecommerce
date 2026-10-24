@@ -42,9 +42,13 @@ import { addManyProducts, freshProductState, handleProductRoute } from './admin-
 import { handleDeliveryRoute } from './admin-delivery-stub.mjs';
 import {
   DISPLAY_CURRENCIES,
+  MISSING_ROW_VERSION_MESSAGE,
+  STALE_ROW_VERSION_MESSAGE,
   canonicalCurrencyRate,
   checkCurrencyRate,
   currencyRateMessage,
+  findFieldKey,
+  repeatedNames,
 } from './currency-rate-rules.mjs';
 
 const PORT = Number(process.env.E2E_ADMIN_PORT ?? 4430);
@@ -3159,15 +3163,22 @@ const server = createServer(async (request, response) => {
       return problem(response, 400, 'Malformed JSON', 'The request body is not valid JSON.', 'malformed_json');
     }
 
+    // The real reader is case-insensitive: {"Usd":"333"} is the dollar, and one name twice in two cases is a 400.
+    if (repeatedNames(body)) {
+      return problem(response, 400, 'Malformed JSON', 'The request body repeats a property name.', 'malformed_json');
+    }
+
     const errors = {};
     const wanted = {};
 
     for (const currency of DISPLAY_CURRENCIES) {
-      if (!Object.hasOwn(body, currency.field)) {
+      const sent = findFieldKey(body, currency.field);
+
+      if (sent === undefined) {
         continue;
       }
 
-      const raw = body[currency.field];
+      const raw = body[sent];
 
       if (raw !== null && typeof raw !== 'string') {
         errors[currency.field] = ['Send this field as text, or as null to clear it.'];
@@ -3194,12 +3205,17 @@ const server = createServer(async (request, response) => {
       return json(response, 400, { title: 'One or more fields are invalid.', status: 400, errors });
     }
 
-    if (body.rowVersion !== settingsToken(state, 'Currency.Display')) {
+    const sentVersion = body[findFieldKey(body, 'rowVersion') ?? 'rowVersion'];
+
+    if (sentVersion !== settingsToken(state, 'Currency.Display')) {
+      // The handler tells "no usable token" from "a token that is not the current one"; the table holds both sentences.
+      const carried = typeof sentVersion === 'string' && sentVersion.trim() !== '';
+
       return problem(
         response,
         409,
         'This change cannot be applied',
-        'Somebody else changed the display currency rates while you were editing them. Reload the page to see their change, then re-apply yours.',
+        carried ? STALE_ROW_VERSION_MESSAGE : MISSING_ROW_VERSION_MESSAGE,
         'stale_row_version',
       );
     }

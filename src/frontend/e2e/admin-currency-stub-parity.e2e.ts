@@ -29,12 +29,16 @@ interface Currency {
 const table = JSON.parse(readFileSync(resolve(__dirname, 'support', 'currency-rate-cases.json'), 'utf8')) as {
   cases: Case[];
   currencies: Currency[];
-  messages: Record<'tooManyDecimals' | 'outOfRange' | 'notANumber', string>;
+  messages: Record<
+    'tooManyDecimals' | 'outOfRange' | 'notANumber' | 'staleRowVersion' | 'missingRowVersion',
+    string
+  >;
+  fieldNameCases: { name: string; currency: string | null }[];
 };
 const cases = table.cases;
 
 /** The exact sentence the real handler gives (CurrencyRateRulesParityTests holds the C# to this table). */
-const sentence = (kind: keyof typeof table.messages, currency: Currency): string =>
+const sentence = (kind: 'tooManyDecimals' | 'outOfRange' | 'notANumber', currency: Currency): string =>
   table.messages[kind].replace('{name}', currency.name).replace('{code}', currency.code);
 const gbp = table.currencies.find((currency) => currency.field === 'gbp')!;
 
@@ -61,16 +65,19 @@ async function open(page: Page) {
     return { rowVersion: group.rowVersion, rows: group.settings };
   }
 
-  async function put(body: Record<string, unknown>, rowVersion?: string) {
-    const version = rowVersion ?? (await read()).rowVersion;
+  async function put(body: Record<string, unknown>, rowVersion?: string | null) {
+    // `null` sends no row version at all; undefined sends the current one.
+    const version = rowVersion === undefined ? (await read()).rowVersion : rowVersion;
     const response = await page.request.put(`${adminURL}/api/admin/settings/currency-rates`, {
       headers,
-      data: { ...body, rowVersion: version },
+      data: version === null ? body : { ...body, rowVersion: version },
     });
     const text = await response.text();
-    const parsed = text ? (JSON.parse(text) as { errors?: Record<string, string[]>; code?: string }) : {};
+    const parsed = text
+      ? (JSON.parse(text) as { errors?: Record<string, string[]>; code?: string; detail?: string })
+      : {};
 
-    return { status: response.status(), errors: parsed.errors ?? {}, code: parsed.code };
+    return { status: response.status(), errors: parsed.errors ?? {}, code: parsed.code, detail: parsed.detail };
   }
 
   const value = async (key: string) => (await read()).rows.find((row) => row.key === key)?.value ?? null;
@@ -176,7 +183,59 @@ test.describe('the display-currency stub is no more permissive than the API (#24
     const stale = await api.put({ gbp: '500' }, first);
     expect(stale.status).toBe(409);
     expect(stale.code).toBe('stale_row_version');
+    expect(stale.detail).toBe(table.messages.staleRowVersion);
     expect(await api.value(GBP)).toBe('399.5');
+  });
+
+  test('gives the other 409 sentence of the real handler when the request carries no usable row version', async ({ page }) => {
+    const api = await open(page);
+
+    for (const version of [null, '', '   ']) {
+      const refused = await api.put({ gbp: '500' }, version);
+
+      expect(refused.status, `version ${JSON.stringify(version)}`).toBe(409);
+      expect(refused.detail, `version ${JSON.stringify(version)}`).toBe(table.messages.missingRowVersion);
+    }
+
+    expect(await api.value(GBP)).toBeNull();
+  });
+
+  /**
+   * The real route reads a field's NAME without regard to case ({"Usd":"333"} saves the dollar) and never looks at a
+   * name it does not know. The stub once called "Usd" unknown, so a screen could pass here with a body the API reads
+   * differently. The same table is run against the real API by `AdminCurrencyFieldNameParityTests`.
+   */
+  test('reads a field name as the real route does: without regard to case, and ignoring a name it does not know', async ({ page }) => {
+    const api = await open(page);
+
+    expect(table.fieldNameCases.length).toBeGreaterThanOrEqual(8);
+
+    for (const entry of table.fieldNameCases) {
+      for (const currency of table.currencies) {
+        await api.put({ [currency.field]: '' });
+      }
+
+      const answer = await api.put({ [entry.name]: '333' });
+      expect(answer.status, `'${entry.name}'`).toBe(204);
+
+      for (const currency of table.currencies) {
+        const stored = await api.value(`Currency.Display.${currency.code[0]}${currency.code.slice(1).toLowerCase()}LkrPerUnit`);
+
+        expect(stored, `'${entry.name}' should leave ${currency.code} at ${entry.currency === currency.field ? '333' : 'nothing'}`).toBe(
+          entry.currency === currency.field ? '333' : null,
+        );
+      }
+    }
+  });
+
+  test('refuses one name written twice in two letter cases, as the real reader does, and writes nothing', async ({ page }) => {
+    const api = await open(page);
+
+    const refused = await api.put({ usd: '1', USD: '2' });
+
+    expect(refused.status).toBe(400);
+    expect(refused.code).toBe('malformed_json');
+    expect(await api.value('Currency.Display.UsdLkrPerUnit')).toBeNull();
   });
 
   test('re-dates a rate only when its number changes, as the API does (the row UpdatedAtUtc)', async ({ page }) => {

@@ -32,12 +32,12 @@ interface Currency {
 const table = JSON.parse(readFileSync(resolve(__dirname, 'support', 'currency-rate-cases.json'), 'utf8')) as {
   cases: Case[];
   currencies: Currency[];
-  messages: Record<'tooManyDecimals' | 'outOfRange' | 'notANumber', string>;
+  messages: Record<'tooManyDecimals' | 'outOfRange' | 'notANumber' | 'staleRowVersion' | 'missingRowVersion', string>;
 };
 const cases = table.cases;
 
 /** The exact sentence the API gives a currency for a kind of fault; the screen must say the same one. */
-const sentence = (kind: keyof typeof table.messages, currency: Currency): string =>
+const sentence = (kind: 'tooManyDecimals' | 'outOfRange' | 'notANumber', currency: Currency): string =>
   table.messages[kind].replace('{name}', currency.name).replace('{code}', currency.code);
 const gbp = table.currencies.find((currency) => currency.field === 'gbp')!;
 
@@ -90,11 +90,11 @@ for (const width of [390, 1280]) {
     test('enters a rate, sees it saved on the screen, and finds it again, dated, after a reload', async ({ page }) => {
       await open(page, width);
 
-      await expect(page.locator(SELECTORS.offered)).toContainText('No currency is offered to shoppers yet');
-      await expect(line(page, 'gbp')).toHaveText('Not shown to shoppers until a rate is entered.');
+      await expect(page.locator(SELECTORS.offered)).toHaveText('No rates set yet.');
+      await expect(line(page, 'gbp')).toHaveText('No rate set. GBP is left out until you type one.');
 
       await enter(page, 'gbp', '399.50');
-      await expect(line(page, 'gbp')).toContainText('Unsaved. GBP will be offered to shoppers once you save.');
+      await expect(line(page, 'gbp')).toContainText('Unsaved. Save to set a rate for GBP.');
       await page.locator(SELECTORS.save).click();
 
       // On the screen as well as announced: a sighted admin must not have to guess that the button worked.
@@ -105,11 +105,11 @@ for (const width of [390, 1280]) {
 
       await expect(field(page, 'gbp')).toHaveValue('399.5');
       await expect(line(page, 'gbp')).toContainText('Last changed today');
-      await expect(page.locator(SELECTORS.offered)).toHaveText('Shoppers can choose to see prices in: GBP.');
+      await expect(page.locator(SELECTORS.offered)).toHaveText('Rates set: GBP.');
       await expect(field(page, 'usd')).toHaveValue('');
     });
 
-    test('clears a rate with an empty box, and the currency stops being offered', async ({ page }) => {
+    test('clears a rate with an empty box, and the currency is left out', async ({ page }) => {
       await open(page, width);
 
       await enter(page, 'usd', '321.5');
@@ -118,17 +118,17 @@ for (const width of [390, 1280]) {
       await expect(page.locator(SELECTORS.saved)).toHaveText('Rates saved.');
 
       await reopen(page);
-      await expect(page.locator(SELECTORS.offered)).toHaveText('Shoppers can choose to see prices in: USD, GBP.');
+      await expect(page.locator(SELECTORS.offered)).toHaveText('Rates set: USD, GBP.');
 
       await field(page, 'gbp').fill('');
-      await expect(line(page, 'gbp')).toHaveText('Saving with this box empty stops offering GBP to shoppers.');
+      await expect(line(page, 'gbp')).toHaveText('Saving with this box empty leaves GBP out.');
       await page.locator(SELECTORS.save).click();
       await expect(page.locator(SELECTORS.saved)).toHaveText('Rates saved.');
 
       await reopen(page);
       await expect(field(page, 'gbp')).toHaveValue('');
       await expect(field(page, 'usd')).toHaveValue('321.5');
-      await expect(page.locator(SELECTORS.offered)).toHaveText('Shoppers can choose to see prices in: USD.');
+      await expect(page.locator(SELECTORS.offered)).toHaveText('Rates set: USD.');
     });
 
     for (const bad of ['1e3', '0', '1,000', '1.00001']) {
@@ -289,11 +289,15 @@ test.describe('two people edit the rates at once', () => {
     await enter(page, 'gbp', '399');
     await page.locator(SELECTORS.save).click();
 
-    await expect(page.locator(SELECTORS.alert)).toContainText('Somebody else changed the display currency rates');
+    await expect(page.locator(SELECTORS.alert)).toContainText(table.messages.staleRowVersion);
     await expect(field(page, 'gbp')).toHaveValue('399');
     await expect(page.locator(SELECTORS.saved)).toHaveCount(0);
 
     await page.locator('[data-testid="currency-reload"]').click();
+
+    // The conflict has been dealt with: neither the alert nor its button stays on the screen.
+    await expect(page.locator(SELECTORS.alert)).toHaveCount(0);
+    await expect(page.locator('[data-testid="currency-reload"]')).toHaveCount(0);
 
     // The latest rates arrive; the typing the admin had not saved is kept, not thrown away.
     await expect(field(page, 'usd')).toHaveValue('321');
@@ -305,6 +309,171 @@ test.describe('two people edit the rates at once', () => {
     await reopen(page);
     await expect(field(page, 'usd')).toHaveValue('321');
     await expect(field(page, 'gbp')).toHaveValue('399');
+  });
+});
+
+/**
+ * Tester round, MAJOR 1. After pressing Save the result has to be where the admin is looking. It used to be drawn
+ * ABOVE the form, so on a phone and on 1280 and 1440 px desktops its bottom edge was 60 to 160 px above the top of
+ * the viewport; `toBeVisible()` cannot see that (an element scrolled out of view is still "visible"), which is why the
+ * earlier tests were green. These measure the box against the window.
+ *
+ * The worst case is staged on purpose: Save is scrolled to the very bottom edge of the window before it is pressed,
+ * so anything under it is out of sight until the panel brings it in.
+ */
+test.describe('the outcome of Save is in the window (tester round, major 1)', () => {
+  const SIZES = [
+    { width: 390, height: 844 },
+    { width: 768, height: 1024 },
+    { width: 1280, height: 900 },
+    { width: 1440, height: 900 },
+  ] as const;
+
+  const OUTCOMES = ['saved', 'nothing to save', 'rejected rate', 'conflict', 'server error', 'offline'] as const;
+
+  /** Where an element is relative to the window right now. */
+  async function placement(page: Page, selector: string) {
+    return page.evaluate((target) => {
+      const element = document.querySelector(target);
+      if (!element) {
+        return null;
+      }
+
+      const box = element.getBoundingClientRect();
+      return { top: box.top, bottom: box.bottom, height: box.height, window: window.innerHeight };
+    }, selector);
+  }
+
+  async function expectInWindow(page: Page, selector: string, what: string): Promise<void> {
+    // The scroll is smooth, so the answer is polled rather than read once. The failure says where the box really was.
+    await expect
+      .poll(
+        async () => {
+          const box = await placement(page, selector);
+
+          if (box === null) {
+            return 'is not on the page';
+          }
+
+          return box.height > 0 && box.top >= 0 && box.bottom <= box.window
+            ? 'inside the window'
+            : `outside the window: top ${Math.round(box.top)}, bottom ${Math.round(box.bottom)}, window ${box.window}`;
+        },
+        { message: `${what}`, timeout: 8000 },
+      )
+      .toBe('inside the window');
+  }
+
+  async function pressSaveFromTheBottomEdge(page: Page): Promise<void> {
+    await page.locator(SELECTORS.save).evaluate((button) => button.scrollIntoView({ block: 'end', behavior: 'instant' }));
+    await page.locator(SELECTORS.save).click();
+  }
+
+  for (const size of SIZES) {
+    test.describe(`at ${size.width}x${size.height}`, () => {
+      for (const outcome of OUTCOMES) {
+        test(`shows the ${outcome} outcome inside the window`, async ({ page }) => {
+          await page.setViewportSize(size);
+          await ownState(page, 'currency-outcome');
+          await reopen(page);
+
+          const refuse = (status: number, body: object) =>
+            page.route('**/api/admin/settings/currency-rates', (route) =>
+              route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }),
+            );
+
+          if (outcome === 'saved') {
+            await enter(page, 'gbp', '399.5');
+            await pressSaveFromTheBottomEdge(page);
+            await expect(page.locator(SELECTORS.saved)).toHaveText('Rates saved.');
+            await expectInWindow(page, SELECTORS.saved, 'the saved message');
+          }
+
+          if (outcome === 'nothing to save') {
+            await pressSaveFromTheBottomEdge(page);
+            await expect(page.locator(SELECTORS.saved)).toHaveText('There is nothing to save: no rate has changed.');
+            await expectInWindow(page, SELECTORS.saved, 'the nothing-to-save message');
+          }
+
+          if (outcome === 'rejected rate') {
+            // A rate the screen accepts and the server does not: its message is beside its box, and the box has focus.
+            await refuse(400, { title: 'One or more fields are invalid.', errors: { gbp: ['Use at most 4 decimal places.'] } });
+            await enter(page, 'gbp', '399.5');
+            await pressSaveFromTheBottomEdge(page);
+            await expect(error(page, 'gbp')).toHaveText('Use at most 4 decimal places.');
+            await expect(field(page, 'gbp')).toBeFocused();
+            await expectInWindow(page, '[data-testid="currency-error-gbp"]', 'the rejected rate\'s message');
+            await expectInWindow(page, '[data-testid="currency-field-gbp"]', 'the rejected rate\'s box');
+          }
+
+          if (outcome === 'conflict') {
+            await refuse(409, { detail: table.messages.staleRowVersion, code: 'stale_row_version' });
+            await enter(page, 'gbp', '399.5');
+            await pressSaveFromTheBottomEdge(page);
+            await expect(page.locator(SELECTORS.alert)).toContainText(table.messages.staleRowVersion);
+            await expectInWindow(page, SELECTORS.alert, 'the conflict alert');
+            await expectInWindow(page, '[data-testid="currency-reload"]', 'its Load the latest rates button');
+          }
+
+          if (outcome === 'server error') {
+            await refuse(500, { title: 'Server error' });
+            await enter(page, 'gbp', '399.5');
+            await pressSaveFromTheBottomEdge(page);
+            await expect(page.locator(SELECTORS.alert)).toBeVisible();
+            await expectInWindow(page, SELECTORS.alert, 'the server-error alert');
+            // Focus was not moved to the message.
+            await expect(page.locator(SELECTORS.save)).toBeFocused();
+          }
+
+          if (outcome === 'offline') {
+            await page.route('**/api/admin/settings/currency-rates', (route) => route.abort('connectionrefused'));
+            await enter(page, 'gbp', '399.5');
+            await pressSaveFromTheBottomEdge(page);
+            await expect(page.locator(SELECTORS.alert)).toContainText('could not reach the server');
+            await expectInWindow(page, SELECTORS.alert, 'the offline alert');
+          }
+        });
+      }
+    });
+  }
+
+  test('is just as visible for a visitor who asked for less motion', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await ownState(page, 'currency-reduced-motion');
+    await reopen(page);
+
+    await enter(page, 'gbp', '399.5');
+    await pressSaveFromTheBottomEdge(page);
+
+    await expect(page.locator(SELECTORS.saved)).toHaveText('Rates saved.');
+    await expectInWindow(page, SELECTORS.saved, 'the saved message');
+  });
+
+  test('draws the message directly under the Save button, in the same container, never above the form', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await ownState(page, 'currency-placement');
+    await reopen(page);
+
+    await enter(page, 'gbp', '399.5');
+    await page.locator(SELECTORS.save).click();
+    await expect(page.locator(SELECTORS.saved)).toHaveText('Rates saved.');
+
+    const geometry = await page.evaluate(() => {
+      const save = document.querySelector('[data-testid="save-currency"]')!.getBoundingClientRect();
+      const message = document.querySelector('[data-testid="currency-saved"]')!.getBoundingClientRect();
+      const lastBox = document.querySelector('[data-testid="currency-field-aed"]')!.getBoundingClientRect();
+      const sameContainer =
+        document.querySelector('[data-testid="save-currency"]')!.closest('.cur-save') ===
+        document.querySelector('[data-testid="currency-saved"]')!.closest('.cur-save');
+
+      return { gapBelowSave: message.top - save.bottom, belowLastBox: message.top - lastBox.bottom, sameContainer };
+    });
+
+    expect(geometry.sameContainer).toBe(true);
+    expect(geometry.belowLastBox).toBeGreaterThan(0);
+    expect(geometry.gapBelowSave).toBeGreaterThanOrEqual(0);
+    expect(geometry.gapBelowSave).toBeLessThan(48);
   });
 });
 

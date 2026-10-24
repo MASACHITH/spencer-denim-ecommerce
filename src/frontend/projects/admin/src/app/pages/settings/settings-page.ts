@@ -1877,12 +1877,12 @@ export class SettingsPage {
     }
   }
 
-  /** The email account panel saved: its token has moved, so re-read without taking the screen down. */
   /** The currency panel saved, or asked for the latest rates after a conflict: re-read, as the email panel's does. */
   protected onCurrencyRatesChanged(): void {
     this.refresh();
   }
 
+  /** The email account panel saved: its token has moved, so re-read without taking the screen down. */
   protected onEmailAccountSaved(): void {
     this.refresh();
   }

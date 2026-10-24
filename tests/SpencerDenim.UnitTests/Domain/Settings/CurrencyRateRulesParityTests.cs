@@ -172,6 +172,40 @@ public sealed class CurrencyRateRulesParityTests
     }
 
     /// <summary>
+    /// The 409's two sentences, from the real handler: a token that is a token but not the current one, and a request
+    /// that carried no usable token at all. The e2e stub says the same words (it once said "display currency rates"),
+    /// and the screen shows whichever arrives, so they are held to the table too.
+    /// </summary>
+    [Fact]
+    public async Task The_real_handler_gives_the_tables_exact_sentence_for_a_stale_and_for_a_missing_row_version()
+    {
+        var templates = Root.GetProperty("messages");
+        var stale = SettingsGroupVersion.For(FiveEmptyRows(rowVersion: 2));
+        var cases = new (string? Version, string Template)[]
+        {
+            (stale, "staleRowVersion"),
+            (null, "missingRowVersion"),
+            ("", "missingRowVersion"),
+            ("not a token!", "missingRowVersion"),
+        };
+
+        foreach (var (version, template) in cases)
+        {
+            var result = await Handler(new StoreWithRows(FiveEmptyRows(rowVersion: 1))).HandleAsync(
+                new UpdateCurrencyRatesCommand(
+                    new Dictionary<string, string?>(StringComparer.Ordinal) { ["usd"] = "301.5" },
+                    version,
+                    Actor),
+                TestContext.Current.CancellationToken);
+
+            var conflict = Assert.IsType<SettingsWriteResult.Conflict>(result);
+
+            Assert.Equal(SettingsConflictCodes.StaleRowVersion, conflict.Code);
+            Assert.Equal(templates.GetProperty(template).GetString(), conflict.Message);
+        }
+    }
+
+    /// <summary>
     /// A name that begins with a capital in the middle of a sentence (US dollar, UAE dirham, Australian dollar) is a
     /// proper noun and must keep it; the handler once lower-cased every name at the point of use.
     /// </summary>
@@ -187,8 +221,40 @@ public sealed class CurrencyRateRulesParityTests
         Assert.Contains("euro", names);
     }
 
-    private static UpdateCurrencyRatesCommandHandler Handler() =>
-        new(new StoreThatMustNotBeTouched(), new SilentAuditLog(), new AllPermissions(), new FixedClock(), new NoCache());
+    private static UpdateCurrencyRatesCommandHandler Handler() => Handler(new StoreThatMustNotBeTouched());
+
+    private static UpdateCurrencyRatesCommandHandler Handler(ISettingsStore store) =>
+        new(store, new SilentAuditLog(), new AllPermissions(), new FixedClock(), new NoCache());
+
+    /// <summary>The five seeded rows, each with no value, as the seeder leaves them.</summary>
+    private static List<Setting> FiveEmptyRows(byte rowVersion) =>
+        [.. DisplayCurrencies.All.Select(currency => new Setting
+        {
+            Key = currency.SettingKey,
+            GroupKey = SettingKeys.CurrencyDisplay.Group,
+            ValueType = SettingValueType.Decimal,
+            RequiredPermission = Permissions.Settings.Edit,
+            RowVersion = [rowVersion],
+        })];
+
+    /// <summary>Returns the rows it was given and refuses everything else: a conflict is answered before any write.</summary>
+    private sealed class StoreWithRows(IReadOnlyList<Setting> rows) : ISettingsStore
+    {
+        public Task<IReadOnlyList<Setting>> ListAsync(IReadOnlyCollection<string> keys, CancellationToken cancellationToken) =>
+            Task.FromResult(rows);
+
+        public Task<SettingImageAsset?> FindUsableImageAsync(Guid publicId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not used by this route.");
+
+        public Task<SettingImageAsset?> FindUsableImageByIdAsync(int assetId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not used by this route.");
+
+        public Task ReplaceMediaUsageAsync(string settingKey, string usageRole, int? newAssetId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not used by this route.");
+
+        public Task<SettingsSaveOutcome> SaveAsync(int? actingUserId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Nothing may be saved when the version is wrong.");
+    }
 
     private sealed class StoreThatMustNotBeTouched : ISettingsStore
     {
@@ -232,7 +298,9 @@ public sealed class CurrencyRateRulesParityTests
     {
         public IReadOnlyList<CurrencyRateDto>? GetRates() => null;
 
-        public void SetRates(IReadOnlyList<CurrencyRateDto> rates)
+        public long Generation => 0;
+
+        public void SetRates(IReadOnlyList<CurrencyRateDto> rates, long generation)
         {
         }
 

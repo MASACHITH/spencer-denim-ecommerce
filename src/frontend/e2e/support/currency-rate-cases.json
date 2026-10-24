@@ -11,8 +11,22 @@
   "messages": {
     "tooManyDecimals": "Use at most 4 decimal places.",
     "outOfRange": "Use a rate above 0 and no more than 1,000,000. It is how many rupees one {name} is worth.",
-    "notANumber": "Enter the {name} rate as digits with an optional decimal point, such as 399.5: no signs, commas, spaces or letters. Leave it empty to stop offering {code}."
+    "notANumber": "Enter the {name} rate as digits with an optional decimal point, such as 399.5: no signs, commas, spaces or letters. Leave it empty to stop offering {code}.",
+    "staleRowVersion": "Somebody else changed the currency rates while you were editing them. Reload the page to see their change, then re-apply yours.",
+    "missingRowVersion": "This request did not carry the settings' current version, so it cannot be applied safely. Reload the page and try again."
   },
+  "fieldNameComment": "How the real route reads a field NAME: case-insensitively for the five rates (a body of {\"Usd\":\"333\"} saves the dollar), and a name it does not know is never looked at (204, nothing written). 'currency' is the field whose rate should read 333 afterwards, or null when nothing is written. AdminCurrencyFieldNameParityTests runs these against the real API; admin-currency-stub-parity.e2e.ts runs them against the stub.",
+  "fieldNameCases": [
+    { "name": "usd", "currency": "usd" },
+    { "name": "Usd", "currency": "usd" },
+    { "name": "USD", "currency": "usd" },
+    { "name": "uSd", "currency": "usd" },
+    { "name": "gbp", "currency": "gbp" },
+    { "name": "GBP", "currency": "gbp" },
+    { "name": "Aed", "currency": "aed" },
+    { "name": "jpy", "currency": null },
+    { "name": "dollar", "currency": null }
+  ],
   "cases": [
     { "value": "399.5", "problem": "none", "canonical": "399.5" },
     { "value": "399.50", "problem": "none", "canonical": "399.5" },

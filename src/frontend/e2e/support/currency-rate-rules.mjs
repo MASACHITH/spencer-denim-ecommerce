@@ -86,3 +86,37 @@ export function currencyRateMessage(problem, currency) {
     + `letters. Leave it empty to stop offering ${currency.code}.`
   );
 }
+
+/** The handler's two 409 sentences (`UpdateCurrencyRatesCommandHandler`), word for word; the table holds both. */
+export const STALE_ROW_VERSION_MESSAGE =
+  'Somebody else changed the currency rates while you were editing them. Reload the page to see their change, then '
+  + 're-apply yours.';
+
+export const MISSING_ROW_VERSION_MESSAGE =
+  "This request did not carry the settings' current version, so it cannot be applied safely. Reload the page and try "
+  + 'again.';
+
+/**
+ * How the real route reads a field NAME (`AdminSettingsEndpoints.CurrencyRates`): the body is read with the shared
+ * case-insensitive reader, so `Usd` and `USD` are the dollar, and the same name twice in two letter cases is a 400.
+ * Returns the body's own key for a field (or undefined), and the pair of keys that collide, if any.
+ */
+export function findFieldKey(body, field) {
+  return Object.keys(body).find((key) => key.toLowerCase() === field.toLowerCase());
+}
+
+export function repeatedNames(body) {
+  const seen = new Map();
+
+  for (const key of Object.keys(body)) {
+    const lower = key.toLowerCase();
+
+    if (seen.has(lower)) {
+      return [seen.get(lower), key];
+    }
+
+    seen.set(lower, key);
+  }
+
+  return null;
+}
