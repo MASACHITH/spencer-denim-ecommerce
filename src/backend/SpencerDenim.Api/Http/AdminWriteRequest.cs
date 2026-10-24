@@ -20,7 +20,8 @@ public static class AdminWriteRequest
 
     /// <summary>
     /// Reads and parses a JSON request body, answering with a 400 problem for anything malformed (including text that
-    /// cannot be decoded), and with a 415 problem when it is not JSON or declares a charset it cannot be read in.
+    /// cannot be decoded and, in a <see cref="JsonObject"/>, a property named twice), and with a 415 problem when it
+    /// is not JSON or declares a charset it cannot be read in.
     /// <para>
     /// <b>Why this is not plain minimal-API model binding.</b> Issue <b>#47</b> is open because
     /// <c>POST /api/admin/auth/login</c> with a body of <c>{bad</c> — or with <c>{"email":123}</c>, a
@@ -81,16 +82,16 @@ public static class AdminWriteRequest
                     "empty_body"));
             }
 
-            // Issue #147: a record is built from every string in the body while it is read, so text that cannot be
-            // decoded already fails above as a JsonException. A JsonObject (29 of the 44 callers) is parsed lazily
-            // and hands the problem to whichever handler first asks for a string, as a 500. Asking for every
-            // string here puts it in the same place for both.
-            if (body is JsonNode node && !AllTextIsDecodable(node))
+            // Issue #147: a record is built from the strings it binds while it is read, so text that cannot be decoded
+            // in one of those already fails above as a JsonException. A JsonObject (29 of the 44 callers) is parsed
+            // lazily and hands its problems to whichever handler first reads it, as a 500: text that cannot be
+            // decoded, and a property named twice. Reading all of it here puts both in the same place as a record's.
+            if (body is JsonNode node && FindUnreadableContent(node) is { } unreadable)
             {
                 return (null, Problem(
                     StatusCodes.Status400BadRequest,
                     "Malformed JSON",
-                    "The request body contains text that is not valid Unicode.",
+                    unreadable,
                     "malformed_json"));
             }
 
@@ -143,22 +144,37 @@ public static class AdminWriteRequest
     }
 
     /// <summary>
-    /// Turns every string in a lazily parsed body, keys included, into a <see cref="string"/>, which is when
-    /// <c>System.Text.Json</c> finds out that it cannot be one: bytes that are not UTF-8, or an escape such as
-    /// <c>\ud800</c> that spells half a surrogate pair. It reports that as an <see cref="InvalidOperationException"/>.
-    /// Catching that type is safe here, and only here: nothing else in this walk can throw it, because the body is
-    /// already parsed and the walk only reads it.
+    /// Reads all of a lazily parsed body, and answers what is wrong with it in a sentence that names no type and
+    /// quotes nothing the caller sent, or <see langword="null"/> when it is fine. The body is only syntax-checked when
+    /// it is read, so two things fail later, in whichever handler first looks inside it, and the walk finds them first:
+    /// <list type="bullet">
+    /// <item>
+    /// Text that cannot be decoded, which <c>System.Text.Json</c> finds out when a string or a property name is turned
+    /// into a <see cref="string"/>: bytes that are not UTF-8, or an escape such as <c>\ud800</c> that spells half a
+    /// surrogate pair. It reports that as an <see cref="InvalidOperationException"/>.
+    /// </item>
+    /// <item>
+    /// A property named twice (also when spelled two ways, <c>code</c> and <c>code</c>). The first enumeration of an
+    /// object builds its dictionary, and that throws <see cref="ArgumentException"/>.
+    /// </item>
+    /// </list>
+    /// Both catches are confined to this walk, whose only operations are enumerating and reading strings, so they
+    /// cannot hide a fault elsewhere in the request.
     /// </summary>
-    private static bool AllTextIsDecodable(JsonNode node)
+    private static string? FindUnreadableContent(JsonNode node)
     {
         try
         {
             Touch(node);
-            return true;
+            return null;
         }
         catch (InvalidOperationException)
         {
-            return false;
+            return "The request body contains text that is not valid Unicode.";
+        }
+        catch (ArgumentException)
+        {
+            return "The request body repeats a property name. Send each property once.";
         }
     }
 

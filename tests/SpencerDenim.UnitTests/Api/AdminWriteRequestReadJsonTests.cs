@@ -7,14 +7,16 @@ using SpencerDenim.Api.Http;
 namespace SpencerDenim.UnitTests.Api;
 
 /// <summary>
-/// Issue <b>#147</b>: <see cref="AdminWriteRequest.ReadJsonAsync{TBody}"/> caught only <c>JsonException</c> and
-/// <c>BadHttpRequestException</c>, so a body the framework could not even decode — a charset it does not know, or
-/// bytes that are not valid in the charset the caller declared — escaped as another exception type and answered
-/// <b>500</b> on every admin write that reads its body this way. The caller did nothing the server should
-/// apologise for, so the answer is a 4xx problem with a machine-readable <c>code</c>, like every other unreadable body.
+/// Issue <b>#147</b>: <see cref="AdminWriteRequest.ReadJsonAsync{TBody}"/> answered <b>500</b> on every admin write that
+/// reads its body this way, for three kinds of body the caller sent and the server could not read: a <c>charset</c>
+/// the runtime has no encoding for (UTF-7 included), text that cannot be decoded in a <see cref="JsonObject"/> (parsed
+/// lazily, so the failure surfaced later in the handler), and a property named twice in one. The caller did nothing the
+/// server should apologise for, so each is a 4xx problem with a machine-readable <c>code</c>, like every other
+/// unreadable body.
 /// <para>
-/// These call the reader directly. The bug is in which exceptions it recognises, which does not depend on routing,
-/// authentication or a database, so the test needs none of them and cannot be made flaky by them.
+/// These call the reader directly. What it recognises does not depend on routing, authentication or a database, so the
+/// tests need none of them and cannot be made flaky by them; the integration tests then send the same bodies through
+/// real routes.
 /// </para>
 /// </summary>
 public sealed class AdminWriteRequestReadJsonTests
@@ -127,10 +129,11 @@ public sealed class AdminWriteRequestReadJsonTests
     }
 
     /// <summary>
-    /// Bytes that are not valid in the declared charset, in a body bound to a <b>record</b>. Those already answer
-    /// 400 <c>malformed_json</c>, because the serializer decodes every string while it builds the record and reports
-    /// a failure as a <c>JsonException</c>; they are kept here so that stays true. A body bound to a
-    /// <see cref="JsonObject"/> does not fail at that point: see the tests below.
+    /// Bytes that are not valid in the declared charset, in a body bound to a <b>record</b> whose property they sit in.
+    /// Those already answer 400 <c>malformed_json</c>, because the serializer decodes each string it binds while it
+    /// builds the record and reports a failure as a <c>JsonException</c>; they are kept here so that stays true. (A
+    /// string in a property the record does not bind is skipped without being decoded, and is not a failure.) A body
+    /// bound to a <see cref="JsonObject"/> does not fail at that point: see the tests below.
     /// </summary>
     [Theory]
     [InlineData("application/json", new byte[] { 0x7B, 0x22, 0x6E, 0x61, 0x6D, 0x65, 0x22, 0x3A, 0x22, 0xFF, 0xFE, 0x22, 0x7D })]
@@ -176,6 +179,28 @@ public sealed class AdminWriteRequestReadJsonTests
         { "invalid UTF-8 inside an array inside an object", Join("{\"a\":[{\"b\":\"", [0xFF], "\"}]}") },
         { "an escaped lone surrogate two levels down", Ascii("{\"a\":{\"b\":[\"\\ud800\"]}}") },
     };
+
+    /// <summary>
+    /// The other way a lazily parsed body fails later: a property named twice. The first time anything enumerates the
+    /// object it builds its dictionary, and that throws <see cref="ArgumentException"/> ("an item with the same key
+    /// has already been added"), which was a 500 on every <see cref="JsonObject"/> route (found by the round-2 tester).
+    /// A name spelled two ways in the JSON text, <c>code</c> and <c>code</c>, is still the same name.
+    /// </summary>
+    [Theory]
+    [InlineData("{\"code\":\"a\",\"code\":\"b\"}")]
+    [InlineData("{\"zzz\":1,\"zzz\":2}")]
+    [InlineData("{\"code\":\"a\",\"c\\u006fde\":\"b\"}")]
+    [InlineData("{\"a\":{\"b\":1,\"b\":2}}")]
+    [InlineData("{\"a\":[{\"b\":1,\"b\":2}]}")]
+    public async Task A_json_object_body_that_repeats_a_property_name_is_a_400_problem(string json)
+    {
+        var (body, problem) = await ReadObjectAsync("application/json", Encoding.UTF8.GetBytes(json));
+
+        Assert.True(problem is not null, $"'{json}' was handed to the handler as a body; it would fail there as a 500.");
+        Assert.Null(body);
+        var result = AssertProblem(problem, StatusCodes.Status400BadRequest, "malformed_json");
+        Assert.Contains("repeats a property name", result.ProblemDetails.Detail, StringComparison.Ordinal);
+    }
 
     /// <summary>
     /// The check must not be wider than the fault either: a body that is fine still reaches the handler, with the

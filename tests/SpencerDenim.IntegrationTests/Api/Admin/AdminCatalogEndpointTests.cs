@@ -370,7 +370,7 @@ public sealed class AdminCatalogEndpointTests(SqlServerDatabaseFixture sqlServer
     [Theory]
     [InlineData("Testing")]
     [InlineData("Development")]
-    public async Task Undecodable_text_in_a_json_object_body_is_a_400_rather_than_a_500(string environment)
+    public async Task An_unreadable_json_object_body_is_a_400_rather_than_a_500(string environment)
     {
         var factory = await HostAsync(environment);
         var client = await AdminCatalogApiClient.SignInAsync(
@@ -383,6 +383,10 @@ public sealed class AdminCatalogEndpointTests(SqlServerDatabaseFixture sqlServer
             ["invalid UTF-8 in a key"] = [.. Encoding.ASCII.GetBytes("{\""), 0xFF, .. Encoding.ASCII.GetBytes("\":\"a\"}")],
             ["an escaped lone high surrogate in a value"] = Encoding.ASCII.GetBytes("{\"code\":\"\\ud800\"}"),
             ["an escaped lone surrogate in a key"] = Encoding.ASCII.GetBytes("{\"\\ud800\":\"a\"}"),
+
+            // The other lazily surfaced failure: a property named twice (here also spelled two ways).
+            ["a property named twice"] = Encoding.ASCII.GetBytes("{\"code\":\"a\",\"code\":\"b\"}"),
+            ["a property named twice, one spelling escaped"] = Encoding.ASCII.GetBytes("{\"code\":\"a\",\"c\\u006fde\":\"b\"}"),
         };
 
         foreach (var (label, bytes) in bodies)
