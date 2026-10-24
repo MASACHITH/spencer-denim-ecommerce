@@ -14,8 +14,8 @@ export const MAX_RATE = 1_000_000;
 /** `DisplayCurrencies.All` on the server: the five currencies, in order, with the lower-case body field. */
 export const DISPLAY_CURRENCIES = [
   { code: 'USD', name: 'US dollar', field: 'usd', key: 'Currency.Display.UsdLkrPerUnit' },
-  { code: 'GBP', name: 'Pound sterling', field: 'gbp', key: 'Currency.Display.GbpLkrPerUnit' },
-  { code: 'EUR', name: 'Euro', field: 'eur', key: 'Currency.Display.EurLkrPerUnit' },
+  { code: 'GBP', name: 'pound sterling', field: 'gbp', key: 'Currency.Display.GbpLkrPerUnit' },
+  { code: 'EUR', name: 'euro', field: 'eur', key: 'Currency.Display.EurLkrPerUnit' },
   { code: 'AUD', name: 'Australian dollar', field: 'aud', key: 'Currency.Display.AudLkrPerUnit' },
   { code: 'AED', name: 'UAE dirham', field: 'aed', key: 'Currency.Display.AedLkrPerUnit' },
 ];
@@ -70,7 +70,8 @@ export function canonicalCurrencyRate(text) {
 
 /** The handler's sentence for a problem (`UpdateCurrencyRatesCommandHandler`), word for word. */
 export function currencyRateMessage(problem, currency) {
-  const name = currency.name.toLowerCase();
+  // The name as it stands (see DisplayCurrency.Name on the server): US dollar and UAE dirham keep their capitals.
+  const name = currency.name;
 
   if (problem === 'tooManyDecimals') {
     return `Use at most ${MAX_DECIMAL_PLACES} decimal places.`;

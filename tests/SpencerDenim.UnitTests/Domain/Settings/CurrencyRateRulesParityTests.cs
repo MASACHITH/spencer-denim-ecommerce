@@ -1,5 +1,14 @@
 using System.Globalization;
 using System.Text.Json;
+using SpencerDenim.Application.Abstractions.Auditing;
+using SpencerDenim.Application.Abstractions.Time;
+using SpencerDenim.Application.Admin.CurrentUser;
+using SpencerDenim.Application.Settings;
+using SpencerDenim.Application.Settings.Abstractions;
+using SpencerDenim.Application.Settings.Admin;
+using SpencerDenim.Application.Settings.Contracts;
+using SpencerDenim.Domain.Auditing;
+using SpencerDenim.Domain.Identity;
 using SpencerDenim.Domain.Settings;
 
 namespace SpencerDenim.UnitTests.Domain.Settings;
@@ -11,11 +20,22 @@ namespace SpencerDenim.UnitTests.Domain.Settings;
 /// <c>currency-rate-rules.spec.ts</c>, the stub's is <c>admin-currency-stub-parity.e2e.ts</c>. Changing a rule in one
 /// place without the table fails here or there, which is the whole reason the table exists: a stub or a form that is
 /// looser than the API hides defects, and one that is stricter refuses rates the API would take.
+/// <para>
+/// <b>The table also holds the five currencies' names and the exact sentence for each kind of fault</b>, and the
+/// REAL <see cref="UpdateCurrencyRatesCommandHandler"/> is asked for every one of them. The screen shows its own
+/// sentence before the request is sent and the server's after it, and the two must never read differently: the
+/// handler once lower-cased "US dollar" into "us dollar" in the middle of a sentence, and the screen's copy of that
+/// wording went stale the day the server's was corrected.
+/// </para>
 /// </summary>
 public sealed class CurrencyRateRulesParityTests
 {
-    private static readonly JsonElement Cases = JsonDocument.Parse(File.ReadAllText(Path.Combine(
-        RepositoryRoot(), "src", "frontend", "e2e", "support", "currency-rate-cases.json"))).RootElement.GetProperty("cases");
+    private static readonly JsonElement Root = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+        RepositoryRoot(), "src", "frontend", "e2e", "support", "currency-rate-cases.json"))).RootElement;
+
+    private static readonly JsonElement Cases = Root.GetProperty("cases");
+
+    private static readonly AdminActor Actor = new(7, "staff@example.com", null, null, null);
 
     [Fact]
     public void The_table_is_not_empty_and_covers_every_kind_of_answer()
@@ -89,6 +109,135 @@ public sealed class CurrencyRateRulesParityTests
         finally
         {
             CultureInfo.CurrentCulture = before;
+        }
+    }
+
+    [Fact]
+    public void The_five_currencies_are_the_tables_five_with_the_same_codes_fields_and_names_in_the_same_order()
+    {
+        var expected = Root.GetProperty("currencies").EnumerateArray()
+            .Select(entry => (
+                Field: entry.GetProperty("field").GetString()!,
+                Code: entry.GetProperty("code").GetString()!,
+                Name: entry.GetProperty("name").GetString()!))
+            .ToList();
+
+        var actual = DisplayCurrencies.All.Select(currency => (currency.Field, currency.Code, currency.Name)).ToList();
+
+        Assert.Equal(expected, actual);
+    }
+
+    /// <summary>
+    /// Every currency, every kind of fault, the real handler. A currency is asked about one field at a time so each
+    /// sentence is the only error, and the store is one that throws if it is touched: validation happens first, and
+    /// this is also the proof of it.
+    /// </summary>
+    [Fact]
+    public async Task The_real_handler_gives_the_tables_exact_sentence_for_every_currency_and_every_kind_of_fault()
+    {
+        var templates = Root.GetProperty("messages");
+        var faults = new[]
+        {
+            (Kind: "notANumber", Value: "1e3"),
+            (Kind: "tooManyDecimals", Value: "1.00001"),
+            (Kind: "outOfRange", Value: "0"),
+        };
+
+        var asked = 0;
+
+        foreach (var currency in DisplayCurrencies.All)
+        {
+            foreach (var (kind, value) in faults)
+            {
+                var result = await Handler().HandleAsync(
+                    new UpdateCurrencyRatesCommand(
+                        new Dictionary<string, string?>(StringComparer.Ordinal) { [currency.Field] = value },
+                        null,
+                        Actor),
+                    TestContext.Current.CancellationToken);
+
+                var invalid = Assert.IsType<SettingsWriteResult.Invalid>(result);
+                var error = Assert.Single(invalid.Errors);
+                var expected = templates.GetProperty(kind).GetString()!
+                    .Replace("{name}", currency.Name, StringComparison.Ordinal)
+                    .Replace("{code}", currency.Code, StringComparison.Ordinal);
+
+                Assert.Equal(currency.Field, error.Field);
+                Assert.Equal(expected, error.Message);
+                asked++;
+            }
+        }
+
+        Assert.Equal(15, asked);
+    }
+
+    /// <summary>
+    /// A name that begins with a capital in the middle of a sentence (US dollar, UAE dirham, Australian dollar) is a
+    /// proper noun and must keep it; the handler once lower-cased every name at the point of use.
+    /// </summary>
+    [Fact]
+    public void A_currency_named_after_a_place_keeps_its_capital_in_the_tables_names()
+    {
+        var names = Root.GetProperty("currencies").EnumerateArray().Select(entry => entry.GetProperty("name").GetString()!).ToList();
+
+        Assert.Contains("US dollar", names);
+        Assert.Contains("UAE dirham", names);
+        Assert.Contains("Australian dollar", names);
+        Assert.Contains("pound sterling", names);
+        Assert.Contains("euro", names);
+    }
+
+    private static UpdateCurrencyRatesCommandHandler Handler() =>
+        new(new StoreThatMustNotBeTouched(), new SilentAuditLog(), new AllPermissions(), new FixedClock(), new NoCache());
+
+    private sealed class StoreThatMustNotBeTouched : ISettingsStore
+    {
+        public Task<IReadOnlyList<Setting>> ListAsync(IReadOnlyCollection<string> keys, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Validation must finish before the store is read.");
+
+        public Task<SettingImageAsset?> FindUsableImageAsync(Guid publicId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not used by this route.");
+
+        public Task<SettingImageAsset?> FindUsableImageByIdAsync(int assetId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not used by this route.");
+
+        public Task ReplaceMediaUsageAsync(string settingKey, string usageRole, int? newAssetId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not used by this route.");
+
+        public Task<SettingsSaveOutcome> SaveAsync(int? actingUserId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Nothing may be saved when a field is refused.");
+    }
+
+    private sealed class SilentAuditLog : IAuditLogWriter
+    {
+        public Task WriteAsync(AuditLog entry, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public void Enlist(AuditLog entry)
+        {
+        }
+    }
+
+    private sealed class AllPermissions : IEffectivePermissionsProvider
+    {
+        public Task<EffectivePermissions> GetEffectivePermissionsAsync(int userId, CancellationToken cancellationToken) =>
+            Task.FromResult(new EffectivePermissions(true, []));
+    }
+
+    private sealed class FixedClock : IClock
+    {
+        public DateTimeOffset UtcNow => new(2026, 10, 24, 9, 0, 0, TimeSpan.Zero);
+    }
+
+    private sealed class NoCache : ICurrencyRatesCache
+    {
+        public IReadOnlyList<CurrencyRateDto>? GetRates() => null;
+
+        public void SetRates(IReadOnlyList<CurrencyRateDto> rates)
+        {
+        }
+
+        public void Evict()
+        {
         }
     }
 

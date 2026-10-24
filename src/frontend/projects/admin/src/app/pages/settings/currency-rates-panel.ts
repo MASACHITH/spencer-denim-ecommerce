@@ -30,7 +30,9 @@ const DAY_MS = 86_400_000;
 interface CurrencyRow {
   readonly field: CurrencyField;
   readonly code: string;
-  readonly name: string;
+
+  /** The name as it starts a line: the table's name, which is written for the middle of a sentence, capitalised. */
+  readonly heading: string;
   readonly text: string;
   readonly error: string | null;
 
@@ -109,7 +111,7 @@ interface CurrencyRow {
           <div class="cur-row" [attr.data-testid]="'currency-row-' + row.field">
             <div class="adm-field">
               <label class="adm-label" [attr.for]="'currency-' + row.field">
-                {{ row.name }} ({{ row.code }}): rupees for one
+                {{ row.heading }} ({{ row.code }}): rupees for one
               </label>
               <input
                 class="adm-input cur-input"
@@ -277,7 +279,7 @@ export class CurrencyRatesPanel {
       return {
         field: currency.field,
         code: currency.code,
-        name: currency.name,
+        heading: currency.name.charAt(0).toUpperCase() + currency.name.slice(1),
         text,
         error,
         line,

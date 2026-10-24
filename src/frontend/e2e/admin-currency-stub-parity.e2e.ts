@@ -20,11 +20,23 @@ interface Case {
   readonly canonical?: string;
 }
 
-const cases = (
-  JSON.parse(readFileSync(resolve(__dirname, 'support', 'currency-rate-cases.json'), 'utf8')) as {
-    cases: Case[];
-  }
-).cases;
+interface Currency {
+  readonly field: string;
+  readonly code: string;
+  readonly name: string;
+}
+
+const table = JSON.parse(readFileSync(resolve(__dirname, 'support', 'currency-rate-cases.json'), 'utf8')) as {
+  cases: Case[];
+  currencies: Currency[];
+  messages: Record<'tooManyDecimals' | 'outOfRange' | 'notANumber', string>;
+};
+const cases = table.cases;
+
+/** The exact sentence the real handler gives (CurrencyRateRulesParityTests holds the C# to this table). */
+const sentence = (kind: keyof typeof table.messages, currency: Currency): string =>
+  table.messages[kind].replace('{name}', currency.name).replace('{code}', currency.code);
+const gbp = table.currencies.find((currency) => currency.field === 'gbp')!;
 
 /** The settings read model's row for a key, as the stub serves it. */
 interface Row {
@@ -92,13 +104,26 @@ test.describe('the display-currency stub is no more permissive than the API (#24
       expect(answer.status, `'${entry.value}' should be refused as ${entry.problem}`).toBe(400);
 
       const message = answer.errors['gbp']?.[0] ?? '';
-      const expected = {
-        tooManyDecimals: 'Use at most 4 decimal places.',
-        outOfRange: 'Use a rate above 0 and no more than 1,000,000.',
-        notANumber: 'Enter the pound sterling rate as digits with an optional decimal point',
-      }[entry.problem];
+      const expected = sentence(entry.problem, gbp);
 
-      expect(message, `'${entry.value}' (${entry.problem})`).toContain(expected);
+      expect(message, `'${entry.value}' (${entry.problem})`).toBe(expected);
+    }
+  });
+
+  test('gives each currency the exact sentence the API gives for each kind of fault', async ({ page }) => {
+    const api = await open(page);
+
+    for (const currency of table.currencies) {
+      for (const [kind, value] of [
+        ['notANumber', '1e3'],
+        ['tooManyDecimals', '1.00001'],
+        ['outOfRange', '0'],
+      ] as const) {
+        const answer = await api.put({ [currency.field]: value });
+
+        expect(answer.status, `${currency.code} ${kind}`).toBe(400);
+        expect(answer.errors[currency.field], `${currency.code} ${kind}`).toEqual([sentence(kind, currency)]);
+      }
     }
   });
 

@@ -10,6 +10,20 @@ import {
 } from '../../core/settings/admin-settings.model';
 import { CurrencyRatesPanel } from './currency-rates-panel';
 
+// The sentences the API gives are one shared table, which the C# handler is held to by CurrencyRateRulesParityTests.
+// Node's own modules are loaded by a computed name (this project's spec types do not include Node's; see the rules spec).
+declare const process: { cwd(): string };
+
+const nodeFs = (await import(/* @vite-ignore */ ['node', 'fs'].join(':'))) as {
+  readFileSync(path: string, encoding: 'utf8'): string;
+};
+
+const sentences = (
+  JSON.parse(nodeFs.readFileSync(`${process.cwd()}/e2e/support/currency-rate-cases.json`, 'utf8')) as {
+    messages: Readonly<Record<'tooManyDecimals' | 'outOfRange' | 'notANumber', string>>;
+  }
+).messages;
+
 const DAY_MS = 86_400_000;
 const NOW = new Date('2026-10-24T08:00:00.000Z');
 
@@ -152,7 +166,8 @@ describe('CurrencyRatesPanel (issue #248)', () => {
         expect(input.id).toBe(`currency-${currency.field}`);
         expect(input.getAttribute('inputmode')).toBe('decimal');
         expect(input.getAttribute('autocomplete')).toBe('off');
-        expect(label?.textContent).toContain(currency.name);
+        // The name starts the label, so it is capitalised there; in the middle of a sentence it is as the API writes it.
+        expect(label?.textContent).toContain(currency.name.charAt(0).toUpperCase() + currency.name.slice(1));
         expect(label?.textContent).toContain(`(${currency.code})`);
       }
     });
@@ -378,22 +393,37 @@ describe('CurrencyRatesPanel (issue #248)', () => {
       expect(box('gbp').value).toBe(value);
     });
 
-    it('says what the API would say, word for word', async () => {
+    it.each(DISPLAY_CURRENCIES.map((currency) => [currency.code, currency] as const))(
+      'says what the API says for %s, word for word, for each kind of fault',
+      async (_code, currency) => {
+        await render(group());
+        const said = (kind: keyof typeof sentences) =>
+          sentences[kind].replace('{name}', currency.name).replace('{code}', currency.code);
+
+        await type(currency.field, '1.00001');
+        press();
+        expect(text(`currency-error-${currency.field}`)).toBe(said('tooManyDecimals'));
+
+        await type(currency.field, '0');
+        press();
+        expect(text(`currency-error-${currency.field}`)).toBe(said('outOfRange'));
+
+        await type(currency.field, '1e3');
+        press();
+        expect(text(`currency-error-${currency.field}`)).toBe(said('notANumber'));
+      },
+    );
+
+    it('keeps the capitals of US dollar and UAE dirham in the middle of its sentences', async () => {
       await render(group());
 
-      await type('gbp', '1.00001');
+      await type('usd', 'x');
+      await type('aed', 'y');
       press();
-      expect(text('currency-error-gbp')).toBe('Use at most 4 decimal places.');
 
-      await type('gbp', '0');
-      press();
-      expect(text('currency-error-gbp')).toBe(
-        'Use a rate above 0 and no more than 1,000,000. It is how many rupees one pound sterling is worth.',
-      );
-
-      await type('gbp', '1e3');
-      press();
-      expect(text('currency-error-gbp')).toContain('Enter the pound sterling rate as digits with an optional decimal point');
+      expect(text('currency-error-usd')).toContain('Enter the US dollar rate');
+      expect(text('currency-error-aed')).toContain('Enter the UAE dirham rate');
+      expect(text('currency-error-aed')).toContain('Leave it empty to stop offering AED.');
     });
 
     it('moves focus to the first wrong box and lists the error with the box for a screen reader', async () => {

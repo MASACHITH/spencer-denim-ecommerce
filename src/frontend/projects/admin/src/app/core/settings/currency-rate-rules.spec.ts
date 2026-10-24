@@ -23,7 +23,11 @@ const nodeFs = (await import(/* @vite-ignore */ ['node', 'fs'].join(':'))) as {
 
 const table = JSON.parse(
   nodeFs.readFileSync(`${process.cwd()}/e2e/support/currency-rate-cases.json`, 'utf8'),
-) as { readonly cases: readonly Case[] };
+) as {
+  readonly cases: readonly Case[];
+  readonly currencies: readonly { readonly field: string; readonly code: string; readonly name: string }[];
+  readonly messages: Readonly<Record<'tooManyDecimals' | 'outOfRange' | 'notANumber', string>>;
+};
 
 describe('checkCurrencyRate (issue #248)', () => {
   it('reads the shared table, which is not empty and has every kind of answer', () => {
@@ -57,7 +61,7 @@ describe('currencyRateMessage (issue #248)', () => {
       'Use a rate above 0 and no more than 1,000,000. It is how many rupees one pound sterling is worth.',
     );
     expect(currencyRateMessage('notANumber', dollar.name, dollar.code)).toBe(
-      'Enter the us dollar rate as digits with an optional decimal point, such as 399.5: no signs, commas, '
+      'Enter the US dollar rate as digits with an optional decimal point, such as 399.5: no signs, commas, '
         + 'spaces or letters. Leave it empty to stop offering USD.',
     );
   });
@@ -69,6 +73,35 @@ describe('currencyRateMessage (issue #248)', () => {
         `'${entry.value}'`,
       ).toEqual(expect.any(String));
     }
+  });
+});
+
+describe('the sentences are the ones the server gives, for every currency (issue #248)', () => {
+  const sentence = (kind: keyof typeof table.messages, currency: { name: string; code: string }) =>
+    table.messages[kind].replace('{name}', currency.name).replace('{code}', currency.code);
+
+  it.each(['notANumber', 'tooManyDecimals', 'outOfRange'] as const)(
+    'says the shared table sentence for %s, with each currency name and code',
+    (kind) => {
+      for (const currency of DISPLAY_CURRENCIES) {
+        expect(currencyRateMessage(kind, currency.name, currency.code), `${currency.code} ${kind}`).toBe(
+          sentence(kind, currency),
+        );
+      }
+    },
+  );
+
+  it('keeps the capitals of a currency named after a place in the middle of a sentence', () => {
+    expect(currencyRateMessage('notANumber', 'US dollar', 'USD')).toContain('Enter the US dollar rate');
+    expect(currencyRateMessage('notANumber', 'UAE dirham', 'AED')).toContain('Enter the UAE dirham rate');
+    expect(currencyRateMessage('outOfRange', 'Australian dollar', 'AUD')).toContain('one Australian dollar is worth');
+    expect(currencyRateMessage('outOfRange', 'US dollar', 'USD')).not.toContain('us dollar');
+  });
+});
+
+describe('DISPLAY_CURRENCIES against the shared table (issue #248)', () => {
+  it('is the five currencies of the table: the same fields, codes and names, in the same order', () => {
+    expect(DISPLAY_CURRENCIES.map(({ field, code, name }) => ({ field, code, name }))).toEqual(table.currencies);
   });
 });
 

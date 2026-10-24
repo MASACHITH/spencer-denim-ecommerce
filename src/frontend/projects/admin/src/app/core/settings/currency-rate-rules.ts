@@ -56,14 +56,17 @@ export function checkCurrencyRate(text: string): CurrencyRateProblem {
 
 /**
  * The sentence for a problem, word for word what the API says (`UpdateCurrencyRatesCommandHandler`), so the same
- * mistake reads the same whether the screen or the server caught it. `none` has no sentence.
+ * mistake reads the same whether the screen or the server caught it. `none` has no sentence. The exact sentences are
+ * in `currency-rate-cases.json`, and the API's own handler is tested against them.
  */
 export function currencyRateMessage(
   problem: CurrencyRateProblem,
   currencyName: string,
   currencyCode: string,
 ): string | null {
-  const name = currencyName.toLowerCase();
+  // The name as it stands: it is already written for the middle of a sentence, and a capitalised one (US dollar, UAE
+  // dirham) must keep its capitals.
+  const name = currencyName;
 
   switch (problem) {
     case 'none':

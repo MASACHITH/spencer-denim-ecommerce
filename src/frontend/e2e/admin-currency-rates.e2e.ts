@@ -23,9 +23,23 @@ interface Case {
   readonly problem: 'none' | 'notANumber' | 'tooManyDecimals' | 'outOfRange';
 }
 
-const cases = (
-  JSON.parse(readFileSync(resolve(__dirname, 'support', 'currency-rate-cases.json'), 'utf8')) as { cases: Case[] }
-).cases;
+interface Currency {
+  readonly field: string;
+  readonly code: string;
+  readonly name: string;
+}
+
+const table = JSON.parse(readFileSync(resolve(__dirname, 'support', 'currency-rate-cases.json'), 'utf8')) as {
+  cases: Case[];
+  currencies: Currency[];
+  messages: Record<'tooManyDecimals' | 'outOfRange' | 'notANumber', string>;
+};
+const cases = table.cases;
+
+/** The exact sentence the API gives a currency for a kind of fault; the screen must say the same one. */
+const sentence = (kind: keyof typeof table.messages, currency: Currency): string =>
+  table.messages[kind].replace('{name}', currency.name).replace('{code}', currency.code);
+const gbp = table.currencies.find((currency) => currency.field === 'gbp')!;
 
 const SELECTORS = {
   panel: '[data-testid="currency-panel"]',
@@ -199,7 +213,34 @@ test.describe('the screen and the API agree about what a rate is', () => {
         await expect(error(page, 'gbp'), `'${entry.value}' is a rate`).toHaveCount(0);
       } else {
         await expect(error(page, 'gbp'), `'${entry.value}' is ${entry.problem}`).toBeVisible();
+        await expect(error(page, 'gbp'), `'${entry.value}' is told as the API tells it`).toHaveText(
+          sentence(entry.problem, gbp),
+        );
       }
+    }
+  });
+
+  /**
+   * The screen speaks before the request and the server after it, and they must be one voice: the same sentence for the
+   * same fault, for every currency. The server's sentence is the shared table's, held there by the API's own test.
+   */
+  test('says the sentence the API gives, for each of the five currencies and each kind of fault', async ({ page }) => {
+    await open(page);
+
+    for (const currency of table.currencies) {
+      for (const [kind, value] of [
+        ['notANumber', '1e3'],
+        ['tooManyDecimals', '1.00001'],
+        ['outOfRange', '0'],
+      ] as const) {
+        await field(page, currency.field).fill(value);
+        await field(page, currency.field).blur();
+
+        await expect(error(page, currency.field), `${currency.code} ${kind}`).toHaveText(sentence(kind, currency));
+      }
+
+      await field(page, currency.field).fill('');
+      await field(page, currency.field).blur();
     }
   });
 });

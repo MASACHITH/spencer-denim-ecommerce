@@ -301,13 +301,18 @@ export const SETTING_GROUPS = {
  * `DisplayCurrencies.All` on the server**, which is also the order of the public feed and of this panel's rows.
  *
  * `field` is the lower-case code, the name of the body field `PUT /api/admin/settings/currency-rates` reads; `key` is
- * the `ops.Settings` row holding the rate (rupees for one unit). A backend test pins the names against the handler's
- * own list, and the panel's spec pins this table against the panel.
+ * the `ops.Settings` row holding the rate (rupees for one unit).
+ *
+ * **`name` is the name as it reads in the middle of a sentence**, exactly as `DisplayCurrency.Name` on the server has
+ * it ("US dollar", "pound sterling", "euro", "UAE dirham"), and it is used as it stands: lower-casing a capitalised
+ * name at the point of use is how "US dollar" became "us dollar" in the server's own messages. The row's label
+ * capitalises its first letter. `currency-rate-cases.json` holds all five, and both this table and the server's are
+ * tested against it.
  */
 export const DISPLAY_CURRENCIES = [
   { code: 'USD', name: 'US dollar', field: 'usd', key: 'Currency.Display.UsdLkrPerUnit' },
-  { code: 'GBP', name: 'Pound sterling', field: 'gbp', key: 'Currency.Display.GbpLkrPerUnit' },
-  { code: 'EUR', name: 'Euro', field: 'eur', key: 'Currency.Display.EurLkrPerUnit' },
+  { code: 'GBP', name: 'pound sterling', field: 'gbp', key: 'Currency.Display.GbpLkrPerUnit' },
+  { code: 'EUR', name: 'euro', field: 'eur', key: 'Currency.Display.EurLkrPerUnit' },
   { code: 'AUD', name: 'Australian dollar', field: 'aud', key: 'Currency.Display.AudLkrPerUnit' },
   { code: 'AED', name: 'UAE dirham', field: 'aed', key: 'Currency.Display.AedLkrPerUnit' },
 ] as const;
