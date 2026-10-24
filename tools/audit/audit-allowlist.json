@@ -21,6 +21,26 @@
   "entries": [
     {
       "ecosystem": "npm",
+      "advisory": "GHSA-xjj6-f33q-929c",
+      "package": "undici",
+      "severity": "high",
+      "reason": "Transitive dep of @angular/build (Angular CLI tooling). Used only in the dev server and test runner, never bundled into the deployed browser app. Forward fix requires downgrading from Angular 21 to 20 (breaking change). Waiting for @angular/build 21.x to ship undici >=7.31.0.",
+      "acceptedBy": "MASACHITH",
+      "acceptedOn": "2026-10-24",
+      "reviewBy": "2027-01-22"
+    },
+    {
+      "ecosystem": "npm",
+      "advisory": "GHSA-27r3-jxmh-p828",
+      "package": "body-parser",
+      "severity": "high",
+      "reason": "Extraneous package — present as a dev-tooling leftover in node_modules, not reachable from package.json. DoS is in HTTP server request parsing, irrelevant to a browser bundle. Will be removed by running npm ci after lockfile cleanup; fix is available via npm audit fix.",
+      "acceptedBy": "MASACHITH",
+      "acceptedOn": "2026-10-24",
+      "reviewBy": "2027-01-22"
+    },
+    {
+      "ecosystem": "npm",
       "advisory": "GHSA-587h-7wmj-h5pm",
       "package": "vite",
       "severity": "high",
