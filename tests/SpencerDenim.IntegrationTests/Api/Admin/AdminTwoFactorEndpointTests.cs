@@ -954,6 +954,68 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
     }
 
     /// <summary>
+    /// The second step, held at the write that records the sign-in, while the owner changes the password from another
+    /// session. The pending sign-in was opened against the old security stamp, so the write must refuse: no session, and
+    /// the new hash and the rotated stamp stay. (A later time step's code is used because the first session spent the
+    /// earlier one: a code is accepted once.)
+    /// </summary>
+    [Fact]
+    public async Task A_second_step_held_at_its_sign_in_write_cannot_undo_a_password_change_made_meanwhile()
+    {
+        var gate = new UserRowWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("second-step-vs-password-change");
+        var userId = await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        using var session = await PendingSignInAsync(host, email);
+        using (var signedIn = await SendSecondStepAsync(session, TotpTestCodes.Next(key)))
+        {
+            Assert.Equal(HttpStatusCode.OK, signedIn.StatusCode);
+        }
+
+        using var client = await PendingSignInAsync(host, email);
+        var stampBefore = (await FindUserAsync(host, userId)).SecurityStamp;
+
+        gate.Arm();
+        var heldStep = SendSecondStepAsync(client, TotpTestCodes.Next(key, stepsAhead: 2));
+        string? stampAfterChange;
+        string? hashAfterChange;
+        try
+        {
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+
+            using var change = await PostWithTokenAsync(session, ChangePasswordUrl, new { currentPassword = Password, newPassword = NewPassword });
+            Assert.Equal(HttpStatusCode.NoContent, change.StatusCode);
+
+            var changed = await FindUserAsync(host, userId);
+            stampAfterChange = changed.SecurityStamp;
+            hashAfterChange = changed.PasswordHash;
+            Assert.NotEqual(stampBefore, stampAfterChange);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var held = await heldStep;
+        var body = await held.Content.ReadAsStringAsync(Ct);
+
+        var after = await FindUserAsync(host, userId);
+        Assert.True(
+            string.Equals(after.SecurityStamp, stampAfterChange, StringComparison.Ordinal),
+            "The sign-in's write put the old security stamp back: every session the password change ended is alive again.");
+        Assert.True(
+            string.Equals(after.PasswordHash, hashAfterChange, StringComparison.Ordinal),
+            "The sign-in's write put the old password hash back.");
+        Assert.True(
+            held.StatusCode == HttpStatusCode.Unauthorized,
+            $"A second step whose pending sign-in was opened against the old password gets no session. Got {(int)held.StatusCode}: {body}");
+        Assert.Equal("two_factor_session_expired", ErrorCodeOf(body));
+        Assert.Null(CookiePairOrNull(held, "sd_admin_auth"));
+    }
+
+    /// <summary>
     /// An account WITHOUT 2FA: one request checks the password and issues the session, so the write that records the
     /// sign-in is the only place the deactivation can be lost. Held there, with the account deactivated meanwhile:
     /// no session, and the account stays deactivated.
