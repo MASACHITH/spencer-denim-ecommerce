@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Http.HttpResults;
 using SpencerDenim.Application.Abstractions.Auditing;
@@ -17,7 +19,9 @@ public static class AdminWriteRequest
     public const string AntiforgeryHeader = "X-XSRF-TOKEN";
 
     /// <summary>
-    /// Reads and parses a JSON request body, answering with a 400 problem for anything malformed.
+    /// Reads and parses a JSON request body, answering with a 400 problem for anything malformed (including text that
+    /// cannot be decoded and, in a <see cref="JsonObject"/>, a property named twice), and with a 415 problem when it
+    /// is not JSON or declares a charset it cannot be read in.
     /// <para>
     /// <b>Why this is not plain minimal-API model binding.</b> Issue <b>#47</b> is open because
     /// <c>POST /api/admin/auth/login</c> with a body of <c>{bad</c> — or with <c>{"email":123}</c>, a
@@ -51,17 +55,47 @@ public static class AdminWriteRequest
                 "not_json"));
         }
 
+        // A charset the runtime has no encoding for makes ReadFromJsonAsync throw InvalidOperationException
+        // (issue #147), which is neither of the exceptions caught below, so it answered 500 for a header the
+        // caller chose. It is decided from the header, before the body is touched, rather than by catching
+        // InvalidOperationException around the read: that type is also what a bug inside the server throws, and
+        // reporting one of those as "your request was wrong" would hide it.
+        if (DeclaresUnusableCharset(request))
+        {
+            return (null, Problem(
+                StatusCodes.Status415UnsupportedMediaType,
+                "Unsupported charset",
+                "Send the request body as UTF-8.",
+                "unsupported_charset"));
+        }
+
         try
         {
             var body = await request.ReadFromJsonAsync<TBody>(cancellationToken);
 
-            return body is null
-                ? (null, Problem(
+            if (body is null)
+            {
+                return (null, Problem(
                     StatusCodes.Status400BadRequest,
                     "Empty request body",
                     "The request body is empty, or is the JSON literal null.",
-                    "empty_body"))
-                : (body, null);
+                    "empty_body"));
+            }
+
+            // Issue #147: a record is built from the strings it binds while it is read, so text that cannot be decoded
+            // in one of those already fails above as a JsonException. A JsonObject (29 of the 44 callers) is parsed
+            // lazily and hands its problems to whichever handler first reads it, as a 500: text that cannot be
+            // decoded, and a property named twice. Reading all of it here puts both in the same place as a record's.
+            if (body is JsonNode node && FindUnreadableContent(node) is { } unreadable)
+            {
+                return (null, Problem(
+                    StatusCodes.Status400BadRequest,
+                    "Malformed JSON",
+                    unreadable,
+                    "malformed_json"));
+            }
+
+            return (body, null);
         }
         catch (JsonException exception)
         {
@@ -80,6 +114,97 @@ public static class AdminWriteRequest
                 "Bad request body",
                 exception.Message,
                 "malformed_json"));
+        }
+    }
+
+    /// <summary>
+    /// True when the request declares a <c>charset</c> the body cannot be read in. The framework looks the name up
+    /// with <see cref="Encoding.GetEncoding(string)"/>, which throws <see cref="ArgumentException"/> for a name it
+    /// does not know (the typed header reports that as a <see langword="null"/> encoding) and
+    /// <see cref="NotSupportedException"/> for UTF-7, which the runtime knows and refuses. The typed header lets the
+    /// second one out, so it counts here as well. A quoted value (<c>charset="utf-8"</c>) is not unquoted by the
+    /// framework either, so it is refused cleanly instead of answering 500.
+    /// </summary>
+    private static bool DeclaresUnusableCharset(HttpRequest request)
+    {
+        var contentType = request.GetTypedHeaders().ContentType;
+        if (contentType is not { Charset.HasValue: true })
+        {
+            return false;
+        }
+
+        try
+        {
+            return contentType.Encoding is null;
+        }
+        catch (NotSupportedException)
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Reads all of a lazily parsed body, and answers what is wrong with it in a sentence that names no type and
+    /// quotes nothing the caller sent, or <see langword="null"/> when it is fine. The body is only syntax-checked when
+    /// it is read, so two things fail later, in whichever handler first looks inside it, and the walk finds them first:
+    /// <list type="bullet">
+    /// <item>
+    /// Text that cannot be decoded, which <c>System.Text.Json</c> finds out when a string or a property name is turned
+    /// into a <see cref="string"/>: bytes that are not UTF-8, or an escape such as <c>\ud800</c> that spells half a
+    /// surrogate pair. It reports that as an <see cref="InvalidOperationException"/>.
+    /// </item>
+    /// <item>
+    /// A property named twice. Two spellings count as the same name when they differ only in letter case
+    /// (<c>Code</c> and <c>code</c>, which is how the handlers look a property up) or only in a JSON escape of one
+    /// letter. The first enumeration of an object builds its dictionary, and that throws
+    /// <see cref="ArgumentException"/>.
+    /// </item>
+    /// </list>
+    /// Both catches are confined to this walk, whose only operations are enumerating and reading strings, so they
+    /// cannot hide a fault elsewhere in the request. The <see cref="ArgumentException"/> catch also covers its
+    /// subclasses; no body has been found that reaches one of them, and one that did would be reported as a repeated
+    /// name.
+    /// </summary>
+    private static string? FindUnreadableContent(JsonNode node)
+    {
+        try
+        {
+            Touch(node);
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            return "The request body contains text that is not valid Unicode.";
+        }
+        catch (ArgumentException)
+        {
+            return "The request body repeats a property name. Send each property once.";
+        }
+    }
+
+    private static void Touch(JsonNode? node)
+    {
+        switch (node)
+        {
+            case JsonObject properties:
+                foreach (var (_, child) in properties)
+                {
+                    Touch(child);
+                }
+
+                break;
+
+            case JsonArray items:
+                foreach (var item in items)
+                {
+                    Touch(item);
+                }
+
+                break;
+
+            case JsonValue scalar when scalar.GetValueKind() == JsonValueKind.String:
+                _ = scalar.GetValue<string>();
+                break;
         }
     }
 
