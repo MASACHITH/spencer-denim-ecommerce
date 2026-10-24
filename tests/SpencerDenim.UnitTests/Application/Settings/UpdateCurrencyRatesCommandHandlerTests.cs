@@ -722,9 +722,11 @@ public sealed class UpdateCurrencyRatesCommandHandlerTests
     {
         public int Evictions { get; private set; }
 
+        public long Generation => Evictions;
+
         public IReadOnlyList<SpencerDenim.Application.Settings.Contracts.CurrencyRateDto>? GetRates() => null;
 
-        public void SetRates(IReadOnlyList<SpencerDenim.Application.Settings.Contracts.CurrencyRateDto> rates)
+        public void SetRates(IReadOnlyList<SpencerDenim.Application.Settings.Contracts.CurrencyRateDto> rates, long generation)
         {
         }
 

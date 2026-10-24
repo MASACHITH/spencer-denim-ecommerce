@@ -82,8 +82,12 @@ public sealed class CachedCurrencyRatesQueryHandler(
             return cached;
         }
 
+        // Taken BEFORE the read, so a save that commits and evicts while this read is in flight makes the store below
+        // a no-op instead of putting the old list back for a minute. See ICurrencyRatesCache.Generation.
+        var generation = cache.Generation;
+
         var rates = await inner.HandleAsync(query, cancellationToken);
-        cache.SetRates(rates);
+        cache.SetRates(rates, generation);
 
         return rates;
     }

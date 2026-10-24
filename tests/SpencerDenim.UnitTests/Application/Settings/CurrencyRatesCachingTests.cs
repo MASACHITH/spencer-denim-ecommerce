@@ -39,7 +39,7 @@ public sealed class CurrencyRatesCachingTests
         var cache = new CurrencyRatesCache(time);
         var rates = Usd(301.5m);
 
-        cache.SetRates(rates);
+        cache.SetRates(rates, cache.Generation);
 
         Assert.Same(rates, cache.GetRates());
 
@@ -62,12 +62,12 @@ public sealed class CurrencyRatesCachingTests
         var time = new FakeTimeProvider(Start);
         var cache = new CurrencyRatesCache(time);
 
-        cache.SetRates(Usd(301.5m));
+        cache.SetRates(Usd(301.5m), cache.Generation);
         time.Advance(TimeSpan.FromSeconds(61));
         Assert.Null(cache.GetRates());
 
         var fresh = Usd(305m);
-        cache.SetRates(fresh);
+        cache.SetRates(fresh, cache.Generation);
         time.Advance(TimeSpan.FromSeconds(59));
 
         Assert.Same(fresh, cache.GetRates());
@@ -77,7 +77,7 @@ public sealed class CurrencyRatesCachingTests
     public void Evict_drops_the_entry_at_once()
     {
         var cache = new CurrencyRatesCache(new FakeTimeProvider(Start));
-        cache.SetRates(Usd(301.5m));
+        cache.SetRates(Usd(301.5m), cache.Generation);
 
         cache.Evict();
 
@@ -94,7 +94,7 @@ public sealed class CurrencyRatesCachingTests
         var cache = new CurrencyRatesCache(new FakeTimeProvider(Start));
         IReadOnlyList<CurrencyRateDto> none = [];
 
-        cache.SetRates(none);
+        cache.SetRates(none, cache.Generation);
 
         var cached = cache.GetRates();
         Assert.NotNull(cached);
@@ -106,7 +106,7 @@ public sealed class CurrencyRatesCachingTests
     {
         var cache = new CurrencyRatesCache(new FakeTimeProvider(Start));
 
-        Assert.Throws<ArgumentNullException>(() => cache.SetRates(null!));
+        Assert.Throws<ArgumentNullException>(() => cache.SetRates(null!, cache.Generation));
     }
 
     // ---- the decorator -----------------------------------------------------------------------------------
@@ -204,10 +204,166 @@ public sealed class CurrencyRatesCachingTests
         Assert.Equal(2, reads.Calls);
     }
 
+    // ---- the generation, on the cache itself -------------------------------------------------------------
+
+    [Fact]
+    public void Every_eviction_moves_the_generation_and_nothing_else_does()
+    {
+        var cache = new CurrencyRatesCache(new FakeTimeProvider(Start));
+        var start = cache.Generation;
+
+        cache.SetRates(Usd(301.5m), start);
+        _ = cache.GetRates();
+        Assert.Equal(start, cache.Generation);
+
+        cache.Evict();
+        Assert.Equal(start + 1, cache.Generation);
+
+        cache.Evict();
+        Assert.Equal(start + 2, cache.Generation);
+    }
+
+    [Fact]
+    public void A_store_with_the_current_generation_is_kept()
+    {
+        var cache = new CurrencyRatesCache(new FakeTimeProvider(Start));
+        cache.Evict();
+        var rates = Usd(301.5m);
+
+        cache.SetRates(rates, cache.Generation);
+
+        Assert.Same(rates, cache.GetRates());
+    }
+
+    /// <summary>The core of the fix: a generation taken before an eviction stores nothing.</summary>
+    [Fact]
+    public void A_store_with_a_generation_from_before_an_eviction_is_ignored()
+    {
+        var cache = new CurrencyRatesCache(new FakeTimeProvider(Start));
+        var before = cache.Generation;
+
+        cache.Evict();
+        cache.SetRates(Usd(301.5m), before);
+
+        Assert.Null(cache.GetRates());
+    }
+
+    /// <summary>
+    /// A late, stale store cannot overwrite a newer, correct entry either: the reader that started after the save
+    /// stores the new list, and the one that started before it finishes last with the old one.
+    /// </summary>
+    [Fact]
+    public void A_late_stale_store_cannot_overwrite_a_newer_entry()
+    {
+        var cache = new CurrencyRatesCache(new FakeTimeProvider(Start));
+        var olderReader = cache.Generation;
+
+        cache.Evict();
+        var newer = Usd(310m);
+        cache.SetRates(newer, cache.Generation);
+        cache.SetRates(Usd(301.5m), olderReader);
+
+        Assert.Same(newer, cache.GetRates());
+    }
+
+    // ---- a save racing a read ----------------------------------------------------------------------------
+
+    /// <summary>
+    /// <b>The independent tester's reproduction.</b> A feed read starts and takes the old list from the database; the
+    /// save commits and evicts the cache while that read is still in flight; the read then finishes and tries to
+    /// store what it took. Without a check it re-arms a full minute with the OLD list, after the eviction that was
+    /// supposed to make the new one visible at once, which is the one thing the eviction is for.
+    /// <para>
+    /// The read that was in flight returns the list it took (it began before the save, so that is a fair answer to
+    /// its own caller). What must not happen is that the <i>next</i> caller is served it from the cache.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_read_that_began_before_a_save_cannot_re_arm_the_cache_with_the_old_list_after_the_eviction()
+    {
+        var cache = new CurrencyRatesCache(new FakeTimeProvider(Start));
+        var inner = new GatedInner(Usd(301.5m));
+        var handler = new CachedCurrencyRatesQueryHandler(inner, cache);
+
+        var inFlight = handler.HandleAsync(new GetCurrencyRatesQuery(), Token);
+        await inner.FirstReadTookItsAnswer.WaitAsync(TimeSpan.FromSeconds(10), Token);
+
+        // The save: the new rate is committed, then the handler evicts.
+        inner.Answer = Usd(310m);
+        cache.Evict();
+
+        inner.ReleaseTheFirstRead();
+        var theReadThatWasInFlight = await inFlight;
+
+        Assert.Equal(301.5m, theReadThatWasInFlight[0].LkrPerUnit);
+
+        var next = await handler.HandleAsync(new GetCurrencyRatesQuery(), Token);
+
+        Assert.Equal(310m, next[0].LkrPerUnit);
+        Assert.Equal(2, inner.Calls);
+    }
+
+    /// <summary>
+    /// The same race with nothing evicted: a read that finishes with no save in between is stored as it always was,
+    /// so the guard costs the cache nothing when nobody is saving.
+    /// </summary>
+    [Fact]
+    public async Task A_read_with_no_save_in_between_is_stored_exactly_as_before()
+    {
+        var cache = new CurrencyRatesCache(new FakeTimeProvider(Start));
+        var inner = new GatedInner(Usd(301.5m));
+        var handler = new CachedCurrencyRatesQueryHandler(inner, cache);
+
+        var inFlight = handler.HandleAsync(new GetCurrencyRatesQuery(), Token);
+        await inner.FirstReadTookItsAnswer.WaitAsync(TimeSpan.FromSeconds(10), Token);
+        inner.ReleaseTheFirstRead();
+        var first = await inFlight;
+
+        var second = await handler.HandleAsync(new GetCurrencyRatesQuery(), Token);
+
+        Assert.Same(first, second);
+        Assert.Equal(1, inner.Calls);
+    }
+
     // ---- helpers -----------------------------------------------------------------------------------------
 
     private static CachedCurrencyRatesQueryHandler Decorate(CountingInner inner, TimeProvider time) =>
         new(inner, new CurrencyRatesCache(time));
+
+    /// <summary>
+    /// A reader whose FIRST read takes its answer at once and then waits at a gate before returning it, so a test can
+    /// run a save in the gap. Later reads are not gated and see whatever <see cref="Answer"/> is by then.
+    /// </summary>
+    private sealed class GatedInner(IReadOnlyList<CurrencyRateDto> answer)
+        : IQueryHandler<GetCurrencyRatesQuery, IReadOnlyList<CurrencyRateDto>>
+    {
+        private readonly TaskCompletionSource _tookItsAnswer = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public IReadOnlyList<CurrencyRateDto> Answer { get; set; } = answer;
+
+        public int Calls { get; private set; }
+
+        public Task FirstReadTookItsAnswer => _tookItsAnswer.Task;
+
+        public void ReleaseTheFirstRead() => _gate.TrySetResult();
+
+        public async Task<IReadOnlyList<CurrencyRateDto>> HandleAsync(GetCurrencyRatesQuery query, CancellationToken cancellationToken)
+        {
+            Calls++;
+
+            if (Calls > 1)
+            {
+                return Answer;
+            }
+
+            var taken = Answer;
+            _tookItsAnswer.TrySetResult();
+            await _gate.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+
+            return taken;
+        }
+    }
 
     private sealed class CountingInner(IReadOnlyList<CurrencyRateDto> answer)
         : IQueryHandler<GetCurrencyRatesQuery, IReadOnlyList<CurrencyRateDto>>

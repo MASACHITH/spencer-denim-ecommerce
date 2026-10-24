@@ -390,6 +390,56 @@ public sealed class CurrencyRatesEndpointTests(SqlServerDatabaseFixture sqlServe
         }
     }
 
+    /// <summary>
+    /// <b>The race the independent tester reproduced, through the real route.</b> A shopper's request starts and its
+    /// read takes the database as it is (no rate set), then waits. A staff member saves a rate, for real: the write
+    /// commits and the cache is evicted. The shopper's read then finishes. Without a guard it stored its OLD list, so
+    /// the next shopper was served "no rate" for a full minute after the save that the eviction exists to show.
+    /// </summary>
+    [Fact]
+    public async Task A_read_in_flight_during_a_real_save_cannot_re_arm_the_cache_with_the_old_list()
+    {
+        var (factory, gate) = await StartGatedAsync();
+        await using var _ = factory;
+        using var admin = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+
+        try
+        {
+            await RestoreAsync(factory);
+            using var shopper = Anonymous(factory);
+
+            var inFlight = shopper.GetAsync(new Uri(Url, UriKind.Relative), Token);
+            await gate.FirstReadTookTheDatabase.WaitAsync(TimeSpan.FromSeconds(30), Token);
+
+            using var save = await admin.PutAsJsonAsync(
+                new Uri("/api/admin/settings/currency-rates", UriKind.Relative),
+                new { usd = "301.5", rowVersion = await VersionAsync(factory) },
+                JsonOptions,
+                Token);
+            Assert.Equal(HttpStatusCode.NoContent, save.StatusCode);
+
+            gate.ReleaseTheFirstRead();
+            using var theOneThatWasInFlight = await inFlight;
+
+            // It began before the save, so "no rate" is a fair answer to that one request.
+            Assert.Equal("[]", await theOneThatWasInFlight.Content.ReadAsStringAsync(Token));
+
+            // The next request after the save must read again and see the rate, not the old list re-armed.
+            var next = await GetTextAsync(shopper);
+            Assert.Contains("\"lkrPerUnit\":301.5", next, StringComparison.Ordinal);
+            Assert.Equal(2, gate.Reads);
+
+            // And that fresh answer is the one that is now cached.
+            Assert.Equal(next, await GetTextAsync(shopper));
+            Assert.Equal(2, gate.Reads);
+        }
+        finally
+        {
+            gate.ReleaseTheFirstRead();
+            await RestoreAsync(factory);
+        }
+    }
+
     // ---- helpers ----------------------------------------------------------------------------------------
 
     private async Task<ApiFactory> StartAsync()
@@ -398,6 +448,67 @@ public sealed class CurrencyRatesEndpointTests(SqlServerDatabaseFixture sqlServe
         await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
 
         return new ApiFactory(sqlServer.ConnectionString);
+    }
+
+    /// <summary>
+    /// A host whose feed reader takes the database's answer on its FIRST call and then waits at a gate before
+    /// returning it, so a test can run a real save in the gap. Later calls pass straight through.
+    /// </summary>
+    private async Task<(ApiFactory Factory, GateControl Gate)> StartGatedAsync()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
+
+        var control = new GateControl();
+
+        var factory = new ApiFactory(
+            sqlServer.ConnectionString,
+            configureServices: services =>
+            {
+                var real = services.Last(descriptor => descriptor.ServiceType == typeof(ICurrencyRatesReader)).ImplementationType
+                    ?? throw new InvalidOperationException("The feed's reader is not registered by type.");
+
+                services.AddScoped<ICurrencyRatesReader>(provider =>
+                    new GatedReader((ICurrencyRatesReader)ActivatorUtilities.CreateInstance(provider, real), control));
+            });
+
+        return (factory, control);
+    }
+
+    private sealed class GateControl
+    {
+        private readonly TaskCompletionSource _tookTheDatabase = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _reads;
+
+        public int Reads => Volatile.Read(ref _reads);
+
+        public Task FirstReadTookTheDatabase => _tookTheDatabase.Task;
+
+        public Task Gate => _gate.Task;
+
+        public int NextRead() => Interlocked.Increment(ref _reads);
+
+        public void SignalFirstReadTookTheDatabase() => _tookTheDatabase.TrySetResult();
+
+        public void ReleaseTheFirstRead() => _gate.TrySetResult();
+    }
+
+    private sealed class GatedReader(ICurrencyRatesReader inner, GateControl control) : ICurrencyRatesReader
+    {
+        public async Task<IReadOnlyList<StoredCurrencyRate>> ReadAsync(CancellationToken cancellationToken)
+        {
+            var number = control.NextRead();
+            var stored = await inner.ReadAsync(cancellationToken);
+
+            if (number == 1)
+            {
+                control.SignalFirstReadTookTheDatabase();
+                await control.Gate.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+            }
+
+            return stored;
+        }
     }
 
     /// <summary>
