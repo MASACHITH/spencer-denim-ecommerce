@@ -197,6 +197,11 @@ public sealed class HomeContentSeeder(AppDbContext dbContext, IClock clock)
 
             page.BodyHtml = PolicyPageContent.Bodies[page.SystemKey!];
             page.SetPublished(true, utcNow);
+
+            // The page shows "Last updated" from UpdatedAtUtc, falling back to PublishedAtUtc. A page published
+            // empty long ago keeps its old PublishedAtUtc (SetPublished stamps it once), so without this the
+            // shopper would be told the policy was last updated the day somebody published an empty page.
+            page.UpdatedAtUtc = utcNow;
             filled++;
         }
 

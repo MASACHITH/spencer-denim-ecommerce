@@ -23,6 +23,9 @@ public sealed class DeliveryReturnsSeedTests(SqlServerDatabaseFixture sqlServer)
 {
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
+    /// <summary>A publish stamp from long ago, so a test can tell it from one the seeder wrote today.</summary>
+    private static readonly DateTime OldPublishedAtUtc = new(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+
     // ---- couriers -------------------------------------------------------------------------------------
 
     [Fact]
@@ -254,9 +257,16 @@ public sealed class DeliveryReturnsSeedTests(SqlServerDatabaseFixture sqlServer)
                         .SetProperty(page => page.IsPublished, false)
                         .SetProperty(page => page.PublishedAtUtc, (DateTime?)null),
                     Token);
+            // About was published empty by hand some days ago and has never been edited: it keeps that old
+            // PublishedAtUtc (SetPublished stamps it once), and the page's "Last updated" would show it.
             await db.ContentPages
                 .Where(page => page.SystemKey == ContentPageKeys.About)
-                .ExecuteUpdateAsync(update => update.SetProperty(page => page.BodyHtml, string.Empty), Token);
+                .ExecuteUpdateAsync(
+                    update => update
+                        .SetProperty(page => page.BodyHtml, string.Empty)
+                        .SetProperty(page => page.PublishedAtUtc, OldPublishedAtUtc)
+                        .SetProperty(page => page.UpdatedAtUtc, (DateTime?)null),
+                    Token);
 
             // An admin emptied Returns and took it off the shop after version 1.
             await db.ContentPages
@@ -284,6 +294,18 @@ public sealed class DeliveryReturnsSeedTests(SqlServerDatabaseFixture sqlServer)
                     Assert.True(pages[key].IsPublished, key);
                     Assert.NotNull(pages[key].PublishedAtUtc);
                 });
+
+            // "Last updated" must say when the copy arrived, not when somebody published an empty page: the seeder
+            // stamps UpdatedAtUtc on every page it fills (the page shows UpdatedAtUtc ?? PublishedAtUtc), and
+            // About's old PublishedAtUtc is left alone.
+            Assert.All(
+                new[] { ContentPageKeys.About, ContentPageKeys.Privacy, ContentPageKeys.Terms },
+                key =>
+                {
+                    Assert.NotNull(pages[key].UpdatedAtUtc);
+                    Assert.True(pages[key].UpdatedAtUtc > OldPublishedAtUtc, key);
+                });
+            Assert.Equal(OldPublishedAtUtc, pages[ContentPageKeys.About].PublishedAtUtc);
 
             // Version 1's pages: Shipping untouched, Returns still the admin's empty, unpublished page.
             Assert.Equal(PolicyPageContent.ShippingBody, pages[ContentPageKeys.Shipping].BodyHtml);

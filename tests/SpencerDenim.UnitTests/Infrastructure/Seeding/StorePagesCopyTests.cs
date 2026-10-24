@@ -38,13 +38,14 @@ public sealed partial class StorePagesCopyTests
 
     /// <summary>
     /// Each page is as long as the issue asked for (about 250 to 350 words for About, 600 to 900 for the other two),
-    /// with a margin of about a tenth either side for the way words are counted. A page that has quietly grown or
-    /// collapsed is the thing this catches: the Privacy draft was first written at over a thousand words and was cut
-    /// back, and this is what keeps it cut.
+    /// with a margin of about a tenth either side for the way words are counted. Privacy is allowed more: it was cut
+    /// from over a thousand words and then grew again when review found data the first draft left out (PayPal's
+    /// notifications, the account's phone number and district, the references PayPal receives), each of which a
+    /// privacy policy should say. A page that has quietly doubled or collapsed is what this catches.
     /// </summary>
     [Theory]
     [InlineData(ContentPageKeys.About, 225, 385)]
-    [InlineData(ContentPageKeys.Privacy, 540, 990)]
+    [InlineData(ContentPageKeys.Privacy, 600, 1120)]
     [InlineData(ContentPageKeys.Terms, 540, 990)]
     public void A_page_is_the_length_it_was_asked_to_be(string key, int minimum, int maximum)
     {
@@ -246,21 +247,27 @@ public sealed partial class StorePagesCopyTests
     {
         var text = TextOf(ContentPageKeys.Privacy);
 
-        // The owner and a lawyer set the response time; the policy points at the Act's own. The only day counts
-        // anywhere in the policy are the four that code or a design document fixes (two cookie lifetimes, the 90-day
-        // standard for visit records, and the 35 days deleted data can stay in backups, which doc 08 section B2 asks
-        // the policy to say), so removing exactly those leaves no number of days at all.
+        // The owner and a lawyer decide how fast a request is answered; the policy promises no deadline, so it does
+        // not say "within the time the Act requires" (nobody here can say what that is, or that the shop meets it).
+        // The only day counts anywhere in the policy are the three that code fixes or defaults (two cookie lifetimes
+        // and the 90-day standard for visit records), so removing exactly those leaves no number of days at all. The
+        // backups sentence carries no number: the backup script does not prune (deploy/scripts/backup-db.sh), so the
+        // real retention is the host's and is on the owner's list.
         var withoutTheKnownDurations = text
             .Replace("30 days from your last visit", string.Empty, StringComparison.Ordinal)
             .Replace("up to 30 days", string.Empty, StringComparison.Ordinal)
-            .Replace("90 days as standard", string.Empty, StringComparison.Ordinal)
-            .Replace("up to 35 days", string.Empty, StringComparison.Ordinal);
+            .Replace("90 days as standard", string.Empty, StringComparison.Ordinal);
 
         Assert.DoesNotMatch(new Regex(@"\b\d+\s*(working\s+)?days?\b", RegexOptions.IgnoreCase), withoutTheKnownDurations);
-        Assert.Contains("within the time the Act requires", text, StringComparison.Ordinal);
-        Assert.Contains("Deleted data may remain in our backups for up to 35 days", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("within the time", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("35 days", text, StringComparison.Ordinal);
+        Assert.Contains(
+            "Backups are kept for a limited time, and data deleted from the shop can remain in them until they expire.",
+            text,
+            StringComparison.Ordinal);
 
-        // The one retention job that exists is the page-view purge: it is named, and nothing else is.
+        // The one retention job that exists is the page-view purge: it is named, and nothing else is. In particular
+        // the order and enquiry IP address purges that docs/11 describes are NOT built, so none is promised.
         Assert.Contains("Visit records are removed automatically after a set period (90 days as standard)", text, StringComparison.Ordinal);
         Assert.DoesNotContain("deleted automatically", text, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("anonymised automatically", text, StringComparison.OrdinalIgnoreCase);
@@ -305,6 +312,252 @@ public sealed partial class StorePagesCopyTests
             Assert.DoesNotContain("48 hours", text, StringComparison.Ordinal);
         }
     }
+
+    // ---- what the review found missing or untrue -------------------------------------------------------------
+
+    /// <summary>
+    /// The Privacy policy says everything the code collects or sends, each in its own words so a later edit that drops
+    /// one fails by name: PayPal's notifications (stored as PayPal sent them, payer name and email included), the
+    /// account's phone number and default district, the order's IP address, and what PayPal receives (the order total,
+    /// the recipient, a reference to the order and the shop's name). Proof for each is in the #252 journal entry.
+    /// </summary>
+    [Theory]
+    [InlineData("PayPal sends us notifications about the payment. We keep each one as PayPal sent it, and it can include your name and email address.")]
+    [InlineData("if you add them, your phone number and default delivery district")]
+    [InlineData("the IP address the order was placed from")]
+    [InlineData("a reference to your order and our shop name")]
+    [InlineData("the recipient's name and delivery address")]
+    [InlineData("if you upload a bank transfer payment slip, that slip")]
+    [InlineData("we record that with the IP address and browser details")]
+    [InlineData("To slow down repeated requests, the server also uses the IP address a request comes from")]
+    public void The_privacy_policy_says_what_the_code_collects_and_sends(string fragment)
+    {
+        Assert.Contains(fragment, TextOf(ContentPageKeys.Privacy), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <b>Nothing in the shop implements unsubscribing</b>: the subscriber's <c>UnsubscribeToken</c> is generated and
+    /// used nowhere, no endpoint sets <c>UnsubscribedAtUtc</c>, no link exists. So no page may promise a self-service
+    /// way out. The Privacy policy says to ask through the Contact page and that staff remove the address (an
+    /// operational promise on the owner's list). When the unsubscribe feature ships this test changes with the copy.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public void No_page_promises_a_self_service_unsubscribe_the_shop_does_not_have(string key)
+    {
+        Assert.DoesNotMatch(new Regex("unsubscrib", RegexOptions.IgnoreCase), TextOf(key));
+    }
+
+    [Fact]
+    public void The_privacy_policy_says_how_to_stop_the_newsletter_and_withdraw_a_consent_today()
+    {
+        var text = TextOf(ContentPageKeys.Privacy);
+
+        Assert.Contains("to stop receiving the newsletter or to withdraw any other consent, write to us through the Contact page", text, StringComparison.Ordinal);
+        Assert.Contains("When you ask us to stop the newsletter, we remove you from the list.", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The Shipping page draws only the Sri Lankan fee list; overseas fees, times and whether a country is served are
+    /// at checkout (<c>shipping-rates.ts</c>, <c>delivery-country.service.ts</c>). The Terms must say that and not that
+    /// everything is on the delivery page.
+    /// </summary>
+    [Fact]
+    public void The_terms_put_overseas_fees_times_and_countries_at_checkout_and_only_sri_lankan_ones_on_the_delivery_page()
+    {
+        var text = TextOf(ContentPageKeys.Terms);
+
+        Assert.Contains("Within Sri Lanka, delivery fees and estimated delivery times are on our delivery page and at checkout.", text, StringComparison.Ordinal);
+        Assert.Contains(
+            "For an overseas delivery, the fee, the estimated delivery time and whether we deliver to your country are shown at checkout before you pay.",
+            text,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("the countries we deliver to are shown at checkout and on", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// "Last updated" is the row's own date and the page keeps no versions, so the Terms must not say that the version
+    /// on the page when you order is the one that applies. The seeder stamps <c>UpdatedAtUtc</c> when it fills a page
+    /// (integration test), so the date the page shows is the date the copy arrived.
+    /// </summary>
+    [Fact]
+    public void The_terms_do_not_claim_a_version_history_the_page_does_not_keep()
+    {
+        var text = TextOf(ContentPageKeys.Terms);
+
+        Assert.DoesNotContain("version on this page", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("The date at the top of this page shows when they were last changed.", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The review form says first name and initial are shown; it does not ask the reviewer to confirm honesty or to
+    /// grant permission, so the Terms must not say the reviewer does.
+    /// </summary>
+    [Fact]
+    public void The_terms_describe_the_review_form_as_it_is()
+    {
+        var text = TextOf(ContentPageKeys.Terms);
+
+        Assert.DoesNotContain("you confirm", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("you allow us", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("the review form tells you that your first name and the initial of your last name are shown with it", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A page title is the client's label and can be renamed, so the copy refers to the delivery and returns pages
+    /// generically and never by the seeded titles. (The Shipping and Returns copy of version 1 does name them; it is
+    /// already in people's databases and is left as the owner approved it.)
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public void A_page_never_names_another_page_by_a_title_an_admin_can_rename(string key)
+    {
+        var text = TextOf(key);
+
+        foreach (var title in new[] { "Delivery and shipping", "Returns and exchanges", "Privacy policy", "Terms and conditions", "Contact us" })
+        {
+            Assert.DoesNotContain(title, text, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>The shipping page says the payment deadline is in the order email; the order page shows it too. The Terms name both.</summary>
+    [Fact]
+    public void The_terms_and_the_shipping_page_agree_about_where_the_payment_deadline_is_shown()
+    {
+        Assert.Contains("the deadline shown on your order page and in your order email", TextOf(ContentPageKeys.Terms), StringComparison.Ordinal);
+        Assert.Contains("deadline in your order email", PolicyPageContent.ShippingBody, StringComparison.Ordinal);
+    }
+
+    /// <summary>The Returns page lets you cancel before dispatch and says paid orders are refunded; the Terms say the same without promising a button.</summary>
+    [Fact]
+    public void The_terms_and_the_returns_page_agree_about_cancelling()
+    {
+        var terms = TextOf(ContentPageKeys.Terms);
+
+        Assert.Contains("You can cancel an unpaid order yourself from your order page.", terms, StringComparison.Ordinal);
+        Assert.Contains("To cancel an order you have already paid for, contact us before we dispatch it.", terms, StringComparison.Ordinal);
+        Assert.Contains("You can cancel any time before we dispatch your order.", PolicyPageContent.ReturnsBody, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A promise the owner cannot keep word for word is softened: "we aim to reply", "we aim to handle your data in
+    /// line with the Act". And "linked at the foot of every page" is said at most once on a page.
+    /// </summary>
+    [Fact]
+    public void Promises_the_owner_cannot_guarantee_are_worded_as_aims()
+    {
+        Assert.Contains("we aim to reply", TextOf(ContentPageKeys.About), StringComparison.Ordinal);
+        Assert.DoesNotContain("our team will reply", TextOf(ContentPageKeys.About), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("We aim to handle your personal data in line with", TextOf(ContentPageKeys.Privacy), StringComparison.Ordinal);
+        Assert.DoesNotContain("We handle your personal data in line with", TextOf(ContentPageKeys.Privacy), StringComparison.Ordinal);
+        Assert.DoesNotContain("Pay securely", TextOf(ContentPageKeys.About), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public void The_phrase_linked_at_the_foot_of_every_page_is_said_at_most_once(string key)
+    {
+        Assert.True(Regex.Count(TextOf(key), "linked at the foot of every page") <= 1, key);
+    }
+
+    /// <summary>The rights and the payment/delivery points are lists, not one long sentence.</summary>
+    [Fact]
+    public void The_longest_sentences_are_lists()
+    {
+        Assert.Matches(new Regex(@"<p>Under the Personal Data Protection Act you may:</p><ul>(<li>[^<]+</li>){5}</ul>"), BodyOf(ContentPageKeys.Privacy));
+        Assert.True(Regex.Count(BodyOf(ContentPageKeys.Terms), "<ul>") >= 4);
+    }
+
+    // ---- the copy lint, and the six edits it exists to catch ------------------------------------------------
+
+    private static IReadOnlySet<string> RealCookieNames { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        SpencerDenim.Api.Http.CartCookie.Name,
+        SpencerDenim.Api.Http.VisitSessionCookie.Name,
+        SpencerDenim.Infrastructure.Identity.Customers.CustomerAuthenticationDefaults.CookieName,
+    };
+
+    [Fact]
+    public void The_cookie_names_the_lint_checks_against_are_the_three_the_code_sets()
+    {
+        Assert.Equal(["sd_cart", "sd_customer_auth", "sd_vs"], RealCookieNames.Order(StringComparer.Ordinal).ToArray());
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public void The_copy_passes_the_lint(string key)
+    {
+        var violations = StorePagesLint.Check(key, BodyOf(key), RealCookieNames);
+
+        Assert.True(violations.Count == 0, string.Join(Environment.NewLine, violations.Select(v => $"[{v.Rule}] {v.Detail}")));
+    }
+
+    /// <summary>
+    /// The six edits the #252 tester made to the first version of these tests, every one of which survived all of them.
+    /// Each is applied in memory to the real copy and must fire the rule that exists for it. If a rule is ever loosened
+    /// or removed, the edit it was written for comes back green here and this test is what says so.
+    /// </summary>
+    [Theory]
+    [InlineData("sell personal data to partners", ContentPageKeys.Privacy, StorePagesLint.ForbiddenPhrase)]
+    [InlineData("courier given email and purchase history", ContentPageKeys.Privacy, StorePagesLint.PinnedSentence)]
+    [InlineData("trading since 1998", ContentPageKeys.About, StorePagesLint.UnlistedNumber)]
+    [InlineData("more than 10,000 happy customers", ContentPageKeys.About, StorePagesLint.UnlistedNumber)]
+    [InlineData("a fourth cookie sd_prefs", ContentPageKeys.Privacy, StorePagesLint.CookieName)]
+    [InlineData("US spelling organized", ContentPageKeys.About, StorePagesLint.UsSpelling)]
+    public void Each_mutation_the_tester_ran_is_caught_by_the_lint_rule_meant_to_catch_it(string mutation, string key, string expectedRule)
+    {
+        var mutated = Mutate(mutation, BodyOf(key));
+
+        Assert.NotEqual(BodyOf(key), mutated);
+
+        var violations = StorePagesLint.Check(key, mutated, RealCookieNames);
+
+        Assert.Contains(violations, violation => violation.Rule == expectedRule);
+    }
+
+    /// <summary>More edits of the same kinds, so a rule that catches only the exact tester wording is not enough.</summary>
+    [Theory]
+    [InlineData("We do not sell your personal data. We may disclose it where the law requires us to.", "We never sell your personal data to anyone except our partners.", ContentPageKeys.Privacy, StorePagesLint.ForbiddenPhrase)]
+    [InlineData("<h2>Get in touch</h2>", "<h2>Get in touch</h2><p>We are the best online fashion shop in Sri Lanka.</p>", ContentPageKeys.About, StorePagesLint.ForbiddenPhrase)]
+    [InlineData("<h2>Get in touch</h2>", "<h2>Get in touch</h2><p>Over 5000 orders delivered.</p>", ContentPageKeys.About, StorePagesLint.UnlistedNumber)]
+    [InlineData("<h2>Get in touch</h2>", "<h2>Get in touch</h2><p>Satisfaction guaranteed, 100% of the time.</p>", ContentPageKeys.About, StorePagesLint.ForbiddenPhrase)]
+    [InlineData("<h2>Get in touch</h2>", "<h2>Get in touch</h2><p>We are always here.</p>", ContentPageKeys.About, StorePagesLint.ForbiddenPhrase)]
+    [InlineData("<h2>Get in touch</h2>", "<h2>Get in touch</h2><p>Unsubscribe from any email.</p>", ContentPageKeys.About, StorePagesLint.ForbiddenPhrase)]
+    [InlineData("<h2>Contact</h2>", "<h2>Contact</h2><p>Our favorite color is blue.</p>", ContentPageKeys.Terms, StorePagesLint.UsSpelling)]
+    [InlineData("<h2>Contact</h2>", "<h2>Contact</h2><p>We recognize your rights.</p>", ContentPageKeys.Terms, StorePagesLint.UsSpelling)]
+    [InlineData("<h2>Contact</h2>", "<h2>Contact</h2><p>sd_admin keeps staff signed in.</p>", ContentPageKeys.Terms, StorePagesLint.CookieName)]
+    [InlineData("<strong>sd_vs</strong>", "<strong>sd_vsx</strong>", ContentPageKeys.Privacy, StorePagesLint.CookieName)]
+    public void Other_edits_of_the_same_kinds_are_caught_too(string find, string replacement, string key, string expectedRule)
+    {
+        var body = BodyOf(key);
+
+        Assert.Contains(find, body, StringComparison.Ordinal);
+
+        var violations = StorePagesLint.Check(key, body.Replace(find, replacement, StringComparison.Ordinal), RealCookieNames);
+
+        Assert.Contains(violations, violation => violation.Rule == expectedRule);
+    }
+
+    /// <summary>The tester's edits, as functions of a body. Each changes the body, or the test above says so.</summary>
+    private static string Mutate(string mutation, string body) => mutation switch
+    {
+        "sell personal data to partners" => body.Replace(
+            "We do not sell your personal data.",
+            "We may sell your personal data to partners.",
+            StringComparison.Ordinal),
+        "courier given email and purchase history" => body.Replace(
+            "your name, delivery address and telephone number.</li>",
+            "your name, email address, purchase history and delivery address.</li>",
+            StringComparison.Ordinal),
+        "trading since 1998" => body.Replace("<h2>Get in touch</h2>", "<h2>Get in touch</h2><p>We have been trading since 1998.</p>", StringComparison.Ordinal),
+        "more than 10,000 happy customers" => body.Replace("<h2>Get in touch</h2>", "<h2>Get in touch</h2><p>More than 10,000 happy customers.</p>", StringComparison.Ordinal),
+        "a fourth cookie sd_prefs" => body.Replace(
+            "<li><strong>sd_vs</strong>",
+            "<li><strong>sd_prefs</strong> remembers your choices.</li><li><strong>sd_vs</strong>",
+            StringComparison.Ordinal),
+        "US spelling organized" => body.Replace("organised", "organized", StringComparison.Ordinal),
+        _ => throw new ArgumentOutOfRangeException(nameof(mutation), mutation, "Unknown mutation."),
+    };
 
     // ---- the browser suite draws the same words ---------------------------------------------------------------
 
