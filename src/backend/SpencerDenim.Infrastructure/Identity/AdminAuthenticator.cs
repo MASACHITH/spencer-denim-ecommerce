@@ -75,8 +75,12 @@ public sealed class AdminAuthenticator(
             // between rounds of code guesses; the count is reset once the code is accepted.
             if (await userManager.GetTwoFactorEnabledAsync(user))
             {
+                // Issue #145: null means another request got to the account's pending sign-in first. The password
+                // was right, so this is not a failed login; it is the reply a stale pending sign-in gets.
                 var pendingSignInId = await OpenPendingSignInAsync(user);
-                return AdminAuthenticationOutcome.TwoFactorRequired(user.Id, user.Email ?? email, securityStamp, pendingSignInId);
+                return pendingSignInId is null
+                    ? AdminAuthenticationOutcome.TwoFactorSessionExpired(user.Id, user.Email)
+                    : AdminAuthenticationOutcome.TwoFactorRequired(user.Id, user.Email ?? email, securityStamp, pendingSignInId);
             }
 
             return await SucceedAsync(user, securityStamp);
@@ -181,14 +185,56 @@ public sealed class AdminAuthenticator(
     /// Opens the account's one pending 2FA sign-in and returns its random id, which goes into the pending cookie.
     /// Only a hash and the expiry are stored. A new password step replaces any earlier pending sign-in, so only the
     /// latest browser to pass the password can finish.
+    /// <para>
+    /// Returns <see langword="null"/> when the write lost a race (issue #145), and the caller must not hand out a
+    /// pending cookie: the row it would name is not this request's. Two races reach it. The write is Identity's
+    /// read-modify-write of the token and then of the user row, so a second-step request that completes the sign-in in
+    /// between deletes the token and changes the user's concurrency stamp, and the save is reported as a concurrency
+    /// failure. And on an account with no pending sign-in yet, two password steps (a double-clicked Sign in) both
+    /// read "none" and both insert, so the second insert hits the primary key. In both the winner holds the live
+    /// pending sign-in, which is the rule above, and the loser is simply too late.
+    /// </para>
+    /// <para>
+    /// Any other failure is still a bug and still throws, which is why this does not catch what it cannot name.
+    /// </para>
     /// </summary>
-    private async Task<string> OpenPendingSignInAsync(AppUser user)
+    private async Task<string?> OpenPendingSignInAsync(AppUser user)
     {
         var id = PendingSignInIds.NewId();
         var expiresUtc = DateTimeOffset.UtcNow.AddMinutes(securityOptions.Value.TwoFactorPendingSignInMinutes);
         var value = string.Create(CultureInfo.InvariantCulture, $"{PendingSignInIds.Hash(id)}|{expiresUtc.ToUnixTimeSeconds()}");
-        EnsureSucceeded(await userManager.SetAuthenticationTokenAsync(user, AdminTokenNames.LoginProvider, AdminTokenNames.PendingTwoFactorSignIn, value));
+
+        IdentityResult result;
+        try
+        {
+            result = await userManager.SetAuthenticationTokenAsync(user, AdminTokenNames.LoginProvider, AdminTokenNames.PendingTwoFactorSignIn, value);
+        }
+        catch (DbUpdateException exception) when (SqlUniqueViolation.Matches(exception))
+        {
+            ForgetFailedPendingSignInWrite(user);
+            return null;
+        }
+
+        var concurrencyFailure = userManager.ErrorDescriber.ConcurrencyFailure().Code;
+        if (!result.Succeeded && result.Errors.Any(e => e.Code == concurrencyFailure))
+        {
+            ForgetFailedPendingSignInWrite(user);
+            return null;
+        }
+
+        EnsureSucceeded(result);
         return id;
+    }
+
+    /// <summary>
+    /// A save that failed leaves what it tried to write in the change tracker, and the audit write that shares this
+    /// <see cref="DbContext"/> would try it again and fail the whole request (see <see cref="ClosePendingSignInAsync"/>).
+    /// The token row and the user row are let go; the caller reads only the user's id and email from here on.
+    /// </summary>
+    private void ForgetFailedPendingSignInWrite(AppUser user)
+    {
+        ForgetTrackedPendingSignIn(user);
+        dbContext.Entry(user).State = EntityState.Detached;
     }
 
     /// <summary>True when <paramref name="id"/> names the open, unexpired pending sign-in. An expired one is removed.</summary>

@@ -687,6 +687,117 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
     }
 
     /// <summary>
+    /// Issue #145: a password step racing the second step of the sign-in it is about to replace. The password step has
+    /// read the account (and the pending sign-in it will overwrite); the second step then completes the sign-in, which
+    /// deletes that pending row and changes the account; the password step's write finds neither where it left them.
+    /// That used to be an unhandled exception (a 500). The password was right and nothing is wrong with the account,
+    /// so it is the same reply a stale pending sign-in gets, and it is not a failed login: no <c>LoginFailed</c> audit
+    /// row, no pending cookie, and the next attempt works.
+    /// </summary>
+    [Fact]
+    public async Task A_password_step_that_loses_to_the_second_step_is_a_401_not_a_500()
+    {
+        var gate = new PendingSignInWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("password-vs-code");
+        await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        using var codeClient = await PendingSignInAsync(host, email);
+        using var racingClient = CreateClient(host);
+
+        gate.Arm();
+        var racingPasswordStep = PostJsonAsync(racingClient, LoginUrl, new { email, password = Password });
+        HttpResponseMessage secondStep;
+        try
+        {
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+
+            // The sign-in the first browser was in the middle of finishes while the other password step waits at its write.
+            var token = await GetAntiforgeryTokenAsync(codeClient);
+            using var request = new HttpRequestMessage(HttpMethod.Post, LoginTwoFactorUrl)
+            {
+                Content = JsonContent.Create(new { code = TotpTestCodes.Next(key), isRecoveryCode = false }),
+            };
+            request.Headers.Add("X-XSRF-TOKEN", token);
+            secondStep = await codeClient.SendAsync(request, Ct);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var _ = secondStep;
+        using var racing = await racingPasswordStep;
+        var racingBody = await racing.Content.ReadAsStringAsync(Ct);
+
+        Assert.True(secondStep.StatusCode == HttpStatusCode.OK, $"The second step completes. Got {(int)secondStep.StatusCode}.");
+        Assert.NotNull(CookiePairOrNull(secondStep, "sd_admin_auth"));
+
+        Assert.True(
+            racing.StatusCode == HttpStatusCode.Unauthorized,
+            $"A password step that lost the race is a 401, not a 500. Got {(int)racing.StatusCode}: {racingBody}");
+        Assert.Equal("two_factor_session_expired", JsonDocument.Parse(racingBody).RootElement.GetProperty("error").GetString());
+        Assert.Null(CookiePairOrNull(racing, "sd_admin_2fa"));
+
+        await using (var scope = host.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.Equal(0, await dbContext.AuditLogs.CountAsync(a => a.UserEmail == email && a.Action == "LoginFailed", Ct));
+        }
+
+        // Nothing is left half-written: the next password step opens a pending sign-in as usual.
+        using var again = await PendingSignInAsync(host, email);
+    }
+
+    /// <summary>
+    /// The same defect from the other side, and the likelier one: the Sign in button pressed twice, or two tabs, on an
+    /// account with no pending sign-in yet. Both password steps read "none", both try to insert it, and the second
+    /// insert hits the primary key. The one that got its row in holds the live pending sign-in (the newest password
+    /// step is the one that can finish, as <c>AdminAuthenticator</c> has always said); the other is told its sign-in
+    /// is over rather than answered 500, and must not be handed a pending cookie for a row that is not its own.
+    /// </summary>
+    [Fact]
+    public async Task Two_password_steps_that_both_open_the_pending_sign_in_are_one_winner_and_one_401()
+    {
+        var gate = new PendingSignInWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("password-vs-password");
+        await CreateStaffUserAsync(host, email);
+        await EnrolThroughApiAsync(host, email);
+
+        using var heldClient = CreateClient(host);
+        using var winnerClient = CreateClient(host);
+
+        gate.Arm();
+        var heldPasswordStep = PostJsonAsync(heldClient, LoginUrl, new { email, password = Password });
+        HttpResponseMessage winner;
+        try
+        {
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+            winner = await PostJsonAsync(winnerClient, LoginUrl, new { email, password = Password });
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var _ = winner;
+        using var held = await heldPasswordStep;
+        var heldBody = await held.Content.ReadAsStringAsync(Ct);
+
+        Assert.Equal(HttpStatusCode.OK, winner.StatusCode);
+        Assert.True((await ReadJsonAsync(winner)).GetProperty("twoFactorRequired").GetBoolean());
+        Assert.NotNull(CookiePairOrNull(winner, "sd_admin_2fa"));
+
+        Assert.True(
+            held.StatusCode == HttpStatusCode.Unauthorized,
+            $"The password step that lost the insert is a 401, not a 500. Got {(int)held.StatusCode}: {heldBody}");
+        Assert.Equal("two_factor_session_expired", JsonDocument.Parse(heldBody).RootElement.GetProperty("error").GetString());
+        Assert.Null(CookiePairOrNull(held, "sd_admin_2fa"));
+    }
+
+    /// <summary>
     /// The lockout threshold is raised for the same-code races above. Twelve requests with one code is the point of
     /// those tests, but the ones that read the code after the winner redeemed it count as wrong codes, and at the
     /// default five the account can lock before the winner's own check, which would make "exactly one session"
