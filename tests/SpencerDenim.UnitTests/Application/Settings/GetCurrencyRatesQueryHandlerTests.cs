@@ -146,8 +146,9 @@ public sealed class GetCurrencyRatesQueryHandlerTests
 
     /// <summary>
     /// <b>No sensitive-change alert</b> is a property of this save, not an omission (docs/02 and doc 08 §3.8: the
-    /// rates move no money). The handler takes the store, the audit log, the permissions and the clock, and nothing
-    /// that raises an alert, so a dependency added later has to be added to this list on purpose.
+    /// rates move no money). The handler takes the store, the audit log, the permissions, the clock and the feed's
+    /// cache (which it only evicts), and nothing that raises an alert, so a dependency added later has to be added
+    /// to this list on purpose.
     /// </summary>
     [Fact]
     public void The_save_handler_takes_no_alerting_dependency()
@@ -160,7 +161,7 @@ public sealed class GetCurrencyRatesQueryHandlerTests
             .ToList();
 
         Assert.Equal(
-            ["ISettingsStore", "IAuditLogWriter", "IEffectivePermissionsProvider", "IClock"],
+            ["ISettingsStore", "IAuditLogWriter", "IEffectivePermissionsProvider", "IClock", "ICurrencyRatesCache"],
             parameters);
     }
 

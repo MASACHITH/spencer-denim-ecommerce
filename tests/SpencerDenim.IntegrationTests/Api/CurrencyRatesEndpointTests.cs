@@ -1,7 +1,11 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using SpencerDenim.Application.Settings;
+using SpencerDenim.Application.Settings.Abstractions;
+using SpencerDenim.Domain.Identity;
 using SpencerDenim.Domain.Settings;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.IntegrationTests.Infrastructure;
@@ -210,6 +214,182 @@ public sealed class CurrencyRatesEndpointTests(SqlServerDatabaseFixture sqlServe
         Assert.Equal("[]", await response.Content.ReadAsStringAsync(Token));
     }
 
+    // ---- the sixty-second cache (m2) ---------------------------------------------------------------------
+
+    /// <summary>
+    /// A second request inside the minute is answered from memory. Counted at the feed's own reader, which is the one
+    /// and only path from this endpoint to the database, so "the reader was called once" is exactly "one query ran".
+    /// </summary>
+    [Fact]
+    public async Task The_second_request_is_served_from_the_cache_and_does_not_read_the_database()
+    {
+        var (factory, reads) = await StartCountingAsync();
+        await using var _ = factory;
+
+        try
+        {
+            await WriteAsync(factory, SettingKeys.CurrencyDisplay.GbpLkrPerUnit, "399.5", null);
+            using var client = Anonymous(factory);
+
+            using var first = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+            using var second = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+
+            Assert.Equal(1, reads.Count);
+            Assert.Equal(await first.Content.ReadAsStringAsync(Token), await second.Content.ReadAsStringAsync(Token));
+            Assert.Equal("public, max-age=60", second.Headers.CacheControl?.ToString());
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// <b>A save evicts the cache</b>, as it does for the site-settings feed, so the next shopper request after a
+    /// staff member's save shows the new rate with no wait, and the one after that is cached again.
+    /// </summary>
+    [Fact]
+    public async Task A_real_save_evicts_the_cache_so_the_new_rate_shows_at_once_and_is_then_cached_again()
+    {
+        var (factory, reads) = await StartCountingAsync();
+        await using var _ = factory;
+        using var admin = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+
+        try
+        {
+            await RestoreAsync(factory);
+            using var shopper = Anonymous(factory);
+
+            // Nothing set yet: the true answer is the empty list, and it is cached like any other.
+            Assert.Equal("[]", await GetTextAsync(shopper));
+            Assert.Equal("[]", await GetTextAsync(shopper));
+            Assert.Equal(1, reads.Count);
+
+            using var save = await admin.PutAsJsonAsync(
+                new Uri("/api/admin/settings/currency-rates", UriKind.Relative),
+                new { usd = "301.5", rowVersion = await VersionAsync(factory) },
+                JsonOptions,
+                Token);
+            Assert.Equal(HttpStatusCode.NoContent, save.StatusCode);
+
+            var after = await GetTextAsync(shopper);
+            Assert.Contains("\"lkrPerUnit\":301.5", after, StringComparison.Ordinal);
+            Assert.Equal(2, reads.Count);
+
+            Assert.Equal(after, await GetTextAsync(shopper));
+            Assert.Equal(2, reads.Count);
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// A save that changes nothing, or is refused, leaves the cache alone: nothing the shop shows has changed, and
+    /// re-reading on every refused request would let a failing form drive the database.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_or_unchanged_save_does_not_evict_the_cache()
+    {
+        var (factory, reads) = await StartCountingAsync();
+        await using var _ = factory;
+        using var admin = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+
+        try
+        {
+            await RestoreAsync(factory);
+            using var shopper = Anonymous(factory);
+            await GetTextAsync(shopper);
+            Assert.Equal(1, reads.Count);
+
+            using var refused = await admin.PutAsJsonAsync(
+                new Uri("/api/admin/settings/currency-rates", UriKind.Relative),
+                new { usd = "not a number", rowVersion = await VersionAsync(factory) },
+                JsonOptions,
+                Token);
+            using var unchanged = await admin.PutAsJsonAsync(
+                new Uri("/api/admin/settings/currency-rates", UriKind.Relative),
+                new { usd = string.Empty, rowVersion = await VersionAsync(factory) },
+                JsonOptions,
+                Token);
+
+            Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+            Assert.Equal(HttpStatusCode.NoContent, unchanged.StatusCode);
+
+            await GetTextAsync(shopper);
+            Assert.Equal(1, reads.Count);
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// <b>A failure must not poison the cache.</b> The first read fails: the shopper gets the empty list with no cache
+    /// lifetime, nothing is remembered, and the very next request reads again, finds the real rate and caches that.
+    /// </summary>
+    [Fact]
+    public async Task A_failed_read_is_not_cached_and_the_next_request_recovers()
+    {
+        var (factory, reads) = await StartCountingAsync(failFirst: 1);
+        await using var _ = factory;
+
+        try
+        {
+            await WriteAsync(factory, SettingKeys.CurrencyDisplay.EurLkrPerUnit, "345", null);
+            using var client = Anonymous(factory);
+
+            using var failed = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+            Assert.Equal(HttpStatusCode.OK, failed.StatusCode);
+            Assert.Null(failed.Headers.CacheControl);
+            Assert.Equal("[]", await failed.Content.ReadAsStringAsync(Token));
+            Assert.Equal(1, reads.Count);
+
+            using var recovered = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+            var body = await recovered.Content.ReadAsStringAsync(Token);
+            Assert.Contains("\"code\":\"EUR\"", body, StringComparison.Ordinal);
+            Assert.Equal("public, max-age=60", recovered.Headers.CacheControl?.ToString());
+            Assert.Equal(2, reads.Count);
+
+            using var cached = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+            Assert.Equal(body, await cached.Content.ReadAsStringAsync(Token));
+            Assert.Equal(2, reads.Count);
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// The honest limit, pinned so nobody is surprised by it: a rate written straight into the table is not seen
+    /// until the entry expires or a save evicts it. The site-settings feed has the same limit.
+    /// </summary>
+    [Fact]
+    public async Task A_rate_written_straight_into_the_table_waits_for_the_entry_to_expire()
+    {
+        var (factory, reads) = await StartCountingAsync();
+        await using var _ = factory;
+
+        try
+        {
+            await RestoreAsync(factory);
+            using var client = Anonymous(factory);
+            Assert.Equal("[]", await GetTextAsync(client));
+
+            await WriteAsync(factory, SettingKeys.CurrencyDisplay.AedLkrPerUnit, "82.275", null);
+
+            Assert.Equal("[]", await GetTextAsync(client));
+            Assert.Equal(1, reads.Count);
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
     // ---- helpers ----------------------------------------------------------------------------------------
 
     private async Task<ApiFactory> StartAsync()
@@ -218,6 +398,78 @@ public sealed class CurrencyRatesEndpointTests(SqlServerDatabaseFixture sqlServe
         await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
 
         return new ApiFactory(sqlServer.ConnectionString);
+    }
+
+    /// <summary>
+    /// A host whose feed reader is wrapped so every call is counted (and, for <paramref name="failFirst"/> calls,
+    /// refused), over the real reader and the real database. Each host has its own cache, so tests do not see each
+    /// other's entries. The wrapper replaces the registration after the application's own, as a media test replaces
+    /// a storage adapter.
+    /// </summary>
+    private async Task<(ApiFactory Factory, ReadCounter Reads)> StartCountingAsync(int failFirst = 0)
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
+
+        var counter = new ReadCounter(failFirst);
+
+        var factory = new ApiFactory(
+            sqlServer.ConnectionString,
+            configureServices: services =>
+            {
+                var real = services.Last(descriptor => descriptor.ServiceType == typeof(ICurrencyRatesReader)).ImplementationType
+                    ?? throw new InvalidOperationException("The feed's reader is not registered by type.");
+
+                services.AddScoped<ICurrencyRatesReader>(provider =>
+                    new CountingReader((ICurrencyRatesReader)ActivatorUtilities.CreateInstance(provider, real), counter));
+            });
+
+        return (factory, counter);
+    }
+
+    private static async Task<string> GetTextAsync(HttpClient client)
+    {
+        using var response = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        return await response.Content.ReadAsStringAsync(Token);
+    }
+
+    private static async Task<string> VersionAsync(ApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var keys = SettingCatalog.KeysInSaveUnitFor(SettingKeys.CurrencyDisplay.Group);
+
+        return SettingsGroupVersion.For(await db.Settings.AsNoTracking().Where(row => keys.Contains(row.Key)).ToListAsync(Token));
+    }
+
+    /// <summary>How often the feed reached for the database, and how many of the first reads to refuse.</summary>
+    private sealed class ReadCounter(int failFirst)
+    {
+        private int _count;
+        private int _remainingFailures = failFirst;
+
+        public int Count => Volatile.Read(ref _count);
+
+        public void Record() => Interlocked.Increment(ref _count);
+
+        public bool ShouldFail() => Interlocked.Decrement(ref _remainingFailures) >= 0;
+    }
+
+    private sealed class CountingReader(ICurrencyRatesReader inner, ReadCounter counter) : ICurrencyRatesReader
+    {
+        public async Task<IReadOnlyList<StoredCurrencyRate>> ReadAsync(CancellationToken cancellationToken)
+        {
+            counter.Record();
+
+            if (counter.ShouldFail())
+            {
+                throw new InvalidOperationException("The database is not there.");
+            }
+
+            return await inner.ReadAsync(cancellationToken);
+        }
     }
 
     private static HttpClient Anonymous(ApiFactory factory) =>

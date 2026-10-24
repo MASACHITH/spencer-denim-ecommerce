@@ -12,8 +12,13 @@ namespace SpencerDenim.Domain.Settings;
 /// </param>
 /// <param name="SettingKey">The <c>ops.Settings</c> row holding the rate (rupees for one unit).</param>
 /// <param name="Field">The field of the admin save's body that carries the rate: the lower-case code.</param>
-/// <param name="Name">The name staff recognise, for the settings screen's label.</param>
-public sealed record DisplayCurrency(string Code, string Symbol, string SettingKey, string Field, string Name);
+/// <param name="Name">
+/// The currency's name as it reads in the middle of a sentence ("Enter the pound sterling rate", "one UAE dirham"):
+/// written out in full here, because lower-casing a capitalised name at the point of use turns "US dollar" into
+/// "us dollar" and "UAE dirham" into "uae dirham".
+/// </param>
+/// <param name="Label">The same name as the settings screen's label, which starts a line, so it is capitalised.</param>
+public sealed record DisplayCurrency(string Code, string Symbol, string SettingKey, string Field, string Name, string Label);
 
 /// <summary>
 /// The five display currencies, in the order the storefront offers them. <b>The one list</b> the save's
@@ -25,11 +30,11 @@ public static class DisplayCurrencies
     /// <summary>USD, GBP, EUR, AUD, AED.</summary>
     public static IReadOnlyList<DisplayCurrency> All { get; } =
     [
-        new("USD", "US$", SettingKeys.CurrencyDisplay.UsdLkrPerUnit, "usd", "US dollar"),
-        new("GBP", "£", SettingKeys.CurrencyDisplay.GbpLkrPerUnit, "gbp", "Pound sterling"),
-        new("EUR", "€", SettingKeys.CurrencyDisplay.EurLkrPerUnit, "eur", "Euro"),
-        new("AUD", "A$", SettingKeys.CurrencyDisplay.AudLkrPerUnit, "aud", "Australian dollar"),
-        new("AED", "AED", SettingKeys.CurrencyDisplay.AedLkrPerUnit, "aed", "UAE dirham"),
+        new("USD", "US$", SettingKeys.CurrencyDisplay.UsdLkrPerUnit, "usd", "US dollar", "US dollar rate"),
+        new("GBP", "£", SettingKeys.CurrencyDisplay.GbpLkrPerUnit, "gbp", "pound sterling", "Pound sterling rate"),
+        new("EUR", "€", SettingKeys.CurrencyDisplay.EurLkrPerUnit, "eur", "euro", "Euro rate"),
+        new("AUD", "A$", SettingKeys.CurrencyDisplay.AudLkrPerUnit, "aud", "Australian dollar", "Australian dollar rate"),
+        new("AED", "AED", SettingKeys.CurrencyDisplay.AedLkrPerUnit, "aed", "UAE dirham", "UAE dirham rate"),
     ];
 }
 
@@ -52,10 +57,21 @@ public static class CurrencySettingDefinitions
             SettingKeys.CurrencyDisplay.Group,
             SettingValueType.Decimal,
             Permissions.Settings.Edit,
-            $"{currency.Name} rate",
-            $"How many rupees one {currency.Name.ToLowerInvariant()} ({currency.Code}) is worth today. Shoppers who "
-            + $"choose {currency.Code} see each price divided by this, marked as approximate; PayPal still charges "
-            + "the rupee total in US dollars at the PayPal rate. Up to four decimal places. Leave it empty to stop "
-            + "offering this currency.")),
+            currency.Label,
+            DescriptionFor(currency))),
     ];
+
+    /// <summary>
+    /// What staff are told the row is. <b>Only what is true of the system as it stands</b>: the rate is how many
+    /// rupees one unit is worth, it is typed by hand, and an empty one leaves the currency out of the list the shop
+    /// publishes. What a shopper then sees is the storefront's business and is not promised here. A test pins the
+    /// exact text and that it fits the column (300 characters, doc 08 §3.8).
+    /// </summary>
+    public static string DescriptionFor(DisplayCurrency currency)
+    {
+        ArgumentNullException.ThrowIfNull(currency);
+
+        return $"How many rupees one {currency.Name} ({currency.Code}) is worth, typed in by hand. Digits with an "
+            + "optional decimal point, up to four decimal places. Leave it empty to leave this currency out.";
+    }
 }

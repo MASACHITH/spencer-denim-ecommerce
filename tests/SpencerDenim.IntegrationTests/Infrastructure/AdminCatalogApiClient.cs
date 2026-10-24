@@ -105,6 +105,32 @@ public sealed class AdminCatalogApiClient
         string contentType = "application/json") =>
         SendAsync(HttpMethod.Post, path, body, null, cancellationToken, contentType);
 
+    /// <summary>
+    /// A write whose <c>Content-Type</c> header is sent exactly as given. <see cref="StringContent"/> rebuilds the
+    /// header from an <see cref="Encoding"/> and refuses or rewrites a charset it does not know, which is the very
+    /// thing the issue #147 tests need to put on the wire.
+    /// </summary>
+    public async Task<(HttpStatusCode Status, JsonElement Body)> PostWithContentTypeHeaderAsync(
+        string path,
+        byte[] body,
+        string contentTypeHeader,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(path, UriKind.Relative));
+        request.Headers.Add(AntiforgeryHeader, await AntiforgeryTokenAsync(cancellationToken));
+        request.Content = new ByteArrayContent(body);
+        request.Content.Headers.TryAddWithoutValidation("Content-Type", contentTypeHeader);
+
+        using var response = await _client.SendAsync(request, cancellationToken);
+
+        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+        var json = string.IsNullOrWhiteSpace(payload)
+            ? default
+            : JsonSerializer.Deserialize<JsonElement>(payload, JsonOptions);
+
+        return (response.StatusCode, json);
+    }
+
     public Task<(HttpStatusCode Status, JsonElement Body)> DeleteAsync(
         string path,
         string? rowVersion,

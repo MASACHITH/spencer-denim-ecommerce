@@ -79,6 +79,51 @@ public sealed class DisplayCurrenciesTests
             });
     }
 
+    /// <summary>
+    /// <b>A proper name for each currency, written out where it is used</b> (m3): the sentence form ("pound
+    /// sterling", "UAE dirham") and the label that starts a line ("Pound sterling rate"). Spelled in full here, not
+    /// derived, so this fails if a name is damaged or somebody goes back to lower-casing a capitalised one.
+    /// </summary>
+    [Theory]
+    [InlineData("USD", "US dollar", "US dollar rate")]
+    [InlineData("GBP", "pound sterling", "Pound sterling rate")]
+    [InlineData("EUR", "euro", "Euro rate")]
+    [InlineData("AUD", "Australian dollar", "Australian dollar rate")]
+    [InlineData("AED", "UAE dirham", "UAE dirham rate")]
+    public void Each_currency_has_its_proper_name_and_label(string code, string name, string label)
+    {
+        var currency = DisplayCurrencies.All.Single(candidate => candidate.Code == code);
+
+        Assert.Equal(name, currency.Name);
+        Assert.Equal(label, currency.Label);
+        Assert.Equal(label, SettingCatalog.Find(currency.SettingKey)!.Label);
+    }
+
+    /// <summary>
+    /// <b>The descriptions say only what is true today</b> (m4): what the number is, that it is typed by hand and
+    /// what an empty one does. Nothing about what a shopper sees (that is the storefront's, and not built yet), and
+    /// nothing about PayPal. The exact words are pinned for all five, with the proper names in them.
+    /// </summary>
+    [Theory]
+    [InlineData("USD", "How many rupees one US dollar (USD) is worth, typed in by hand. Digits with an optional decimal point, up to four decimal places. Leave it empty to leave this currency out.")]
+    [InlineData("GBP", "How many rupees one pound sterling (GBP) is worth, typed in by hand. Digits with an optional decimal point, up to four decimal places. Leave it empty to leave this currency out.")]
+    [InlineData("EUR", "How many rupees one euro (EUR) is worth, typed in by hand. Digits with an optional decimal point, up to four decimal places. Leave it empty to leave this currency out.")]
+    [InlineData("AUD", "How many rupees one Australian dollar (AUD) is worth, typed in by hand. Digits with an optional decimal point, up to four decimal places. Leave it empty to leave this currency out.")]
+    [InlineData("AED", "How many rupees one UAE dirham (AED) is worth, typed in by hand. Digits with an optional decimal point, up to four decimal places. Leave it empty to leave this currency out.")]
+    public void Each_description_is_exactly_what_staff_are_told_and_makes_no_promise_about_the_shop(string code, string expected)
+    {
+        var currency = DisplayCurrencies.All.Single(candidate => candidate.Code == code);
+        var description = SettingCatalog.Find(currency.SettingKey)!.Description!;
+
+        Assert.Equal(expected, description);
+        Assert.InRange(description.Length, 1, 300);
+
+        foreach (var promise in new[] { "shopper", "approximate", "PayPal", "divided", "today", "storefront" })
+        {
+            Assert.DoesNotContain(promise, description, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     [Fact]
     public void The_labels_are_names_and_the_descriptions_fit_the_column()
     {

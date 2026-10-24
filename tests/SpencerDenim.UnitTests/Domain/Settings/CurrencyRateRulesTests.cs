@@ -62,6 +62,10 @@ public sealed class CurrencyRateRulesTests
     [Theory]
     [InlineData("1.00001")]
     [InlineData("399.123456")]
+    // Trailing zeros past the fourth place are still a fifth place: the grammar counts characters, it does not
+    // round. 0.00010 equals 0.0001 and is refused all the same.
+    [InlineData("0.00010")]
+    [InlineData("1.50000")]
     public void More_than_four_decimal_places_is_too_many(string text)
     {
         Assert.Equal(CurrencyRateProblem.TooManyDecimals, CurrencyRateRules.Check(text, out _));

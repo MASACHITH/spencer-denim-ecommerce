@@ -81,6 +81,9 @@ public static class DependencyInjection
     /// <inheritdoc cref="UncachedHomePage"/>
     private const string UncachedSiteSettings = "site-settings:uncached";
 
+    /// <summary>The key the uncached currency feed is registered under, so the cached decorator can wrap it.</summary>
+    private const string UncachedCurrencyRates = "currency-rates:uncached";
+
     /// <inheritdoc cref="UncachedHomePage"/>
     private const string UncachedContentPageLinks = "content-page-links:uncached";
 
@@ -385,7 +388,13 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<UpdateCurrencyRatesCommand, SettingsWriteResult>,
             UpdateCurrencyRatesCommandHandler>();
-        services.AddScoped<IQueryHandler<GetCurrencyRatesQuery, IReadOnlyList<CurrencyRateDto>>, GetCurrencyRatesQueryHandler>();
+        services.AddKeyedScoped<IQueryHandler<GetCurrencyRatesQuery, IReadOnlyList<CurrencyRateDto>>, GetCurrencyRatesQueryHandler>(
+            UncachedCurrencyRates);
+        services.AddScoped<IQueryHandler<GetCurrencyRatesQuery, IReadOnlyList<CurrencyRateDto>>>(provider =>
+            new CachedCurrencyRatesQueryHandler(
+                provider.GetRequiredKeyedService<IQueryHandler<GetCurrencyRatesQuery, IReadOnlyList<CurrencyRateDto>>>(
+                    UncachedCurrencyRates),
+                provider.GetRequiredService<ICurrencyRatesCache>()));
 
         // Issue #189: the review approval switch (Settings.Edit).
         services.AddScoped<
