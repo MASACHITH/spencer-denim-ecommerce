@@ -56,17 +56,19 @@ public sealed class SettingKeySpecificationTests
             Assert.Contains(sentinel, specified);
         }
 
-        // **Fifteen groups, counted from the table, not sixteen.** SettingKeys and SettingCatalog both
-        // used to say "doc 08 lists sixteen groups"; §3.8's table has fifteen rows (Store, Contact,
-        // Social, Content, Orders, Inventory, Catalog, Reviews, Delivery, Privacy, Traffic, Bank,
-        // Payments.PayPal, Email.Smtp, Security). Sixteen is §3.1's module count, which is a different
-        // list. Both comments were corrected with this test.
+        // **Sixteen groups, counted from the table.** It was fifteen until issue #248 added Currency.Display
+        // (2026-10-24); the rows are now Store, Contact, Social, Content, Orders, Inventory, Catalog, Reviews,
+        // Delivery, Privacy, Traffic, Currency.Display, Bank, Payments.PayPal, Email.Smtp, Security. SettingKeys
+        // and SettingCatalog once said "doc 08 lists sixteen groups" when the table had fifteen, because
+        // sixteen was §3.1's module count, which is a different list; the number now agrees by coincidence of
+        // the new row, not because those two lists were ever the same thing. The count is read from the table
+        // below, never typed from memory.
         var groups = specified
             .Select(key => key[..key.LastIndexOf('.')])
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        Assert.Equal(15, groups.Count);
+        Assert.Equal(16, groups.Count);
     }
 
     [Fact]

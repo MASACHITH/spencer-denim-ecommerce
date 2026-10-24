@@ -10,7 +10,7 @@ namespace SpencerDenim.Api.Endpoints.Content;
 /// <para>
 /// <b>Anonymous, and a separate route group from <c>/api/content</c> on purpose.</b> This payload comes from
 /// <c>ops.Settings</c> rather than from the <c>content</c> schema, and this payload draws on three of doc
-/// 08 §3.8's fifteen groups — counted from §3.8's table — every one of whose other twelve is something an
+/// 08 §3.8's sixteen groups — counted from §3.8's table — every one of whose other thirteen is something an
 /// anonymous caller must never see. Putting it on its own route, served by its
 /// own port, with its own hand-written contract, means the question "could a secret reach this endpoint" has
 /// a structural answer — <see cref="SiteSettingsDto"/> has no field one could occupy — rather than a

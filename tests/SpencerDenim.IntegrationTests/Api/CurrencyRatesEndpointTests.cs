@@ -1,0 +1,645 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using SpencerDenim.Application.Settings;
+using SpencerDenim.Application.Settings.Abstractions;
+using SpencerDenim.Domain.Identity;
+using SpencerDenim.Domain.Settings;
+using SpencerDenim.Infrastructure.Persistence;
+using SpencerDenim.IntegrationTests.Infrastructure;
+
+namespace SpencerDenim.IntegrationTests.Api;
+
+/// <summary>
+/// <c>GET /api/currency-rates</c> (issue #248), end to end against a real SQL Server: anonymous, only the currencies
+/// with a usable rate, in the offered order, with a hand-written shape that cannot carry PayPal's rate or a secret,
+/// and an empty answer, not an error, when nothing is set or the database cannot be read.
+/// <para>
+/// <b>Every test puts the five rows back to empty</b> in a <c>finally</c>, because the assembly's database is shared.
+/// </para>
+/// </summary>
+public sealed class CurrencyRatesEndpointTests(SqlServerDatabaseFixture sqlServer)
+{
+    private const string Url = "/api/currency-rates";
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    private static CancellationToken Token => TestContext.Current.CancellationToken;
+
+    [Fact]
+    public async Task With_no_rate_set_the_answer_is_an_empty_list_and_still_cacheable()
+    {
+        await using var factory = await StartAsync();
+        await RestoreAsync(factory);
+        using var client = Anonymous(factory);
+
+        using var response = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.StartsWith("application/json", response.Content.Headers.ContentType?.ToString(), StringComparison.Ordinal);
+        Assert.Equal("public, max-age=60", response.Headers.CacheControl?.ToString());
+        Assert.Equal("[]", await response.Content.ReadAsStringAsync(Token));
+    }
+
+    [Fact]
+    public async Task Only_the_currencies_with_a_rate_are_listed_in_the_offered_order_with_the_four_documented_fields()
+    {
+        await using var factory = await StartAsync();
+
+        try
+        {
+            var stamped = new DateTime(2026, 10, 24, 10, 0, 0, DateTimeKind.Utc);
+            await WriteAsync(factory, SettingKeys.CurrencyDisplay.AedLkrPerUnit, "82.275", stamped);
+            await WriteAsync(factory, SettingKeys.CurrencyDisplay.GbpLkrPerUnit, "399.5", stamped);
+            await WriteAsync(factory, SettingKeys.CurrencyDisplay.UsdLkrPerUnit, "301.5", null);
+            using var client = Anonymous(factory);
+
+            using var response = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+            var body = await response.Content.ReadFromJsonAsyncCompat(Token);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(["USD", "GBP", "AED"], body.Select(rate => rate.GetProperty("code").GetString()));
+            Assert.Equal(["US$", "£", "AED"], body.Select(rate => rate.GetProperty("symbol").GetString()));
+            Assert.Equal([301.5m, 399.5m, 82.275m], body.Select(rate => rate.GetProperty("lkrPerUnit").GetDecimal()));
+
+            // Exactly four fields: nothing else can ride along on this payload.
+            Assert.All(body, rate => Assert.Equal(
+                ["code", "symbol", "lkrPerUnit", "updatedAtUtc"],
+                rate.EnumerateObject().Select(property => property.Name)));
+
+            Assert.Equal(JsonValueKind.Null, body[0].GetProperty("updatedAtUtc").ValueKind);
+            Assert.Equal("2026-10-24T10:00:00Z", body[1].GetProperty("updatedAtUtc").GetString());
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>HEAD, because a monitor or a link checker leads with it (as <c>/api/site/settings</c> does).</summary>
+    [Fact]
+    public async Task The_feed_answers_head()
+    {
+        await using var factory = await StartAsync();
+        using var client = Anonymous(factory);
+
+        using var request = new HttpRequestMessage(HttpMethod.Head, new Uri(Url, UriKind.Relative));
+        using var response = await client.SendAsync(request, Token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    /// <summary>
+    /// A row can hold what the form would refuse today (a database edit, an earlier build). It is skipped, not an
+    /// error and not published, and the rows beside it are unaffected.
+    /// </summary>
+    [Theory]
+    [InlineData("garbage")]
+    [InlineData("-5")]
+    [InlineData("0")]
+    [InlineData("1e3")]
+    [InlineData("399.12345")]
+    [InlineData("1000001")]
+    [InlineData("")]
+    public async Task A_stored_value_that_is_not_a_usable_rate_is_skipped_without_an_error(string stored)
+    {
+        await using var factory = await StartAsync();
+
+        try
+        {
+            await WriteAsync(factory, SettingKeys.CurrencyDisplay.EurLkrPerUnit, stored, null);
+            await WriteAsync(factory, SettingKeys.CurrencyDisplay.AudLkrPerUnit, "205", null);
+            using var client = Anonymous(factory);
+
+            using var response = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+            var body = await response.Content.ReadFromJsonAsyncCompat(Token);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(["AUD"], body.Select(rate => rate.GetProperty("code").GetString()));
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// The query names five keys and excludes a secret row, so even a rate flipped to <c>Secret</c> is never
+    /// selected. A guard in the shape, not a filter that one flag can get wrong.
+    /// </summary>
+    [Fact]
+    public async Task A_row_flagged_secret_is_never_published()
+    {
+        await using var factory = await StartAsync();
+
+        try
+        {
+            await WriteAsync(factory, SettingKeys.CurrencyDisplay.UsdLkrPerUnit, "301.5", null);
+            await WriteAsync(factory, SettingKeys.CurrencyDisplay.GbpLkrPerUnit, "399.5", null);
+            await SetSecretAsync(factory, SettingKeys.CurrencyDisplay.UsdLkrPerUnit, true);
+            using var client = Anonymous(factory);
+
+            using var response = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+            var body = await response.Content.ReadFromJsonAsyncCompat(Token);
+
+            Assert.Equal(["GBP"], body.Select(rate => rate.GetProperty("code").GetString()));
+        }
+        finally
+        {
+            await SetSecretAsync(factory, SettingKeys.CurrencyDisplay.UsdLkrPerUnit, false);
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// PayPal's rate, buffer and credentials sit in the same table and must never appear here: they are not in the
+    /// list of five, and the payload has no field they could occupy.
+    /// </summary>
+    [Fact]
+    public async Task Nothing_of_paypals_is_in_the_answer()
+    {
+        await using var factory = await StartAsync();
+        string? paypalRate;
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            paypalRate = await db.Settings.AsNoTracking()
+                .Where(row => row.Key == SettingKeys.PayPal.LkrPerUsd)
+                .Select(row => row.Value)
+                .SingleAsync(Token);
+        }
+
+        try
+        {
+            await WriteAsync(factory, SettingKeys.CurrencyDisplay.UsdLkrPerUnit, "301.5", null);
+            using var client = Anonymous(factory);
+
+            using var response = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+            var text = await response.Content.ReadAsStringAsync(Token);
+
+            Assert.DoesNotContain("paypal", text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("buffer", text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("secret", text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("permission", text, StringComparison.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrWhiteSpace(paypalRate) && paypalRate != "301.5")
+            {
+                Assert.DoesNotContain(paypalRate, text, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// The storefront asks for this while rendering a page, so a database that cannot be read is an empty 200, which
+    /// is also the honest answer for a shop with no rate set, and is not given a cache lifetime: a blip must not be
+    /// remembered by a browser or a proxy for a minute.
+    /// </summary>
+    [Fact]
+    public async Task A_database_that_cannot_be_read_is_an_empty_list_with_no_cache_lifetime()
+    {
+        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString);
+        using var client = Anonymous(factory);
+
+        using var response = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Null(response.Headers.CacheControl);
+        Assert.Equal("[]", await response.Content.ReadAsStringAsync(Token));
+    }
+
+    // ---- the sixty-second cache (m2) ---------------------------------------------------------------------
+
+    /// <summary>
+    /// A second request inside the minute is answered from memory. Counted at the feed's own reader, which is the one
+    /// and only path from this endpoint to the database, so "the reader was called once" is exactly "one query ran".
+    /// </summary>
+    [Fact]
+    public async Task The_second_request_is_served_from_the_cache_and_does_not_read_the_database()
+    {
+        var (factory, reads) = await StartCountingAsync();
+        await using var _ = factory;
+
+        try
+        {
+            await WriteAsync(factory, SettingKeys.CurrencyDisplay.GbpLkrPerUnit, "399.5", null);
+            using var client = Anonymous(factory);
+
+            using var first = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+            using var second = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+
+            Assert.Equal(1, reads.Count);
+            Assert.Equal(await first.Content.ReadAsStringAsync(Token), await second.Content.ReadAsStringAsync(Token));
+            Assert.Equal("public, max-age=60", second.Headers.CacheControl?.ToString());
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// <b>A save evicts the cache</b>, as it does for the site-settings feed, so the next shopper request after a
+    /// staff member's save shows the new rate with no wait, and the one after that is cached again.
+    /// </summary>
+    [Fact]
+    public async Task A_real_save_evicts_the_cache_so_the_new_rate_shows_at_once_and_is_then_cached_again()
+    {
+        var (factory, reads) = await StartCountingAsync();
+        await using var _ = factory;
+        using var admin = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+
+        try
+        {
+            await RestoreAsync(factory);
+            using var shopper = Anonymous(factory);
+
+            // Nothing set yet: the true answer is the empty list, and it is cached like any other.
+            Assert.Equal("[]", await GetTextAsync(shopper));
+            Assert.Equal("[]", await GetTextAsync(shopper));
+            Assert.Equal(1, reads.Count);
+
+            using var save = await admin.PutAsJsonAsync(
+                new Uri("/api/admin/settings/currency-rates", UriKind.Relative),
+                new { usd = "301.5", rowVersion = await VersionAsync(factory) },
+                JsonOptions,
+                Token);
+            Assert.Equal(HttpStatusCode.NoContent, save.StatusCode);
+
+            var after = await GetTextAsync(shopper);
+            Assert.Contains("\"lkrPerUnit\":301.5", after, StringComparison.Ordinal);
+            Assert.Equal(2, reads.Count);
+
+            Assert.Equal(after, await GetTextAsync(shopper));
+            Assert.Equal(2, reads.Count);
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// A save that changes nothing, or is refused, leaves the cache alone: nothing the shop shows has changed, and
+    /// re-reading on every refused request would let a failing form drive the database.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_or_unchanged_save_does_not_evict_the_cache()
+    {
+        var (factory, reads) = await StartCountingAsync();
+        await using var _ = factory;
+        using var admin = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+
+        try
+        {
+            await RestoreAsync(factory);
+            using var shopper = Anonymous(factory);
+            await GetTextAsync(shopper);
+            Assert.Equal(1, reads.Count);
+
+            using var refused = await admin.PutAsJsonAsync(
+                new Uri("/api/admin/settings/currency-rates", UriKind.Relative),
+                new { usd = "not a number", rowVersion = await VersionAsync(factory) },
+                JsonOptions,
+                Token);
+            using var unchanged = await admin.PutAsJsonAsync(
+                new Uri("/api/admin/settings/currency-rates", UriKind.Relative),
+                new { usd = string.Empty, rowVersion = await VersionAsync(factory) },
+                JsonOptions,
+                Token);
+
+            Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+            Assert.Equal(HttpStatusCode.NoContent, unchanged.StatusCode);
+
+            await GetTextAsync(shopper);
+            Assert.Equal(1, reads.Count);
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// <b>A failure must not poison the cache.</b> The first read fails: the shopper gets the empty list with no cache
+    /// lifetime, nothing is remembered, and the very next request reads again, finds the real rate and caches that.
+    /// </summary>
+    [Fact]
+    public async Task A_failed_read_is_not_cached_and_the_next_request_recovers()
+    {
+        var (factory, reads) = await StartCountingAsync(failFirst: 1);
+        await using var _ = factory;
+
+        try
+        {
+            await WriteAsync(factory, SettingKeys.CurrencyDisplay.EurLkrPerUnit, "345", null);
+            using var client = Anonymous(factory);
+
+            using var failed = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+            Assert.Equal(HttpStatusCode.OK, failed.StatusCode);
+            Assert.Null(failed.Headers.CacheControl);
+            Assert.Equal("[]", await failed.Content.ReadAsStringAsync(Token));
+            Assert.Equal(1, reads.Count);
+
+            using var recovered = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+            var body = await recovered.Content.ReadAsStringAsync(Token);
+            Assert.Contains("\"code\":\"EUR\"", body, StringComparison.Ordinal);
+            Assert.Equal("public, max-age=60", recovered.Headers.CacheControl?.ToString());
+            Assert.Equal(2, reads.Count);
+
+            using var cached = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+            Assert.Equal(body, await cached.Content.ReadAsStringAsync(Token));
+            Assert.Equal(2, reads.Count);
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// The honest limit, pinned so nobody is surprised by it: a rate written straight into the table is not seen
+    /// until the entry expires or a save evicts it. The site-settings feed has the same limit.
+    /// </summary>
+    [Fact]
+    public async Task A_rate_written_straight_into_the_table_waits_for_the_entry_to_expire()
+    {
+        var (factory, reads) = await StartCountingAsync();
+        await using var _ = factory;
+
+        try
+        {
+            await RestoreAsync(factory);
+            using var client = Anonymous(factory);
+            Assert.Equal("[]", await GetTextAsync(client));
+
+            await WriteAsync(factory, SettingKeys.CurrencyDisplay.AedLkrPerUnit, "82.275", null);
+
+            Assert.Equal("[]", await GetTextAsync(client));
+            Assert.Equal(1, reads.Count);
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// <b>The race the independent tester reproduced, through the real route.</b> A shopper's request starts and its
+    /// read takes the database as it is (no rate set), then waits. A staff member saves a rate, for real: the write
+    /// commits and the cache is evicted. The shopper's read then finishes. Without a guard it stored its OLD list, so
+    /// the next shopper was served "no rate" for a full minute after the save that the eviction exists to show.
+    /// </summary>
+    [Fact]
+    public async Task A_read_in_flight_during_a_real_save_cannot_re_arm_the_cache_with_the_old_list()
+    {
+        var (factory, gate) = await StartGatedAsync();
+        await using var _ = factory;
+        using var admin = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+
+        try
+        {
+            await RestoreAsync(factory);
+            using var shopper = Anonymous(factory);
+
+            var inFlight = shopper.GetAsync(new Uri(Url, UriKind.Relative), Token);
+            await gate.FirstReadTookTheDatabase.WaitAsync(TimeSpan.FromSeconds(30), Token);
+
+            using var save = await admin.PutAsJsonAsync(
+                new Uri("/api/admin/settings/currency-rates", UriKind.Relative),
+                new { usd = "301.5", rowVersion = await VersionAsync(factory) },
+                JsonOptions,
+                Token);
+            Assert.Equal(HttpStatusCode.NoContent, save.StatusCode);
+
+            gate.ReleaseTheFirstRead();
+            using var theOneThatWasInFlight = await inFlight;
+
+            // It began before the save, so "no rate" is a fair answer to that one request.
+            Assert.Equal("[]", await theOneThatWasInFlight.Content.ReadAsStringAsync(Token));
+
+            // The next request after the save must read again and see the rate, not the old list re-armed.
+            var next = await GetTextAsync(shopper);
+            Assert.Contains("\"lkrPerUnit\":301.5", next, StringComparison.Ordinal);
+            Assert.Equal(2, gate.Reads);
+
+            // And that fresh answer is the one that is now cached.
+            Assert.Equal(next, await GetTextAsync(shopper));
+            Assert.Equal(2, gate.Reads);
+        }
+        finally
+        {
+            gate.ReleaseTheFirstRead();
+            await RestoreAsync(factory);
+        }
+    }
+
+    // ---- helpers ----------------------------------------------------------------------------------------
+
+    private async Task<ApiFactory> StartAsync()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
+
+        return new ApiFactory(sqlServer.ConnectionString);
+    }
+
+    /// <summary>
+    /// A host whose feed reader takes the database's answer on its FIRST call and then waits at a gate before
+    /// returning it, so a test can run a real save in the gap. Later calls pass straight through.
+    /// </summary>
+    private async Task<(ApiFactory Factory, GateControl Gate)> StartGatedAsync()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
+
+        var control = new GateControl();
+
+        var factory = new ApiFactory(
+            sqlServer.ConnectionString,
+            configureServices: services =>
+            {
+                var real = services.Last(descriptor => descriptor.ServiceType == typeof(ICurrencyRatesReader)).ImplementationType
+                    ?? throw new InvalidOperationException("The feed's reader is not registered by type.");
+
+                services.AddScoped<ICurrencyRatesReader>(provider =>
+                    new GatedReader((ICurrencyRatesReader)ActivatorUtilities.CreateInstance(provider, real), control));
+            });
+
+        return (factory, control);
+    }
+
+    private sealed class GateControl
+    {
+        private readonly TaskCompletionSource _tookTheDatabase = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _reads;
+
+        public int Reads => Volatile.Read(ref _reads);
+
+        public Task FirstReadTookTheDatabase => _tookTheDatabase.Task;
+
+        public Task Gate => _gate.Task;
+
+        public int NextRead() => Interlocked.Increment(ref _reads);
+
+        public void SignalFirstReadTookTheDatabase() => _tookTheDatabase.TrySetResult();
+
+        public void ReleaseTheFirstRead() => _gate.TrySetResult();
+    }
+
+    private sealed class GatedReader(ICurrencyRatesReader inner, GateControl control) : ICurrencyRatesReader
+    {
+        public async Task<IReadOnlyList<StoredCurrencyRate>> ReadAsync(CancellationToken cancellationToken)
+        {
+            var number = control.NextRead();
+            var stored = await inner.ReadAsync(cancellationToken);
+
+            if (number == 1)
+            {
+                control.SignalFirstReadTookTheDatabase();
+                await control.Gate.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+            }
+
+            return stored;
+        }
+    }
+
+    /// <summary>
+    /// A host whose feed reader is wrapped so every call is counted (and, for <paramref name="failFirst"/> calls,
+    /// refused), over the real reader and the real database. Each host has its own cache, so tests do not see each
+    /// other's entries. The wrapper replaces the registration after the application's own, as a media test replaces
+    /// a storage adapter.
+    /// </summary>
+    private async Task<(ApiFactory Factory, ReadCounter Reads)> StartCountingAsync(int failFirst = 0)
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
+
+        var counter = new ReadCounter(failFirst);
+
+        var factory = new ApiFactory(
+            sqlServer.ConnectionString,
+            configureServices: services =>
+            {
+                var real = services.Last(descriptor => descriptor.ServiceType == typeof(ICurrencyRatesReader)).ImplementationType
+                    ?? throw new InvalidOperationException("The feed's reader is not registered by type.");
+
+                services.AddScoped<ICurrencyRatesReader>(provider =>
+                    new CountingReader((ICurrencyRatesReader)ActivatorUtilities.CreateInstance(provider, real), counter));
+            });
+
+        return (factory, counter);
+    }
+
+    private static async Task<string> GetTextAsync(HttpClient client)
+    {
+        using var response = await client.GetAsync(new Uri(Url, UriKind.Relative), Token);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        return await response.Content.ReadAsStringAsync(Token);
+    }
+
+    private static async Task<string> VersionAsync(ApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var keys = SettingCatalog.KeysInSaveUnitFor(SettingKeys.CurrencyDisplay.Group);
+
+        return SettingsGroupVersion.For(await db.Settings.AsNoTracking().Where(row => keys.Contains(row.Key)).ToListAsync(Token));
+    }
+
+    /// <summary>How often the feed reached for the database, and how many of the first reads to refuse.</summary>
+    private sealed class ReadCounter(int failFirst)
+    {
+        private int _count;
+        private int _remainingFailures = failFirst;
+
+        public int Count => Volatile.Read(ref _count);
+
+        public void Record() => Interlocked.Increment(ref _count);
+
+        public bool ShouldFail() => Interlocked.Decrement(ref _remainingFailures) >= 0;
+    }
+
+    private sealed class CountingReader(ICurrencyRatesReader inner, ReadCounter counter) : ICurrencyRatesReader
+    {
+        public async Task<IReadOnlyList<StoredCurrencyRate>> ReadAsync(CancellationToken cancellationToken)
+        {
+            counter.Record();
+
+            if (counter.ShouldFail())
+            {
+                throw new InvalidOperationException("The database is not there.");
+            }
+
+            return await inner.ReadAsync(cancellationToken);
+        }
+    }
+
+    private static HttpClient Anonymous(ApiFactory factory) =>
+        factory.CreateClient(new() { BaseAddress = new Uri("https://localhost") });
+
+    private static async Task WriteAsync(ApiFactory factory, string key, string? value, DateTime? updatedAtUtc)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await db.Settings
+            .Where(row => row.Key == key)
+            .ExecuteUpdateAsync(
+                update => update
+                    .SetProperty(row => row.Value, value)
+                    .SetProperty(row => row.UpdatedAtUtc, updatedAtUtc),
+                Token);
+    }
+
+    private static async Task SetSecretAsync(ApiFactory factory, string key, bool secret)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await db.Settings
+            .Where(row => row.Key == key)
+            .ExecuteUpdateAsync(
+                update => update
+                    .SetProperty(row => row.IsSecret, secret)
+                    .SetProperty(row => row.ValueType, secret ? SettingValueType.Secret : SettingValueType.Decimal),
+                Token);
+    }
+
+    private static async Task RestoreAsync(ApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var keys = DisplayCurrencies.All.Select(currency => currency.SettingKey).ToArray();
+
+        await db.Settings
+            .Where(row => keys.Contains(row.Key))
+            .ExecuteUpdateAsync(
+                update => update
+                    .SetProperty(row => row.Value, (string?)null)
+                    .SetProperty(row => row.UpdatedAtUtc, (DateTime?)null)
+                    .SetProperty(row => row.UpdatedByUserId, (int?)null),
+                Token);
+    }
+}
+
+/// <summary>Reads the feed's JSON array into elements, so an assertion can name each property it expects.</summary>
+internal static class CurrencyRatesResponseExtensions
+{
+    public static async Task<List<JsonElement>> ReadFromJsonAsyncCompat(this HttpContent content, CancellationToken cancellationToken)
+    {
+        var text = await content.ReadAsStringAsync(cancellationToken);
+
+        using var document = JsonDocument.Parse(text);
+
+        return [.. document.RootElement.EnumerateArray().Select(element => element.Clone())];
+    }
+}
