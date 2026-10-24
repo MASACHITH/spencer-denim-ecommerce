@@ -1,5 +1,22 @@
 import { Injector, afterNextRender, signal } from '@angular/core';
 
+/** The outcome of the last CSV export, drawn on the screen (`ExportNoteView`). */
+export interface ExportNote {
+  readonly tone: 'ok' | 'error';
+  readonly text: string;
+}
+
+export function exportSucceeded(fileName: string): ExportNote {
+  return {
+    tone: 'ok',
+    text: `Export downloaded as ${fileName}. Look in your browser's Downloads. If nothing arrived, your browser may have blocked the download: allow it and press Export CSV again.`,
+  };
+}
+
+export function exportFailed(reason: string): ExportNote {
+  return { tone: 'error', text: `The export failed. ${reason}` };
+}
+
 /** Hands a downloaded file to the browser to save, the way the newsletter export does. */
 export function saveFile(document: Document, blob: Blob, fileName: string): void {
   const view = document.defaultView;

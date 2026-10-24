@@ -37,6 +37,10 @@ function page(overrides: Partial<AdminCustomerListPage> = {}): AdminCustomerList
       { id: 1, name: 'Colombo' },
       { id: 4, name: 'Kandy' },
     ],
+    countries: [
+      { code: 'CA', name: 'Canada' },
+      { code: 'LK', name: 'Sri Lanka' },
+    ],
     ...overrides,
   };
 }
@@ -132,6 +136,79 @@ describe('CustomersListPage (ADM-15)', () => {
     await settle();
 
     expect(byTestId('customers-status').textContent).toContain('1 customer');
+  });
+
+  /** UAT feedback (2026-10-24): the district filter only knows Sri Lankan districts. */
+  it('offers the countries the server sent, and filters by one at once', async () => {
+    await open();
+
+    const select = byTestId<HTMLSelectElement>('customer-country');
+    expect(Array.from(select.options).map((option) => option.textContent?.trim())).toEqual([
+      'Every country',
+      'Canada',
+      'Sri Lanka',
+    ]);
+
+    select.value = 'CA';
+    select.dispatchEvent(new Event('change'));
+    await settle();
+
+    http.expectOne(`${AdminCustomerApi.url}?page=1&pageSize=25&countryCode=CA`).flush(page({ rows: [row({ countryName: 'Canada', districtName: null })] }));
+    await settle();
+
+    expect(byTestId('customers-status').textContent).toContain('1 customer');
+    expect(byTestId('country-41').textContent).toContain('Canada');
+  });
+
+  it('hides the district filter, and drops a district already chosen, while another country is chosen', async () => {
+    await open();
+
+    const district = byTestId<HTMLSelectElement>('customer-district');
+    district.value = '4';
+    district.dispatchEvent(new Event('change'));
+    await settle();
+    http.expectOne(`${AdminCustomerApi.url}?page=1&pageSize=25&districtId=4`).flush(page());
+    await settle();
+
+    const country = byTestId<HTMLSelectElement>('customer-country');
+    country.value = 'CA';
+    country.dispatchEvent(new Event('change'));
+    await settle();
+
+    // The district is not sent any more: it would filter unseen.
+    http.expectOne(`${AdminCustomerApi.url}?page=1&pageSize=25&countryCode=CA`).flush(page({ rows: [] , totalCount: 0 }));
+    await settle();
+
+    expect(element.querySelector('[data-testid="customer-district"]')).toBeNull();
+    expect(byTestId('customer-district-note').textContent).toContain('Sri Lankan');
+    expect(byTestId('customers-empty').textContent).toContain('default saved address is in Canada');
+
+    // Sri Lanka brings the district back.
+    country.value = 'LK';
+    country.dispatchEvent(new Event('change'));
+    await settle();
+    http.expectOne(`${AdminCustomerApi.url}?page=1&pageSize=25&countryCode=LK`).flush(page());
+    await settle();
+
+    expect(element.querySelector('[data-testid="customer-district"]')).not.toBeNull();
+  });
+
+  it('puts the country back to every country when Clear is pressed', async () => {
+    await open();
+
+    const country = byTestId<HTMLSelectElement>('customer-country');
+    country.value = 'CA';
+    country.dispatchEvent(new Event('change'));
+    await settle();
+    http.expectOne(`${AdminCustomerApi.url}?page=1&pageSize=25&countryCode=CA`).flush(page());
+    await settle();
+
+    byTestId<HTMLButtonElement>('customer-search-clear').click();
+    await settle();
+    http.expectOne(`${AdminCustomerApi.url}?page=1&pageSize=25`).flush(page());
+    await settle();
+
+    expect(byTestId<HTMLSelectElement>('customer-country').value).toBe('');
   });
 
   it('sends the search only when Search is pressed', async () => {

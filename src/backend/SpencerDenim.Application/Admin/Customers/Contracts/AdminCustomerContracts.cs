@@ -12,15 +12,24 @@ namespace SpencerDenim.Application.Admin.Customers.Contracts;
 /// none. Twenty-five short rows; sent with every page rather than from a route of its own because the
 /// filter is useless without them and the screen would otherwise need two round trips to draw itself.
 /// </param>
+/// <param name="Countries">
+/// The country filter's options (UAT feedback, 2026-10-24): Sri Lanka, and every country that at least one
+/// customer's <b>default saved address</b> is in, by name. Taken from the addresses rather than from
+/// <c>ref.Countries</c> so the box lists only places that would return somebody, not the whole world.
+/// </param>
 public sealed record AdminCustomerListPage(
     IReadOnlyList<AdminCustomerListRow> Rows,
     int Page,
     int PageSize,
     int TotalCount,
-    IReadOnlyList<AdminDistrictOption> Districts);
+    IReadOnlyList<AdminDistrictOption> Districts,
+    IReadOnlyList<AdminCountryOption> Countries);
 
 /// <summary>A district the list can be filtered by.</summary>
 public sealed record AdminDistrictOption(int Id, string Name);
+
+/// <summary>A country the list can be filtered by: its ISO 3166-1 alpha-2 code and its English name.</summary>
+public sealed record AdminCountryOption(string Code, string Name);
 
 /// <summary>
 /// One registered customer on the list.

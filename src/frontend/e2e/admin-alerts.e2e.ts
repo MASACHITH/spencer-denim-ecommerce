@@ -5,7 +5,8 @@ import { adminURL, adminWorktreeRoot } from '../playwright.config';
 import { horizontalOverflow, undersized, unreachable } from './support/measure';
 
 /**
- * The admin shell's alert banner (doc 08 §3.8 N2; doc 11 §4.3, §6.1 step 1, §7 G-37).
+ * The admin shell's alert bell (doc 08 §3.8 N2; doc 11 §4.3, §6.1 step 1, §7 G-37): a bell in the header with a red
+ * count, which opens the panel of alerts. It replaced a banner above every page after UAT feedback (2026-10-24).
  *
  * It runs against `e2e/support/admin-catalog-stub.mjs`, which serves `dist/admin` and answers
  * `/api/admin/*` from the same origin. **Issue #126: Playwright never starts the .NET API**, so nothing
@@ -49,6 +50,7 @@ async function openWithAlerts(
   page: Page,
   set: 'dead' | 'dead-no-order' | 'dead-staff-invite' | 'dead-order-gone' | 'many' | 'none',
   path = '/orders',
+  panel = set !== 'none',
 ): Promise<void> {
   const state = `alerts-${Math.random().toString(36).slice(2)}`;
 
@@ -64,9 +66,15 @@ async function openWithAlerts(
   // The live region exists before any alert loads, so waiting for it is waiting for the shell rather
   // than for the fetch.
   await expect(page.locator('[data-testid="alert-announcement"]')).toHaveCount(1);
+
+  if (panel) {
+    // The bell is drawn once the list has loaded; pressing it is what a staff member does.
+    await page.locator('[data-testid="alert-bell"]').click();
+    await expect(page.locator('[data-testid="alert-panel"]')).toBeVisible();
+  }
 }
 
-test.describe('the banner is in the shell, the dashboard included (ADM-04 renders no second one)', () => {
+test.describe('the bell is in the shell, the dashboard included (ADM-04 renders no second one)', () => {
   /**
    * **The design decision, asserted.** Doc 08 §3.8 calls this "the dashboard banner" and ADM-04's
    * dashboard is a scaffold placeholder; doc 11 §6.1 step 1's morning routine starts from these banners,
@@ -76,7 +84,8 @@ test.describe('the banner is in the shell, the dashboard included (ADM-04 render
     test(`shows on ${path}`, async ({ page }) => {
       await openWithAlerts(page, 'dead', path);
 
-      await expect(page.locator('[data-testid="alert-banner"]')).toBeVisible();
+      await expect(page.locator('.admin-header [data-testid="alert-bell"]')).toBeVisible();
+      await expect(page.locator('[data-testid="alert-count"]')).toBeVisible();
       await expect(page.locator('[data-testid="alert-1"]')).toContainText('BankTransferInstructions');
     });
   }
@@ -94,7 +103,7 @@ test.describe('the banner is in the shell, the dashboard included (ADM-04 render
     test(`${path} still says what the page is before anything else`, async ({ page }) => {
       await openWithAlerts(page, 'many', path);
 
-      await expect(page.locator('[data-testid="alert-banner"]')).toBeVisible();
+      await expect(page.locator('[data-testid="alert-panel"]')).toBeVisible();
       await expect(page.getByRole('heading', { level: 1 })).toBeAttached();
 
       const headings = await page.evaluate(() =>
@@ -108,10 +117,12 @@ test.describe('the banner is in the shell, the dashboard included (ADM-04 render
     });
   }
 
-  test('shows nothing at all when there are no alerts', async ({ page }) => {
+  test('shows a quiet bell, with no count, when there are no alerts', async ({ page }) => {
     await openWithAlerts(page, 'none');
 
-    await expect(page.locator('[data-testid="alert-banner"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="alert-bell"]')).toBeVisible();
+    await expect(page.locator('[data-testid="alert-count"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="alert-panel"]')).toHaveCount(0);
 
     // The live region survives, which is what lets a confirmation be written somewhere the banner's own
     // disappearance cannot destroy.
@@ -137,7 +148,7 @@ test.describe('the banner is in the shell, the dashboard included (ADM-04 render
     await page.goto(`${adminURL}/login`);
 
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-    await expect(page.locator('[data-testid="alert-banner"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="alert-bell"]')).toHaveCount(0);
 
     expect(asked, `the sign-in page asked for alerts: ${JSON.stringify(asked)}`).toEqual([]);
   });
@@ -214,16 +225,16 @@ test.describe('what it tells a Super Admin they can do (doc 11 §7 G-37, G-42)',
   test('never says acknowledging fixes anything', async ({ page }) => {
     await openWithAlerts(page, 'dead');
 
-    const banner = page.locator('[data-testid="alert-banner"]');
+    const panel = page.locator('[data-testid="alert-panel"]');
 
-    await expect(banner).toContainText('records that you have seen it');
-    await expect(banner).toContainText('does not fix the problem');
+    await expect(panel).toContainText('records that you have seen it');
+    await expect(panel).toContainText('does not fix the problem');
   });
 
   test('says when it is not showing them all', async ({ page }) => {
     await openWithAlerts(page, 'many');
 
-    await expect(page.locator('[data-testid="alert-banner"]')).toContainText('more are waiting');
+    await expect(page.locator('[data-testid="alert-panel"]')).toContainText('more are waiting');
     await expect(page.locator('li[data-testid^="alert-"]')).toHaveCount(10);
   });
 });
@@ -277,7 +288,9 @@ test.describe('acknowledging (doc 08 §3.8: audited, and resolves nothing)', () 
 
     await page.goto(`${adminURL}/settings`);
     await expect(page.locator('[data-testid="alert-announcement"]')).toHaveCount(1);
-    await expect(page.locator('[data-testid="alert-banner"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="alert-bell"]')).toBeVisible();
+    await expect(page.locator('[data-testid="alert-count"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="alert-panel"]')).toHaveCount(0);
   });
 
   /**
@@ -303,7 +316,36 @@ test.describe('acknowledging (doc 08 §3.8: audited, and resolves nothing)', () 
   });
 });
 
-test.describe('the banner at every breakpoint', () => {
+test.describe('opening and closing the panel', () => {
+  test('Escape closes it and returns focus to the bell, and a press elsewhere closes it too', async ({ page }) => {
+    await openWithAlerts(page, 'dead');
+
+    await page.locator('[data-testid="alert-ack-1"]').focus();
+    await page.keyboard.press('Escape');
+
+    await expect(page.locator('[data-testid="alert-panel"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="alert-bell"]')).toBeFocused();
+
+    await page.locator('[data-testid="alert-bell"]').click();
+    await expect(page.locator('[data-testid="alert-panel"]')).toBeVisible();
+
+    await page.locator('main').click({ position: { x: 5, y: 5 } });
+    await expect(page.locator('[data-testid="alert-panel"]')).toHaveCount(0);
+  });
+
+  test('stays over the page without moving it', async ({ page }) => {
+    await openWithAlerts(page, 'many', '/orders', false);
+
+    const before = await page.locator('main').boundingBox();
+    await page.locator('[data-testid="alert-bell"]').click();
+    await expect(page.locator('[data-testid="alert-panel"]')).toBeVisible();
+    const after = await page.locator('main').boundingBox();
+
+    expect(after?.y, 'opening the panel pushed the page down').toBe(before?.y);
+  });
+});
+
+test.describe('the bell at every breakpoint', () => {
   /**
    * **Three questions, not one** (doc 04 §4 and this project's own list): is every control big enough,
    * is it on screen, and is it not buried under something else. axe answers none of the three.
@@ -316,11 +358,17 @@ test.describe('the banner at every breakpoint', () => {
       await page.setViewportSize({ width, height: 900 });
       await openWithAlerts(page, 'many');
 
-      await expect(page.locator('[data-testid="alert-banner"]')).toBeVisible();
+      await expect(page.locator('[data-testid="alert-panel"]')).toBeVisible();
 
       expect(await horizontalOverflow(page), `horizontal overflow at ${width}px`).toBe(0);
 
+      // The panel opens inside the screen: not off its left or right edge.
+      const box = (await page.locator('[data-testid="alert-panel"]').boundingBox())!;
+      expect(box.x, `the panel starts off the left edge at ${width}px`).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width, `the panel runs off the right edge at ${width}px`).toBeLessThanOrEqual(width);
+
       for (const selector of [
+        '[data-testid="alert-bell"]',
         '[data-testid="alert-ack-1"]',
         '[data-testid="alert-order-1"]',
       ]) {
@@ -333,7 +381,7 @@ test.describe('the banner at every breakpoint', () => {
     });
   }
 
-  test('has no axe violations', async ({ page }) => {
+  test('has no axe violations, with the panel open', async ({ page }) => {
     await openWithAlerts(page, 'many');
 
     const results = await new AxeBuilder({ page }).analyze();

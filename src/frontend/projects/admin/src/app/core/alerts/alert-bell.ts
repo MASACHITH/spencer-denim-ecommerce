@@ -5,10 +5,13 @@ import {
   Component,
   DestroyRef,
   ElementRef,
+  HostListener,
   Injector,
   afterNextRender,
+  computed,
   inject,
   signal,
+  viewChild,
   viewChildren,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -26,7 +29,26 @@ interface Cleared {
 }
 
 /**
- * The persistent alert banner (doc 08 §3.8 N2's "dashboard banner"; doc 11 §4.3, §6.1 step 1).
+ * The alert **bell** in the admin header (UAT feedback, 2026-10-24). It is the persistent alert banner of doc 08
+ * §3.8 N2 / doc 11 §4.3, §6.1 step 1, drawn as a bell with a red count and a panel that opens under it.
+ *
+ * **Why a bell and not the full-width strip it replaced.** The strip was a yellow block that pushed every page
+ * down and, with several alerts, took most of the first screen; the client's reviewers asked for the alerts to
+ * live somewhere of their own. The bell keeps the two properties the strip was built for: it is in the shell,
+ * so it is on every admin screen, and the red count is visible without opening anything. Everything below that
+ * paragraph — where the component lives, the five accessibility rules, the silence — was written for the strip
+ * and is unchanged, except that "the banner" now means the panel the bell opens.
+ *
+ * **The bell is drawn only for a user who may have alerts.** A 403 or a failed load draws nothing at all. An
+ * empty list is different: the bell is drawn without a count and the panel says nothing needs attention, so a
+ * Super Admin can tell "no alerts" from "not allowed to see alerts".
+ *
+ * **Opening is a disclosure, not a dialog.** The button has `aria-expanded` and `aria-controls`; the panel is a
+ * named region after the button in the tab order. Escape closes it and returns focus to the button, a press
+ * anywhere else on the page closes it, and so does navigating. Acknowledging an alert does not close it
+ * (rule 1 below).
+ *
+ * The rest of this comment is the original, and says "banner" where it now means the panel.
  *
  * **It lives in the admin shell and not on the dashboard, and that is this task's one real design
  * decision.** Doc 08 calls it "the dashboard banner" and ADM-04's dashboard does not exist: the route at
@@ -37,7 +59,7 @@ interface Cleared {
  * *more* than doc 08 asks for rather than less.
  *
  * **ADM-04 adopts this component rather than building a second one.** It is self-contained — it fetches,
- * renders and acknowledges on its own and takes no inputs — so the dashboard can render `<sda-alert-banner />`
+ * renders and acknowledges on its own and takes no inputs — so a screen could render `<sda-alert-bell />`
  * inside a widget and the shell can drop it, or both can keep it, with no change here. What ADM-04 must not
  * do is write a second implementation: two banners would be two wordings of "this does not fix anything".
  *
@@ -72,7 +94,7 @@ interface Cleared {
  * permanent error message about a feature that is not theirs.
  */
 @Component({
-  selector: 'sda-alert-banner',
+  selector: 'sda-alert-bell',
   imports: [RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -80,95 +102,182 @@ interface Cleared {
          confirmation is written into. -->
     <p class="sr-only" role="status" data-testid="alert-announcement">{{ announcement() }}</p>
 
-    @if (alerts().length > 0) {
-      <!-- A landmark with a name, and deliberately **not** a heading: see rule 5 above. -->
-      <section class="alerts" aria-labelledby="alerts-heading" data-testid="alert-banner">
-        <p class="alerts__heading" id="alerts-heading">
-          {{ heading() }}
-        </p>
-
-        <p class="alerts__hint">
-          Acknowledging an alert records that you have seen it. It does not fix the problem and does not
-          send, retry or adjust anything.
-        </p>
-
-        <ul class="alerts__list">
-          @for (alert of alerts(); track alert.id) {
-            <li
-              class="alerts__item"
-              [class.is-critical]="alert.severity === 3"
-              [attr.data-testid]="'alert-' + alert.id"
-            >
-              <p class="alerts__severity">{{ severityOf(alert) }}</p>
-              <p class="alerts__title">{{ alert.title }}</p>
-              <p class="alerts__advice">{{ adviceFor(alert) }}</p>
-
-              <!-- Both, not just the id. A public id with no order number is an alert whose order was
-                   not in the database when it was raised (see AdminAlert.orderNumber), so the link would
-                   404 - and alertAdvice says so instead of sending somebody to it. Orders are never
-                   deleted (doc 08 1.6), so the order cannot turn up later either. No backticks in here:
-                   this comment is inside the component's template literal. -->
-              @if (alert.orderPublicId && alert.orderNumber) {
-                <a
-                  class="adm-link"
-                  [routerLink]="['/orders', alert.orderPublicId]"
-                  [attr.data-testid]="'alert-order-' + alert.id"
-                >
-                  Open order {{ alert.orderNumber }}
-                </a>
-              }
-
-              @if (cleared().get(alert.id); as outcome) {
-                <!-- Rule 1: the acknowledged alert keeps its place, and this is the node focus moves to. -->
-                <p
-                  class="alerts__done"
-                  tabindex="-1"
-                  [attr.data-testid]="'alert-done-' + alert.id"
-                  #outcomeMessage
-                >
-                  {{ outcomeText(outcome) }}
-                </p>
-              } @else {
-                <!-- No note field. Doc 08 §3.8 gives the table an AcknowledgementNote column and
-                     nothing writes it (owner's decision, 2026-10-09): ops.AdminAlerts is not in doc 08
-                     §3.1 step 2's anonymisation deletion list and doc 11 §4 says these rows are never
-                     scrubbed, so a free-text box beside a customer's order number was the one place in
-                     this feature where a telephone number could be pasted into a table nothing can
-                     clean. Nothing read it back either. -->
-                <button
-                  class="adm-btn"
-                  type="button"
-                  [attr.aria-disabled]="busy() !== null ? 'true' : null"
-                  (click)="acknowledge(alert)"
-                  [attr.data-testid]="'alert-ack-' + alert.id"
-                >
-                  {{ busy() === alert.id ? 'Recording…' : 'I have seen this' }}
-                </button>
-              }
-
-              @if (failure().get(alert.id); as message) {
-                <p class="alerts__error" role="alert" [attr.data-testid]="'alert-error-' + alert.id">
-                  {{ message }}
-                </p>
-              }
-            </li>
+    @if (available()) {
+      <div class="bell">
+        <button
+          class="bell__button"
+          type="button"
+          aria-controls="alert-panel"
+          [attr.aria-expanded]="open()"
+          (click)="toggle()"
+          #bellButton
+          data-testid="alert-bell"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M6 9a6 6 0 1 1 12 0c0 5 2 6.5 2 6.5H4S6 14 6 9Z" />
+            <path d="M10 19a2 2 0 0 0 4 0" />
+          </svg>
+          @if (waiting() > 0) {
+            <span class="bell__count" aria-hidden="true" data-testid="alert-count">{{ countText() }}</span>
           }
-        </ul>
-      </section>
+          <span class="sr-only">{{ buttonName() }}</span>
+        </button>
+
+        @if (open()) {
+          <!-- A landmark with a name, and deliberately **not** a heading: see rule 5 above. -->
+          <section class="alerts" id="alert-panel" aria-labelledby="alerts-heading" data-testid="alert-panel">
+            <p class="alerts__heading" id="alerts-heading">
+              {{ heading() }}
+            </p>
+
+            @if (alerts().length === 0) {
+              <p class="alerts__hint" data-testid="alert-none">Nothing needs your attention right now.</p>
+            } @else {
+              <p class="alerts__hint">
+                Acknowledging an alert records that you have seen it. It does not fix the problem and does not
+                send, retry or adjust anything.
+              </p>
+
+              <ul class="alerts__list">
+                @for (alert of alerts(); track alert.id) {
+                  <li
+                    class="alerts__item"
+                    [class.is-critical]="alert.severity === 3"
+                    [attr.data-testid]="'alert-' + alert.id"
+                  >
+                    <p class="alerts__severity">{{ severityOf(alert) }}</p>
+                    <p class="alerts__title">{{ alert.title }}</p>
+                    <p class="alerts__advice">{{ adviceFor(alert) }}</p>
+
+                    <!-- Both, not just the id. A public id with no order number is an alert whose order was
+                         not in the database when it was raised (see AdminAlert.orderNumber), so the link would
+                         404 - and alertAdvice says so instead of sending somebody to it. Orders are never
+                         deleted (doc 08 1.6), so the order cannot turn up later either. No backticks in here:
+                         this comment is inside the component's template literal. -->
+                    @if (alert.orderPublicId && alert.orderNumber) {
+                      <a
+                        class="adm-link"
+                        [routerLink]="['/orders', alert.orderPublicId]"
+                        [attr.data-testid]="'alert-order-' + alert.id"
+                      >
+                        Open order {{ alert.orderNumber }}
+                      </a>
+                    }
+
+                    @if (cleared().get(alert.id); as outcome) {
+                      <!-- Rule 1: the acknowledged alert keeps its place, and this is the node focus moves to. -->
+                      <p
+                        class="alerts__done"
+                        tabindex="-1"
+                        [attr.data-testid]="'alert-done-' + alert.id"
+                        #outcomeMessage
+                      >
+                        {{ outcomeText(outcome) }}
+                      </p>
+                    } @else {
+                      <!-- No note field. Doc 08 §3.8 gives the table an AcknowledgementNote column and
+                           nothing writes it (owner's decision, 2026-10-09): ops.AdminAlerts is not in doc 08
+                           §3.1 step 2's anonymisation deletion list and doc 11 §4 says these rows are never
+                           scrubbed, so a free-text box beside a customer's order number was the one place in
+                           this feature where a telephone number could be pasted into a table nothing can
+                           clean. Nothing read it back either. -->
+                      <button
+                        class="adm-btn"
+                        type="button"
+                        [attr.aria-disabled]="busy() !== null ? 'true' : null"
+                        (click)="acknowledge(alert)"
+                        [attr.data-testid]="'alert-ack-' + alert.id"
+                      >
+                        {{ busy() === alert.id ? 'Recording…' : 'I have seen this' }}
+                      </button>
+                    }
+
+                    @if (failure().get(alert.id); as message) {
+                      <p class="alerts__error" role="alert" [attr.data-testid]="'alert-error-' + alert.id">
+                        {{ message }}
+                      </p>
+                    }
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+        }
+      </div>
     }
   `,
   styles: `
     :host {
       display: block;
+      margin-inline-start: auto;
+    }
+    .bell {
+      position: relative;
+    }
+    .bell__button {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: var(--tap);
+      height: var(--tap);
+      border: 0;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+    }
+    .bell__button svg {
+      width: 24px;
+      height: 24px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .bell__button:focus-visible {
+      outline: 2px solid var(--color-on-primary);
+      outline-offset: -4px;
+    }
+    .bell__button[aria-expanded='true'] {
+      background: color-mix(in srgb, var(--color-on-primary) 18%, transparent);
+    }
+    /* White on the shop's sale red (--color-sale, #b3261e): 6.5:1. The ring separates it from the dark header. */
+    .bell__count {
+      position: absolute;
+      top: 0;
+      inset-inline-end: -6px;
+      min-width: 16px;
+      height: 16px;
+      padding-inline: 4px;
+      border-radius: 10px;
+      border: 2px solid var(--color-primary);
+      box-sizing: content-box;
+      background: var(--color-sale);
+      color: #fff;
+      font-size: 0.6875rem;
+      font-weight: var(--weight-semibold);
+      line-height: 16px;
+      text-align: center;
     }
     .alerts {
+      position: absolute;
+      inset-block-start: 100%;
+      inset-inline-end: 0;
+      z-index: 30;
       display: grid;
       gap: var(--space-1);
+      width: min(30rem, calc(100vw - 2 * var(--gutter)));
+      max-height: min(36rem, calc(100vh - 6rem));
+      overflow-y: auto;
       padding: var(--space-2);
-      padding-inline: var(--gutter);
-      background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface));
-      border-bottom: 2px solid var(--color-warning);
+      background: var(--color-surface);
+      color: var(--color-text);
+      border: 1px solid var(--color-border-strong);
+      border-top: 3px solid var(--color-warning);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
       font-size: var(--text-data);
+      text-align: start;
     }
     .alerts__heading {
       font-size: var(--text-h3);
@@ -221,7 +330,7 @@ interface Cleared {
     }
   `,
 })
-export class AlertBanner {
+export class AlertBell {
   private readonly api = inject(AdminAlertsApi);
   private readonly router = inject(Router);
   private readonly destroyRef = inject(DestroyRef);
@@ -234,8 +343,34 @@ export class AlertBanner {
    */
   private readonly outcomeMessages = viewChildren<ElementRef<HTMLElement>>('outcomeMessage');
 
+  private readonly bellButton = viewChild<ElementRef<HTMLButtonElement>>('bellButton');
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+
   protected readonly alerts = signal<AdminAlert[]>([]);
   protected readonly moreThanShown = signal(false);
+
+  /** Whether this user may have alerts at all: false after a 403, a 401 or any failed load, and the bell is not drawn. */
+  protected readonly available = signal(false);
+  protected readonly open = signal(false);
+
+  /** Alerts this user has not yet acknowledged on this screen. The red count. */
+  protected readonly waiting = computed(
+    () => this.alerts().filter((alert) => !this.cleared().has(alert.id)).length,
+  );
+  protected readonly countText = computed(() => {
+    const waiting = this.waiting();
+    const shown = waiting > 99 ? '99' : String(waiting);
+
+    return waiting > 99 || this.moreThanShown() ? `${shown}+` : shown;
+  });
+  protected readonly buttonName = computed(() => {
+    const waiting = this.waiting();
+    const more = this.moreThanShown() ? ' or more' : '';
+
+    return waiting === 0
+      ? 'Alerts: nothing needs attention'
+      : `Alerts: ${waiting}${more} ${waiting === 1 && more === '' ? 'needs' : 'need'} attention`;
+  });
   protected readonly cleared = signal<Map<number, Cleared>>(new Map());
   protected readonly failure = signal<Map<number, string>>(new Map());
 
@@ -243,6 +378,9 @@ export class AlertBanner {
   protected readonly busy = signal<number | null>(null);
 
   private readonly said = signal('');
+
+  /** The address of the last finished navigation, so a first or repeated one does not shut the panel. */
+  private lastUrl: string | null = null;
 
   protected readonly announcement = this.said.asReadonly();
 
@@ -256,14 +394,55 @@ export class AlertBanner {
     // navigation is a refresh.
     this.router.events
       .pipe(
-        filter((event) => event instanceof NavigationEnd),
+        filter((event): event is NavigationEnd => event instanceof NavigationEnd),
         takeUntilDestroyed(this.destroyRef),
       )
-      .subscribe(() => this.load());
+      .subscribe((event) => {
+        // A new screen starts with the panel shut. It also re-reads the list, which clears what was acknowledged.
+        //
+        // **Only when the address changed.** The first NavigationEnd arrives when the page has finished loading,
+        // which can be after the bell is already drawn and pressed (a slow screen chunk); shutting the panel
+        // then would close it under the staff member's finger. Found by the browser suite, which pressed the bell
+        // in that window about one run in three.
+        const url = event.urlAfterRedirects;
+        if (this.lastUrl !== null && this.lastUrl !== url) {
+          this.open.set(false);
+        }
+
+        this.lastUrl = url;
+        this.load();
+      });
+  }
+
+  protected toggle(): void {
+    this.open.update((current) => !current);
+  }
+
+  /** A press anywhere outside the bell and its panel shuts the panel. Focus is left where the press put it. */
+  @HostListener('document:click', ['$event'])
+  protected closeOnOutsideClick(event: Event): void {
+    if (this.open() && !this.host.nativeElement.contains(event.target as Node)) {
+      this.open.set(false);
+    }
+  }
+
+  /** Escape shuts the panel and puts focus back on the bell, so a keyboard user is not left on a node that vanished. */
+  @HostListener('keydown.escape')
+  protected closeOnEscape(): void {
+    if (!this.open()) {
+      return;
+    }
+
+    this.open.set(false);
+    this.bellButton()?.nativeElement.focus();
   }
 
   protected heading(): string {
-    const shown = this.alerts().length;
+    const shown = this.waiting();
+
+    if (shown === 0) {
+      return this.alerts().length === 0 ? 'No alerts' : 'Everything here is acknowledged';
+    }
 
     const count = shown === 1 ? '1 alert needs attention' : `${shown} alerts need attention`;
 
@@ -360,12 +539,15 @@ export class AlertBanner {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (banner) => {
+          this.available.set(true);
           this.alerts.set(banner.alerts);
           this.moreThanShown.set(banner.moreThanShown);
           this.cleared.set(new Map());
           this.failure.set(new Map());
         },
         error: () => {
+          this.available.set(false);
+          this.open.set(false);
           this.alerts.set([]);
           this.moreThanShown.set(false);
         },

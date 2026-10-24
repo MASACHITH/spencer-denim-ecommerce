@@ -1,11 +1,11 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { Router, provideRouter } from '@angular/router';
 
 import { AdminAlertsApi } from './admin-alerts-api';
 import { AdminAlert, AdminAlertBanner } from './admin-alert.model';
-import { AlertBanner } from './alert-banner';
+import { AlertBell } from './alert-bell';
 
 const ORDER = '44444444-4444-4444-8444-444444444444';
 
@@ -34,15 +34,16 @@ function banner(overrides: Partial<AdminAlertBanner> = {}): AdminAlertBanner {
 }
 
 /**
- * The admin shell's alert banner (doc 08 §3.8 N2, doc 11 §4.3, §7 G-37).
+ * The admin shell's alert bell (doc 08 §3.8 N2, doc 11 §4.3, §7 G-37), which opens the panel of alerts that used to be
+ * a banner above every page (UAT feedback, 2026-10-24).
  *
  * **What this file is mostly about is the four accessibility rules**, each of which is a defect this
  * project has already shipped: an acknowledged alert that is not torn out from under the focus, no
  * `disabled` attribute anywhere, a confirmation in a node that survives the acknowledgement, and an
  * identical announcement that re-fires.
  */
-describe('AlertBanner (doc 08 §3.8 N2)', () => {
-  let fixture: ComponentFixture<AlertBanner>;
+describe('AlertBell (doc 08 §3.8 N2)', () => {
+  let fixture: ComponentFixture<AlertBell>;
   let element: HTMLElement;
   let http: HttpTestingController;
 
@@ -51,9 +52,11 @@ describe('AlertBanner (doc 08 §3.8 N2)', () => {
     await fixture.whenStable();
   }
 
-  async function open(payload: AdminAlertBanner | 'forbidden' = banner()): Promise<void> {
-    fixture = TestBed.createComponent(AlertBanner);
+  /** Loads the bell, and presses it so the panel is open, unless the test is about the closed bell. */
+  async function open(payload: AdminAlertBanner | 'forbidden' = banner(), panel = true): Promise<void> {
+    fixture = TestBed.createComponent(AlertBell);
     element = fixture.nativeElement as HTMLElement;
+    document.body.appendChild(element);
 
     await settle();
 
@@ -66,6 +69,15 @@ describe('AlertBanner (doc 08 §3.8 N2)', () => {
     }
 
     await settle();
+
+    if (panel && payload !== 'forbidden') {
+      press('alert-bell');
+      await settle();
+    }
+  }
+
+  function press(testId: string): void {
+    (element.querySelector(`[data-testid="${testId}"]`) as HTMLElement).click();
   }
 
   async function acknowledge(
@@ -101,12 +113,15 @@ describe('AlertBanner (doc 08 §3.8 N2)', () => {
     http = TestBed.inject(HttpTestingController);
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    http.verify();
+    element?.remove();
+  });
 
   it('shows the alert, what it is about and what can actually be done about it', async () => {
     await open();
 
-    expect(element.querySelector('[data-testid="alert-banner"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="alert-panel"]')).not.toBeNull();
     expect(text()).toContain('1 alert needs attention');
     expect(text()).toContain('BankTransferInstructions');
     expect(text()).toContain('SD-2026-000123');
@@ -130,26 +145,151 @@ describe('AlertBanner (doc 08 §3.8 N2)', () => {
     expect(text()).toContain('does not fix the problem');
   });
 
-  it('renders nothing at all when this user has no alerts they may see', async () => {
-    // Doc 08 §3.8 R10 gives most staff no path to any alert, so the API answers 403. A banner that said
+  it('draws no bell at all when this user has no alerts they may see', async () => {
+    // Doc 08 §3.8 R10 gives most staff no path to any alert, so the API answers 403. A bell that said
     // so would be a permanent error message, on every admin screen, about a feature that is not theirs.
     await open('forbidden');
 
-    expect(element.querySelector('[data-testid="alert-banner"]')).toBeNull();
+    expect(element.querySelector('[data-testid="alert-bell"]')).toBeNull();
+    expect(element.querySelector('[data-testid="alert-panel"]')).toBeNull();
     expect(text().trim()).toBe('');
   });
 
-  it('renders nothing when the list is empty', async () => {
-    await open(banner({ alerts: [] }));
+  it('draws a quiet bell, with no count, when the list is empty, and says so when it is opened', async () => {
+    await open(banner({ alerts: [] }), false);
 
-    expect(element.querySelector('[data-testid="alert-banner"]')).toBeNull();
+    expect(element.querySelector('[data-testid="alert-bell"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="alert-count"]')).toBeNull();
+    expect(text()).toContain('Alerts: nothing needs attention');
+
+    press('alert-bell');
+    await settle();
+
+    expect(element.querySelector('[data-testid="alert-none"]')?.textContent).toContain('Nothing needs your attention');
+  });
+
+  describe('the bell itself', () => {
+    it('shows a red count and stays shut until it is pressed', async () => {
+      await open(banner({ alerts: [alert(), alert({ id: 8 }), alert({ id: 9 })] }), false);
+
+      const bell = element.querySelector('[data-testid="alert-bell"]') as HTMLButtonElement;
+
+      expect(element.querySelector('[data-testid="alert-count"]')?.textContent?.trim()).toBe('3');
+      expect(bell.textContent).toContain('Alerts: 3 need attention');
+      expect(bell.getAttribute('aria-expanded')).toBe('false');
+      expect(bell.getAttribute('aria-controls')).toBe('alert-panel');
+      expect(element.querySelector('[data-testid="alert-panel"]')).toBeNull();
+
+      bell.click();
+      await settle();
+
+      expect(bell.getAttribute('aria-expanded')).toBe('true');
+      expect(element.querySelector('#alert-panel')).not.toBeNull();
+
+      bell.click();
+      await settle();
+
+      expect(bell.getAttribute('aria-expanded')).toBe('false');
+      expect(element.querySelector('[data-testid="alert-panel"]')).toBeNull();
+    });
+
+    it('says "needs" for one, and adds a plus when the server says there are more than it sent', async () => {
+      await open(banner({ moreThanShown: true, alerts: [alert()] }), false);
+
+      expect(element.querySelector('[data-testid="alert-count"]')?.textContent?.trim()).toBe('1+');
+      expect(text()).toContain('Alerts: 1 or more need attention');
+
+      fixture.destroy();
+      await open(banner({ alerts: [alert()] }), false);
+
+      expect(text()).toContain('Alerts: 1 needs attention');
+    });
+
+    it('counts down as alerts are acknowledged, and the panel stays open while it does', async () => {
+      await open(banner({ alerts: [alert(), alert({ id: 8 })] }));
+
+      await acknowledge(7, { acknowledgedAtUtc: '2026-10-09T04:00:00Z', alreadyAcknowledged: false });
+
+      expect(element.querySelector('[data-testid="alert-count"]')?.textContent?.trim()).toBe('1');
+      expect(element.querySelector('[data-testid="alert-panel"]')).not.toBeNull();
+      expect(text()).toContain('1 alert needs attention');
+
+      await acknowledge(8, { acknowledgedAtUtc: '2026-10-09T04:01:00Z', alreadyAcknowledged: false });
+
+      expect(element.querySelector('[data-testid="alert-count"]')).toBeNull();
+      expect(text()).toContain('Everything here is acknowledged');
+    });
+
+    it('closes on Escape and puts focus back on the bell', async () => {
+      await open();
+
+      const bell = element.querySelector('[data-testid="alert-bell"]') as HTMLButtonElement;
+      (element.querySelector('[data-testid="alert-ack-7"]') as HTMLButtonElement).focus();
+
+      element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await settle();
+
+      expect(element.querySelector('[data-testid="alert-panel"]')).toBeNull();
+      expect(document.activeElement).toBe(bell);
+    });
+
+    it('closes when something else on the page is pressed, but not when the panel itself is', async () => {
+      await open();
+
+      (element.querySelector('[data-testid="alert-7"]') as HTMLElement).click();
+      await settle();
+      expect(element.querySelector('[data-testid="alert-panel"]')).not.toBeNull();
+
+      document.body.click();
+      await settle();
+      expect(element.querySelector('[data-testid="alert-panel"]')).toBeNull();
+    });
+
+    it('closes when the staff member goes to another screen, and reads the list again there', async () => {
+      const router = TestBed.inject(Router);
+      router.resetConfig([{ path: '**', children: [] }]);
+
+      await open();
+
+      // The page's own first navigation: it re-reads the list and leaves the panel as it is.
+      await router.navigateByUrl('/');
+      await settle();
+      http.expectOne(AdminAlertsApi.alertsUrl).flush(banner());
+      await settle();
+      expect(element.querySelector('[data-testid="alert-panel"]')).not.toBeNull();
+
+      // A second, different address is a new screen.
+      await router.navigateByUrl('/orders');
+      await settle();
+
+      http.expectOne(AdminAlertsApi.alertsUrl).flush(banner({ alerts: [] }));
+      await settle();
+
+      expect(element.querySelector('[data-testid="alert-panel"]')).toBeNull();
+      expect(element.querySelector('[data-testid="alert-count"]')).toBeNull();
+    });
+
+    it("stays open when the page's first navigation finishes after the bell was pressed", async () => {
+      // A slow screen chunk lets the first NavigationEnd arrive after the bell is drawn and pressed. Shutting
+      // the panel then closed it under the staff member's finger: the browser suite hit it about one run in three.
+      const router = TestBed.inject(Router);
+      router.resetConfig([{ path: '**', children: [] }]);
+      await open();
+
+      await router.navigateByUrl('/orders');
+      await settle();
+
+      http.expectOne(AdminAlertsApi.alertsUrl).flush(banner());
+      await settle();
+
+      expect(element.querySelector('[data-testid="alert-panel"]')).not.toBeNull();
+    });
   });
 
   it('says there are more when the server says it is not showing them all', async () => {
     await open(banner({ moreThanShown: true, alerts: [alert()] }));
 
-    expect(text()).toContain('1 alert needs attention');
-    expect(text()).toContain('more are waiting');
+    expect(text()).toContain('1 alert needs attention · more are waiting after these');
   });
 
   it('does not say there are more when it is showing them all', async () => {
@@ -207,8 +347,9 @@ describe('AlertBanner (doc 08 §3.8 N2)', () => {
     // blind customer pressed Cancel and heard nothing. The region is this component's first child,
     // outside every `@if`,
     // so it is in the DOM before any alert loads and after the last one is cleared.
-    fixture = TestBed.createComponent(AlertBanner);
+    fixture = TestBed.createComponent(AlertBell);
     element = fixture.nativeElement as HTMLElement;
+    document.body.appendChild(element);
     await settle();
 
     const region = element.querySelector('[data-testid="alert-announcement"]');
@@ -216,6 +357,9 @@ describe('AlertBanner (doc 08 §3.8 N2)', () => {
     expect(region?.getAttribute('role')).toBe('status');
 
     http.expectOne(AdminAlertsApi.alertsUrl).flush(banner());
+    await settle();
+
+    press('alert-bell');
     await settle();
 
     await acknowledge(7, { acknowledgedAtUtc: '2026-10-09T04:00:00Z', alreadyAcknowledged: false });

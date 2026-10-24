@@ -252,15 +252,15 @@ interface Access {
                       <td class="adm-num" [attr.data-testid]="'available-' + row.variantId">{{ row.available }}</td>
                       <td class="adm-num" [attr.data-testid]="'threshold-' + row.variantId">{{ row.threshold }}{{ row.ownThreshold === null ? ' (default)' : '' }}</td>
                       <td>
-                        <span class="adm-pill" [class.adm-pill--hidden]="row.stockStatus === 'OutOfStock'" [class.inv__low]="row.stockStatus === 'LowStock'" [attr.data-testid]="'status-' + row.variantId">{{ statusLabel(row.stockStatus) }}</span>
+                        <span class="adm-pill" [class.adm-pill--hidden]="row.stockStatus === 'OutOfStock'" [class.inv__in]="row.stockStatus === 'InStock'" [class.inv__low]="row.stockStatus === 'LowStock'" [class.inv__out]="row.stockStatus === 'OutOfStock'" [attr.data-testid]="'status-' + row.variantId">{{ statusLabel(row.stockStatus) }}</span>
                       </td>
                       <td>
                         <div class="adm-actions inv__row-actions">
                           @if (access()!.edit && row.hasStockRecord) {
-                            <button class="adm-btn inv__act" type="button" [attr.data-testid]="'change-' + row.variantId" [attr.aria-label]="'Change stock for ' + row.sku" (click)="open('stock', row.variantId, $event)">Stock</button>
-                            <button class="adm-btn inv__act" type="button" [attr.data-testid]="'set-threshold-' + row.variantId" [attr.aria-label]="'Low-stock threshold for ' + row.sku" (click)="open('threshold', row.variantId, $event)">Threshold</button>
+                            <button class="adm-btn inv__act inv__act--stock" type="button" [attr.data-testid]="'change-' + row.variantId" [attr.aria-label]="'Change stock for ' + row.sku" (click)="open('stock', row.variantId, $event)">Stock</button>
+                            <button class="adm-btn inv__act inv__act--threshold" type="button" [attr.data-testid]="'set-threshold-' + row.variantId" [attr.aria-label]="'Low-stock threshold for ' + row.sku" (click)="open('threshold', row.variantId, $event)">Threshold</button>
                           }
-                          <button class="adm-btn inv__act" type="button" [attr.data-testid]="'history-' + row.variantId" [attr.aria-label]="'Stock history for ' + row.sku" (click)="open('history', row.variantId, $event)">History</button>
+                          <button class="adm-btn inv__act inv__act--history" type="button" [attr.data-testid]="'history-' + row.variantId" [attr.aria-label]="'Stock history for ' + row.sku" (click)="open('history', row.variantId, $event)">History</button>
                         </div>
                       </td>
                     </tr>
@@ -301,8 +301,33 @@ interface Access {
        without the table scrolling inside its card. Still 44 px tall and at least 44 px wide (min-width
        from adm-btn). Below 1440 px the table may scroll inside its card; it never scrolls the page. */
     .inv__act { padding-inline: var(--space-0-5); letter-spacing: normal; }
+    /* Colour per job, so a row of three buttons reads at a glance (UAT feedback, 2026-10-24: they were three
+       identical white boxes). Stock changes the count (blue), Threshold sets the low-stock line (teal), History only
+       looks (slate). Each colour is a tint with its own darker shade for the label, mixed with the page's text
+       colour so it stays above 4.5:1 in the dark theme too; the border carries the hue for anyone who cannot tell
+       tints apart, and the words are still on the button. */
+    .inv__act {
+      --act: var(--status-cancelled);
+      font-weight: var(--weight-semibold);
+      color: color-mix(in srgb, var(--act) 62%, var(--color-text));
+      border-color: var(--act);
+      background: color-mix(in srgb, var(--act) 10%, var(--color-surface));
+    }
+    .inv__act:hover { background: color-mix(in srgb, var(--act) 22%, var(--color-surface)); }
+    .inv__act--stock { --act: var(--status-dispatched); }
+    .inv__act--threshold { --act: var(--status-delivered); }
+    .inv__act--history { --act: var(--status-cancelled); }
     .inv__pick { min-width: var(--tap); justify-content: center; }
-    .inv__low { color: var(--color-warning); border-color: var(--color-warning); }
+    /* The stock status, in the same three colours the dashboard's Low stock card uses (--stock-in / -low / -out). */
+    .inv__in, .inv__low, .inv__out { font-weight: var(--weight-semibold); }
+    .inv__in { --tone: var(--stock-in); }
+    .inv__low { --tone: var(--stock-low); }
+    .inv__out { --tone: var(--stock-out); }
+    .inv__in, .inv__low, .inv__out {
+      color: color-mix(in srgb, var(--tone) 60%, var(--color-text));
+      border-color: var(--tone);
+      background: color-mix(in srgb, var(--tone) 12%, var(--color-surface));
+    }
     .inv__results { margin: 0; padding-inline-start: var(--space-2); display: grid; gap: var(--space-0-5); overflow-wrap: anywhere; }
   `,
 })

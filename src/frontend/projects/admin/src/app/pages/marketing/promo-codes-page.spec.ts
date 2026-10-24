@@ -295,6 +295,17 @@ describe('PromoCodesPage (ADM-13)', () => {
    * Without this, a staff member editing a code that excludes campaign-priced lines would save it back
    * with the exclusion dropped — the form posts every field, so the box's state *is* the saved value.
    */
+  it('takes the staff member to the form when Edit is pressed', async () => {
+    await open();
+
+    click('edit-7');
+    await settle();
+    TestBed.tick();
+
+    // Edit sits on a row far below the form; without this the press looked like it did nothing.
+    expect(document.activeElement).toBe(element.querySelector('[data-testid="promo-code"]'));
+  });
+
   it('loads the exclusion from the row being edited and sends it back unchanged', async () => {
     await open([promoCode({ excludeSaleItems: true })]);
 

@@ -8,7 +8,8 @@ import { addDays, colomboToday, count, formatDay, presetPeriod } from '../../cor
 import { CustomerBuyers, CustomerBuyersPoint, CustomerReportPage } from '../../core/reporting/reporting.model';
 import { ChartTable, ChartView } from '../../core/charts/chart';
 import { StackedBarSpec } from '../../core/charts/chart-config';
-import { Announcer, canGo, periodProblem, rehomeFocus, saveFile, showing } from './report-shared';
+import { Announcer, ExportNote, canGo, exportFailed, exportSucceeded, periodProblem, rehomeFocus, saveFile, showing } from './report-shared';
+import { ExportNoteView } from './export-note';
 
 const PAGE_SIZE = 25;
 
@@ -23,7 +24,7 @@ const PAGE_SIZE = 25;
  */
 @Component({
   selector: 'sda-customer-report',
-  imports: [ChartView],
+  imports: [ChartView, ExportNoteView],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <form class="rpt__filters" aria-label="Customers report filters" (submit)="apply($event)">
@@ -51,6 +52,7 @@ const PAGE_SIZE = 25;
           {{ exporting() ? 'Preparing the file…' : 'Export CSV' }}
         </button>
       </div>
+      <sda-export-note [note]="exportNote()" testId="customers-export-note" />
       <p class="adm-panel__hint">The file holds names and email addresses. Every export is recorded in the audit log against your name.</p>
     }
 
@@ -150,6 +152,7 @@ export class CustomerReportView {
   protected readonly page = signal<CustomerReportPage | null>(null);
   protected readonly problem = signal<CatalogFailure | null>(null);
   protected readonly exporting = signal(false);
+  protected readonly exportNote = signal<ExportNote | null>(null);
 
   protected readonly buyers = signal<CustomerBuyers | null>(null);
   protected readonly buyersProblem = signal<CatalogFailure | null>(null);
@@ -260,6 +263,7 @@ export class CustomerReportView {
     }
 
     this.exporting.set(true);
+    this.exportNote.set(null);
     this.announcer.say('Preparing the export…');
 
     const { period, search } = this.applied();
@@ -268,10 +272,12 @@ export class CustomerReportView {
         this.exporting.set(false);
         saveFile(this.document, file.blob, file.fileName);
         this.announcer.say(`Export downloaded as ${file.fileName}.`);
+        this.exportNote.set(exportSucceeded(file.fileName));
       },
       error: (error: unknown) => {
         this.exporting.set(false);
         this.announcer.say(`The export failed. ${toCatalogFailure(error).message}`);
+        this.exportNote.set(exportFailed(toCatalogFailure(error).message));
       },
     });
   }

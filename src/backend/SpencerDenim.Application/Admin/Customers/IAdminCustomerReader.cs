@@ -18,6 +18,7 @@ public interface IAdminCustomerReader
     Task<AdminCustomerListPage> ReadListAsync(
         AdminCustomerSearchTerm? search,
         int? districtId,
+        string? countryCode,
         int page,
         int pageSize,
         CancellationToken cancellationToken);
