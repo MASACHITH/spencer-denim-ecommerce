@@ -2,10 +2,12 @@ using System.Globalization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Admin.Authentication;
 using SpencerDenim.Domain.Identity;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Configurations.Identity;
+using SpencerDenim.Infrastructure.Persistence.Interceptors;
 
 namespace SpencerDenim.Infrastructure.Identity;
 
@@ -22,7 +24,9 @@ public sealed class AdminAuthenticator(
     IPasswordHasher<AppUser> passwordHasher,
     IOptions<AdminSecurityOptions> securityOptions,
     StaffAccountLockout lockout,
-    AppDbContext dbContext) : IAdminAuthenticator
+    AppDbContext dbContext,
+    IClock clock,
+    AuditAndSoftDeleteInterceptor auditColumns) : IAdminAuthenticator
 {
     // Doc 08 §3.1 DB10: "the response never reveals which" — an unknown email, a customer match, or an
     // inactive account must cost the same as a genuine wrong-password attempt against a real, active staff
@@ -77,7 +81,7 @@ public sealed class AdminAuthenticator(
             {
                 // Issue #145: null means another request got to the account's pending sign-in first. The password
                 // was right, so this is not a failed login; it is the reply a stale pending sign-in gets.
-                var pendingSignInId = await OpenPendingSignInAsync(user);
+                var pendingSignInId = await OpenPendingSignInAsync(user, securityStamp);
                 return pendingSignInId is null
                     ? AdminAuthenticationOutcome.TwoFactorSessionExpired(user.Id, user.Email)
                     : AdminAuthenticationOutcome.TwoFactorRequired(user.Id, user.Email ?? email, securityStamp, pendingSignInId);
@@ -186,60 +190,69 @@ public sealed class AdminAuthenticator(
     /// Only a hash and the expiry are stored. A new password step replaces any earlier pending sign-in, so only the
     /// latest browser to pass the password can finish.
     /// <para>
-    /// Returns <see langword="null"/> when the write lost a race (issue #145), and the caller must not hand out a
-    /// pending cookie: the row it would name is not this request's. Two races reach it. The write is Identity's
-    /// read-modify-write of the token, so a second-step request that completes the sign-in in between deletes the
-    /// token row, the <c>UPDATE</c> finds no row, and the save is reported as a concurrency failure. (The failure comes
-    /// from the token row alone: the user row that Identity saves with it has no concurrency check, which is a separate
-    /// problem, issue #250.) And on an account with no pending sign-in yet, two password
-    /// steps (a double-clicked Sign in) both read "none" and both insert, so the second insert hits the primary key.
-    /// In both the winner holds the live pending sign-in, which is the rule above, and the loser is simply too late.
+    /// <b>The write is one statement of its own, on <c>identity.UserTokens</c> alone, and it is conditional.</b> It used
+    /// to be Identity's <c>SetAuthenticationTokenAsync</c>, which saves the token and then the whole user row the request
+    /// loaded before it spent its time on the password hash: an administrator's deactivation, or the owner's password
+    /// change, made inside that window was undone by the save (issue #250). Now the statement names the security stamp
+    /// the password was verified against and requires <c>IsActive = 1</c> in its own <c>WHERE</c>, so an account that was
+    /// closed, or whose password changed, since the request loaded it gets no pending sign-in at all, and nothing but the
+    /// token row is ever written.
     /// </para>
     /// <para>
-    /// Any other failure is still a bug and still throws, which is why this does not catch what it cannot name. The
-    /// unique-violation catch is not specific to the token's key, so it would also treat another unique violation in
-    /// that save as a lost race; that fails closed (a 401, never a session).
+    /// Returns <see langword="null"/> when the write did not happen, and the caller must not hand out a pending cookie:
+    /// the row it would name is not this request's. Three reasons, all "too late", all answered as a pending sign-in that
+    /// has expired (issue #145): another request deleted the row this one meant to replace (a second step completing the
+    /// sign-in); two password steps on an account with no pending sign-in both inserted it and the second hit the primary
+    /// key; or the account is no longer what the password was checked against. In the first two the winner holds the
+    /// live pending sign-in, which is the rule above, and the loser is simply too late.
+    /// </para>
+    /// <para>
+    /// Whether to replace or to insert is decided by one read just before the write, as Identity's own store decided it,
+    /// so a row that existed when this request got here and is gone when it writes is a lost race and not a new
+    /// sign-in. Any other failure is still a bug and still throws. The unique-violation filter is not specific to the
+    /// token's key; it fails closed (a 401, never a session).
     /// </para>
     /// </summary>
-    private async Task<string?> OpenPendingSignInAsync(AppUser user)
+    private async Task<string?> OpenPendingSignInAsync(AppUser user, string securityStamp)
     {
         var id = PendingSignInIds.NewId();
         var expiresUtc = DateTimeOffset.UtcNow.AddMinutes(securityOptions.Value.TwoFactorPendingSignInMinutes);
         var value = string.Create(CultureInfo.InvariantCulture, $"{PendingSignInIds.Hash(id)}|{expiresUtc.ToUnixTimeSeconds()}");
 
-        IdentityResult result;
+        var existed = await dbContext.Set<IdentityUserToken<int>>()
+            .AsNoTracking()
+            .AnyAsync(t => t.UserId == user.Id
+                && t.LoginProvider == AdminTokenNames.LoginProvider
+                && t.Name == AdminTokenNames.PendingTwoFactorSignIn);
+
+        int written;
         try
         {
-            result = await userManager.SetAuthenticationTokenAsync(user, AdminTokenNames.LoginProvider, AdminTokenNames.PendingTwoFactorSignIn, value);
+            written = existed
+                ? await dbContext.Database.ExecuteSqlAsync(
+                    $"""
+                    UPDATE [identity].[UserTokens]
+                       SET [Value] = {value}
+                     WHERE [UserId] = {user.Id}
+                       AND [LoginProvider] = {AdminTokenNames.LoginProvider}
+                       AND [Name] = {AdminTokenNames.PendingTwoFactorSignIn}
+                       AND EXISTS (SELECT 1 FROM [identity].[Users]
+                                    WHERE [Id] = {user.Id} AND [IsActive] = 1 AND [SecurityStamp] = {securityStamp})
+                    """)
+                : await dbContext.Database.ExecuteSqlAsync(
+                    $"""
+                    INSERT INTO [identity].[UserTokens] ([UserId], [LoginProvider], [Name], [Value])
+                    SELECT {user.Id}, {AdminTokenNames.LoginProvider}, {AdminTokenNames.PendingTwoFactorSignIn}, {value}
+                     WHERE EXISTS (SELECT 1 FROM [identity].[Users]
+                                    WHERE [Id] = {user.Id} AND [IsActive] = 1 AND [SecurityStamp] = {securityStamp})
+                    """);
         }
-        catch (DbUpdateException exception) when (SqlUniqueViolation.Matches(exception))
+        catch (Exception exception) when (SqlUniqueViolation.Matches(exception))
         {
-            ForgetFailedPendingSignInWrite(user);
             return null;
         }
 
-        var concurrencyFailure = userManager.ErrorDescriber.ConcurrencyFailure().Code;
-        if (!result.Succeeded && result.Errors.Any(e => e.Code == concurrencyFailure))
-        {
-            ForgetFailedPendingSignInWrite(user);
-            return null;
-        }
-
-        EnsureSucceeded(result);
-        return id;
-    }
-
-    /// <summary>
-    /// A save that failed leaves what it tried to write in the change tracker, and any later save on this
-    /// <see cref="DbContext"/> would try it again (see <see cref="ClosePendingSignInAsync"/>). Nothing on today's lost-race
-    /// path saves again, because the login handler answers without an audit write, so this is a guard against a later
-    /// change that adds one, and not something a test can currently tell apart. The token row and the user row are let
-    /// go; the caller reads only the user's id and email from here on.
-    /// </summary>
-    private void ForgetFailedPendingSignInWrite(AppUser user)
-    {
-        ForgetTrackedPendingSignIn(user);
-        dbContext.Entry(user).State = EntityState.Detached;
+        return written == 1 ? id : null;
     }
 
     /// <summary>True when <paramref name="id"/> names the open, unexpired pending sign-in. An expired one is removed.</summary>
@@ -319,15 +332,6 @@ public sealed class AdminAuthenticator(
         }
     }
 
-    private static void EnsureSucceeded(IdentityResult result)
-    {
-        if (!result.Succeeded)
-        {
-            throw new InvalidOperationException(
-                $"Could not open the pending sign-in: {string.Join("; ", result.Errors.Select(e => e.Description))}");
-        }
-    }
-
     /// <summary>
     /// An authenticator code is checked against the current key by the replay-protected TOTP provider (a few
     /// 30-second steps either side for clock drift, each step usable once); a recovery code is redeemed, which
@@ -349,7 +353,20 @@ public sealed class AdminAuthenticator(
             && await userManager.VerifyTwoFactorTokenAsync(user, userManager.Options.Tokens.AuthenticatorTokenProvider, authenticatorCode);
     }
 
-    /// <summary>A completed sign-in: records it on the account and loads what the session principal is built from.</summary>
+    /// <summary>
+    /// A completed sign-in: records it on the account and loads what the session principal is built from.
+    /// <para>
+    /// <b>The recording is the last look at the account before a session is issued, so it is conditional</b> (issue #250).
+    /// The password or the code was checked against the account as the request loaded it, which can be several hundred
+    /// milliseconds ago; an administrator may have deactivated it, or the owner changed the password, since. One
+    /// statement sets <c>LastLoginAtUtc</c> and nothing else, and only where the account is still active with the security
+    /// stamp the check was made against. If it matches no row the account is no longer what the sign-in was decided on:
+    /// no session, and the answer is the one the same moment's next attempt would get (invalid credentials for the
+    /// password-only path, an expired sign-in for the second step), so it tells a caller nothing new. It used to be
+    /// <c>UserManager.UpdateAsync</c>, which wrote every column the request had loaded and so put a deactivated account
+    /// back to active and a changed password back to the old hash and stamp.
+    /// </para>
+    /// </summary>
     private async Task<AdminAuthenticationOutcome> SucceedAsync(
         AppUser user,
         string securityStamp,
@@ -357,8 +374,12 @@ public sealed class AdminAuthenticator(
         bool usedRecoveryCode = false,
         int recoveryCodesLeft = 0)
     {
-        user.LastLoginAtUtc = DateTime.UtcNow;
-        await userManager.UpdateAsync(user);
+        if (!await RecordSignInAsync(user.Id, securityStamp))
+        {
+            return twoFactorEnabled
+                ? AdminAuthenticationOutcome.TwoFactorSessionExpired(user.Id, user.Email)
+                : AdminAuthenticationOutcome.InvalidCredentials(user.Id, user.Email);
+        }
 
         var (grantsAll, permissions) = await LoadPermissionsAsync(user);
         return AdminAuthenticationOutcome.Succeeded(
@@ -373,6 +394,29 @@ public sealed class AdminAuthenticator(
             twoFactorEnabled,
             usedRecoveryCode,
             recoveryCodesLeft);
+    }
+
+    /// <summary>
+    /// Records a completed sign-in and answers whether the account was still what it was decided on: active, with the
+    /// security stamp the password or the code was checked against. <c>UpdatedAtUtc</c> and <c>UpdatedByUserId</c> are
+    /// set here because a statement that goes around <c>SaveChanges</c> does not pass the audit-column interceptor
+    /// (<see cref="StaffAccountLockout"/> does the same for its statements).
+    /// </summary>
+    private async Task<bool> RecordSignInAsync(int userId, string securityStamp)
+    {
+        var now = clock.UtcNow.UtcDateTime;
+        var updatedBy = auditColumns.ResolveCurrentUserId();
+
+        var written = await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE [identity].[Users]
+               SET [LastLoginAtUtc] = {now},
+                   [UpdatedAtUtc] = {now},
+                   [UpdatedByUserId] = {updatedBy}
+             WHERE [Id] = {userId} AND [IsActive] = 1 AND [SecurityStamp] = {securityStamp}
+            """);
+
+        return written == 1;
     }
 
     /// <summary>
