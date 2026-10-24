@@ -200,6 +200,11 @@ internal static class AdminAuthEndpoints
                     success.TwoFactorEnabled,
                     success.TwoFactorEnrolmentRequired));
 
+            // Only the password step can reach this from here (the second step answers it before it gets this far):
+            // another sign-in took the account's pending sign-in between the password check and its write (#145).
+            case AdminLoginResult.TwoFactorSessionExpired:
+                return TwoFactorSessionExpired();
+
             case AdminLoginResult.LockedOut lockedOut:
                 return TypedResults.Json(
                     new AdminLoginErrorResponse("locked_out", "This account is temporarily locked after repeated failed sign-in attempts. Try again later.", lockedOut.LockoutEndUtc),

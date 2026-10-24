@@ -41,6 +41,11 @@ public sealed class AdminLoginCommandHandler(IAdminAuthenticator authenticator, 
             case AdminAuthenticationStatus.TwoFactorRequired:
                 return new AdminLoginResult.TwoFactorRequired(outcome.UserId!.Value, outcome.SecurityStamp!, outcome.PendingSignInId!);
 
+            // Issue #145: the password was right but another request took the account's pending sign-in first. Nothing
+            // failed, so there is no LoginFailed row (and none that says the credentials were wrong).
+            case AdminAuthenticationStatus.TwoFactorSessionExpired:
+                return new AdminLoginResult.TwoFactorSessionExpired();
+
             case AdminAuthenticationStatus.LockedOut:
                 await WriteAuditAsync(AuditActions.LoginFailed, outcome, command, beforeJson: null, cancellationToken);
                 if (outcome.WasNewlyLockedOut)
