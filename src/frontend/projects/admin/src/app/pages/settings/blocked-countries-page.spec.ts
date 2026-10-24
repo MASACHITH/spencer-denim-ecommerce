@@ -342,4 +342,33 @@ describe('BlockedCountriesPage', () => {
     expect(byTestId('bc-problem')?.textContent).toContain('permission');
     expect(byTestId('bc-countries')).toBeNull();
   });
+
+  it('shows a loading indicator while reloading after an error', async () => {
+    fixture = TestBed.createComponent(BlockedCountriesPage);
+    element = fixture.nativeElement as HTMLElement;
+    document.body.appendChild(element);
+    await settle();
+
+    // Fail the initial load
+    http.expectOne(AdminAuthApi.whoAmIUrl).flush({ grantsAllPermissions: true, permissions: [] });
+    http.expectOne(OverseasDeliveryApi.url).flush(
+      { detail: 'Server error.' },
+      { status: 500, statusText: 'Internal Server Error' },
+    );
+    await settle();
+
+    expect(byTestId('bc-problem')).not.toBeNull();
+    const reloadBtn = element.querySelector<HTMLButtonElement>('button[type="button"]')!;
+
+    // Click Reload and check before the pending request is answered
+    reloadBtn.click();
+    await settle();
+
+    expect(byTestId('bc-loading')).not.toBeNull();
+
+    // Clean up
+    http.expectOne(OverseasDeliveryApi.url).flush(screen());
+    await settle();
+    expect(byTestId('bc-panel')).not.toBeNull();
+  });
 });

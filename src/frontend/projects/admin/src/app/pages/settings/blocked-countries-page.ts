@@ -118,6 +118,10 @@ import {
                 }
               </span>
             </li>
+          } @empty {
+            <li class="bc-row bc-row--empty">
+              <span class="bc-row__info">No countries match "{{ search() }}".</span>
+            </li>
           }
         </ul>
       </section>
@@ -141,6 +145,8 @@ import {
     }
 
     .bc-row--blocked { background: var(--color-surface-error, #fff5f5); }
+
+    .bc-row--empty { color: var(--color-muted); font-style: italic; }
 
     .bc-row__info {
       display: flex;
@@ -219,6 +225,7 @@ export class BlockedCountriesPage {
   }
 
   protected load(keepProblem = false): void {
+    this.loading.set(true);
     if (!keepProblem) {
       this.problem.set(null);
     }
@@ -257,7 +264,7 @@ export class BlockedCountriesPage {
 
     if (this.savingRow(country.code)) {
       if (box) {
-        box.checked = !country.isShippingEnabled;
+        box.checked = country.isShippingEnabled;  // revert to pending first-toggle's visual
       }
 
       return;
