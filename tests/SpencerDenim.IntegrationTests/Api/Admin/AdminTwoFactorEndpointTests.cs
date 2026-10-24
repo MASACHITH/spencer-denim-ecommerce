@@ -689,8 +689,8 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
     /// <summary>
     /// Issue #145: a password step racing the second step of the sign-in it is about to replace. The password step has
     /// read the account (and the pending sign-in it will overwrite); the second step then completes the sign-in, which
-    /// deletes that pending row and changes the account; the password step's write finds neither where it left them.
-    /// That used to be an unhandled exception (a 500). The password was right and nothing is wrong with the account,
+    /// deletes that pending row; the password step's write finds the row gone. That used to be an unhandled exception
+    /// (a 500). The password was right and nothing is wrong with the account,
     /// so it is the same reply a stale pending sign-in gets, and it is not a failed login: no <c>LoginFailed</c> audit
     /// row, no pending cookie, and the next attempt works.
     /// </summary>

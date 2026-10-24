@@ -188,14 +188,17 @@ public sealed class AdminAuthenticator(
     /// <para>
     /// Returns <see langword="null"/> when the write lost a race (issue #145), and the caller must not hand out a
     /// pending cookie: the row it would name is not this request's. Two races reach it. The write is Identity's
-    /// read-modify-write of the token and then of the user row, so a second-step request that completes the sign-in in
-    /// between deletes the token and changes the user's concurrency stamp, and the save is reported as a concurrency
-    /// failure. And on an account with no pending sign-in yet, two password steps (a double-clicked Sign in) both
-    /// read "none" and both insert, so the second insert hits the primary key. In both the winner holds the live
-    /// pending sign-in, which is the rule above, and the loser is simply too late.
+    /// read-modify-write of the token, so a second-step request that completes the sign-in in between deletes the
+    /// token row, the <c>UPDATE</c> finds no row, and the save is reported as a concurrency failure. (The failure comes
+    /// from the token row alone: the user row that Identity saves with it has no concurrency check, which is a separate
+    /// problem, issue #250.) And on an account with no pending sign-in yet, two password
+    /// steps (a double-clicked Sign in) both read "none" and both insert, so the second insert hits the primary key.
+    /// In both the winner holds the live pending sign-in, which is the rule above, and the loser is simply too late.
     /// </para>
     /// <para>
-    /// Any other failure is still a bug and still throws, which is why this does not catch what it cannot name.
+    /// Any other failure is still a bug and still throws, which is why this does not catch what it cannot name. The
+    /// unique-violation catch is not specific to the token's key, so it would also treat another unique violation in
+    /// that save as a lost race; that fails closed (a 401, never a session).
     /// </para>
     /// </summary>
     private async Task<string?> OpenPendingSignInAsync(AppUser user)
@@ -227,9 +230,11 @@ public sealed class AdminAuthenticator(
     }
 
     /// <summary>
-    /// A save that failed leaves what it tried to write in the change tracker, and the audit write that shares this
-    /// <see cref="DbContext"/> would try it again and fail the whole request (see <see cref="ClosePendingSignInAsync"/>).
-    /// The token row and the user row are let go; the caller reads only the user's id and email from here on.
+    /// A save that failed leaves what it tried to write in the change tracker, and any later save on this
+    /// <see cref="DbContext"/> would try it again (see <see cref="ClosePendingSignInAsync"/>). Nothing on today's lost-race
+    /// path saves again, because the login handler answers without an audit write, so this is a guard against a later
+    /// change that adds one, and not something a test can currently tell apart. The token row and the user row are let
+    /// go; the caller reads only the user's id and email from here on.
     /// </summary>
     private void ForgetFailedPendingSignInWrite(AppUser user)
     {
