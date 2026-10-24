@@ -19,6 +19,9 @@ function region(overrides: Partial<DeliveryRegionRow> = {}): DeliveryRegionRow {
     fee: 9500,
     estimatedDaysMin: 7,
     estimatedDaysMax: 14,
+    expressFee: null,
+    expressDaysMin: 3,
+    expressDaysMax: 6,
     isEnabled: true,
     countryCount: 52,
     rowVersion: 'AAAAAAAAB9E=',
@@ -35,13 +38,20 @@ function country(overrides: Partial<CountryDeliveryRow> = {}): CountryDeliveryRo
     deliveryFeeOverride: null,
     estimatedDaysMinOverride: null,
     estimatedDaysMaxOverride: null,
+    expressFeeOverride: null,
+    expressDaysMinOverride: null,
+    expressDaysMaxOverride: null,
     postalCodeRequired: true,
     regionRequired: false,
     isAvailable: true,
     effectiveFee: 9500,
     effectiveDaysMin: 7,
     effectiveDaysMax: 14,
+    effectiveExpressFee: null,
+    effectiveExpressDaysMin: null,
+    effectiveExpressDaysMax: null,
     refusal: 'None',
+    expressRefusal: 'None',
     rowVersion: 'AAAAAAAAB9F=',
     ...overrides,
   };
@@ -214,6 +224,9 @@ describe('BlockedCountriesPage', () => {
       deliveryFeeOverride: null,
       estimatedDaysMinOverride: null,
       estimatedDaysMaxOverride: null,
+      expressFeeOverride: null,
+      expressDaysMinOverride: null,
+      expressDaysMaxOverride: null,
       rowVersion: 'AAAAAAAAB9F=',
     });
     request.flush(screen());
@@ -235,9 +248,51 @@ describe('BlockedCountriesPage', () => {
       deliveryFeeOverride: null,
       estimatedDaysMinOverride: null,
       estimatedDaysMaxOverride: null,
+      expressFeeOverride: null,
+      expressDaysMinOverride: null,
+      expressDaysMaxOverride: null,
       rowVersion: 'AAAAAAAAB9D=',
     });
     request.flush(screen());
+    await settle();
+  });
+
+  it('sends the Express overrides back unchanged, so blocking or reopening a country never clears them', async () => {
+    const express = { expressFeeOverride: 12500, expressDaysMinOverride: 3, expressDaysMaxOverride: 6 };
+    await open(
+      'all',
+      screen({
+        countries: [
+          country({ code: 'GB', name: 'United Kingdom', ...express }),
+          country({ code: 'US', name: 'United States', isShippingEnabled: false, isAvailable: false, refusal: 'CountryDisabled', ...express, rowVersion: 'AAAAAAAAB9D=' }),
+        ],
+      }),
+    );
+
+    const block = byTestId<HTMLInputElement>('bc-toggle-GB')!;
+    block.checked = true;
+    block.dispatchEvent(new Event('change'));
+    await answerAntiforgery();
+    const blocking = http.expectOne(`${OverseasDeliveryApi.url}/countries/GB`);
+    expect(blocking.request.body).toMatchObject({ isShippingEnabled: false, ...express });
+    // The server's reply is the whole screen again, with the Express overrides it still holds.
+    blocking.flush(
+      screen({
+        countries: [
+          country({ code: 'GB', name: 'United Kingdom', isShippingEnabled: false, isAvailable: false, refusal: 'CountryDisabled', ...express, rowVersion: 'NEWVERSION=' }),
+          country({ code: 'US', name: 'United States', isShippingEnabled: false, isAvailable: false, refusal: 'CountryDisabled', ...express, rowVersion: 'AAAAAAAAB9D=' }),
+        ],
+      }),
+    );
+    await settle();
+
+    const reopen = byTestId<HTMLInputElement>('bc-toggle-US')!;
+    reopen.checked = false;
+    reopen.dispatchEvent(new Event('change'));
+    await answerAntiforgery();
+    const reopening = http.expectOne(`${OverseasDeliveryApi.url}/countries/US`);
+    expect(reopening.request.body).toMatchObject({ isShippingEnabled: true, ...express });
+    reopening.flush(screen());
     await settle();
   });
 
