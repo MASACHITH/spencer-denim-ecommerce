@@ -154,12 +154,16 @@ public static class AdminWriteRequest
     /// surrogate pair. It reports that as an <see cref="InvalidOperationException"/>.
     /// </item>
     /// <item>
-    /// A property named twice (also when spelled two ways, <c>code</c> and <c>code</c>). The first enumeration of an
-    /// object builds its dictionary, and that throws <see cref="ArgumentException"/>.
+    /// A property named twice. Two spellings count as the same name when they differ only in letter case
+    /// (<c>Code</c> and <c>code</c>, which is how the handlers look a property up) or only in a JSON escape of one
+    /// letter. The first enumeration of an object builds its dictionary, and that throws
+    /// <see cref="ArgumentException"/>.
     /// </item>
     /// </list>
     /// Both catches are confined to this walk, whose only operations are enumerating and reading strings, so they
-    /// cannot hide a fault elsewhere in the request.
+    /// cannot hide a fault elsewhere in the request. The <see cref="ArgumentException"/> catch also covers its
+    /// subclasses; no body has been found that reaches one of them, and one that did would be reported as a repeated
+    /// name.
     /// </summary>
     private static string? FindUnreadableContent(JsonNode node)
     {

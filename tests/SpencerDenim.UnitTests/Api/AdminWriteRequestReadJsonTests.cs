@@ -184,9 +184,13 @@ public sealed class AdminWriteRequestReadJsonTests
     /// The other way a lazily parsed body fails later: a property named twice. The first time anything enumerates the
     /// object it builds its dictionary, and that throws <see cref="ArgumentException"/> ("an item with the same key
     /// has already been added"), which was a 500 on every <see cref="JsonObject"/> route (found by the round-2 tester).
-    /// A name spelled two ways in the JSON text, <c>code</c> and <c>code</c>, is still the same name.
+    /// Two spellings of one name are still one name: they differ only in letter case (the serializer matches property
+    /// names case-insensitively, as the handlers do when they look a property up), or only in a JSON escape of one
+    /// letter, which is the third case below.
     /// </summary>
     [Theory]
+    [InlineData("{\"Code\":\"a\",\"code\":\"b\"}")]
+    [InlineData("{\"CODE\":\"a\",\"code\":\"b\"}")]
     [InlineData("{\"code\":\"a\",\"code\":\"b\"}")]
     [InlineData("{\"zzz\":1,\"zzz\":2}")]
     [InlineData("{\"code\":\"a\",\"c\\u006fde\":\"b\"}")]
