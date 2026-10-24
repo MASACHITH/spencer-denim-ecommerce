@@ -1,29 +1,41 @@
-import { Page, expect, test } from '@playwright/test';
+import { Locator, Page, expect, test } from '@playwright/test';
 
 import { apiURL } from '../playwright.config';
 
 /**
- * Where a navigation leaves the page (the router's scroll handling, `app.config.ts`).
+ * Where a navigation leaves the page (`core/platform/navigation-scroll.ts`, and the skip link in `app.ts`).
  *
  * The bug this exists for: the router had no scroll handling at all, so a shopper who clicked "About us" or
  * "Returns and exchanges" in the footer arrived on the new page still scrolled to the bottom of the old one,
  * looking at a footer under an empty-looking page. A real browser is needed because the whole question is a
  * scroll offset, which jsdom does not have.
  *
- * Two halves, and each is checked against the thing that would break it:
+ * The rule, and each half of it is checked against the thing that would break it:
  *
- *  - **A new page starts at the top** (a footer link at two widths), Back returns to where the shopper was, and
- *    the "Skip to content" link, a plain `#main` anchor, still goes to the content instead of the top.
- *  - **A change of state on the page the shopper is already on does not move them**: a filter, the sort, Load
- *    More, and choosing a size. Each of those is a router navigation, so each would otherwise scroll to the top.
- *    A different department is a different page and does go to the top.
+ *  - **A link that opens a different page opens it at the top**, whichever link it is, at 390 and 1280 px, and
+ *    **with no wait after the page loads** (the only gate is Angular's own `ng-version`, so a click in the first
+ *    moments is what is measured), also on a slow 3G connection with a 4x slower CPU.
+ *  - **Nothing else moves the page.** A filter, the sort, a removed chip, Load More, a colour or a size changes only
+ *    the query string and keeps the shopper where they are. Back, Forward and a reload are the browser's, as
+ *    they were: Back returns to the earlier position, Forward to a page that was left at its top, and a reload
+ *    comes back at the same offset.
+ *  - **The skip link stays on the page.** `index.html` has `<base href="/">`, so a plain `href="#main"` was a
+ *    full load of the home page from any other page.
  *
- * The state changes are made with a DOM `click()` and not Playwright's own, because Playwright scrolls the
- * target into view before it acts, which would move the page itself and let a test pass for the wrong reason.
+ * Every link test sets a marker on `window` before the click and checks it afterwards: a link that fell back to a
+ * real page load would also "land at the top", and would pass for the wrong reason.
+ *
+ * The state changes are made with a DOM `click()` and not Playwright's own, because Playwright scrolls the target
+ * into view before it acts, which would move the page itself and let a test pass for the wrong reason.
  */
 
 const LISTING = '/women/jeans';
 const PRODUCT = '/product/test-product-1';
+
+const VIEWPORTS = [
+  { name: '390 px', width: 390, height: 844 },
+  { name: '1280 px', width: 1280, height: 800 },
+] as const;
 
 /**
  * The footer links that exist on the main stub. About us, Delivery and shipping, Returns and exchanges and
@@ -32,43 +44,10 @@ const PRODUCT = '/product/test-product-1';
  */
 const FOOTER_LINKS = ['Women', 'Men', 'Kids', 'New Arrivals', 'Sale', 'Track your order'] as const;
 
-const VIEWPORTS = [
-  { name: '390 px', width: 390, height: 844 },
-  { name: '1280 px', width: 1280, height: 800 },
-] as const;
-
 /**
- * How long a freshly hydrated page is given to become stable. **Measured, and it matters:** the router does not
- * emit a scroll while the application is still hydrating (`RouterScroller.scheduleScrollEvent` returns early
- * until `ApplicationRef.whenStable()` has resolved once), so a click in the first moments after load is not
- * scrolled at all. At 390 px, from 8,000 px down the home page, a footer click with no wait left the shopper at
- * 930 px, and the same click after 2 s, 5 s, 10 s and 20 s all landed at 0. A test that clicked inside that
- * window would fail for a reason that is not the fix, and, worse, a test that asserts "did NOT jump to the top"
- * would pass inside it whether or not the opt-outs exist. So every test settles first.
- */
-const SETTLE_MS = 3000;
-
-/**
- * Waits until the page has hydrated, then until it has settled. A click on server-rendered markup has no handler
- * yet and is replayed rather than handled; `ng-version` is the gate `home-page.e2e.ts` uses. See `SETTLE_MS` for
- * the second wait.
- */
-async function hydrated(page: Page): Promise<void> {
-  await expect
-    .poll(() => page.evaluate(() => window.getComputedStyle(document.body).visibility))
-    .toBe('visible');
-  await page.waitForFunction(() => {
-    const root = document.querySelector('sd-root');
-    return !!root && root.hasAttribute('ng-version');
-  });
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(SETTLE_MS);
-}
-
-/**
- * The browser's own `/api` calls (a filter, the sort, "Load More") go to the storefront's origin, which in
- * production is a reverse proxy in front of the API. Here it is the stub, fetched from the test process so no
- * cross-origin rule is involved. The same helper `product-listing.e2e.ts` uses.
+ * The browser's own `/api` calls (a filter, the sort, "Load More", a suggestion) go to the storefront's origin,
+ * which in production is a reverse proxy in front of the API. Here it is the stub, fetched from the test process so
+ * no cross-origin rule is involved. The same helper `product-listing.e2e.ts` uses.
  */
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/catalog/**', async (route) => {
@@ -77,6 +56,31 @@ test.beforeEach(async ({ page }) => {
     await route.fulfill({ response });
   });
 });
+
+/**
+ * The page's own bootstrap is the only gate: `ng-version` is stamped on the root element when Angular starts, which
+ * is the moment the page begins to handle its own events. **There is deliberately no wait after it**, because the
+ * first version of this fix scrolled nothing for the first two seconds after a load (the router skips scrolling
+ * while the freshly hydrated app is not yet stable) and a test that waited would never have found that.
+ */
+async function loaded(page: Page, timeout = 30_000): Promise<void> {
+  await page.waitForFunction(() => document.querySelector('sd-root')?.hasAttribute('ng-version'), undefined, {
+    timeout,
+  });
+}
+
+/**
+ * For a link that belongs to the page's own content (a breadcrumb, a product card, a home section, the quick view)
+ * and not to the shell. **Not a wait for the router to settle**: the fix has none, and the shell's links are
+ * measured with none. It is the readiness of the link itself. The route's component is lazy, and on a server-rendered
+ * page it attaches its listeners when the load's own navigation ends, which is after the start-up requests have
+ * answered; before that a click on its links is a plain link, which loads a fresh page (that also lands at the top,
+ * and is not the router's doing). The marker the link tests set reports that, so they wait for it to be over.
+ */
+async function contentLoaded(page: Page, timeout = 30_000): Promise<void> {
+  await loaded(page, timeout);
+  await page.waitForLoadState('networkidle', { timeout });
+}
 
 const scrollY = (page: Page): Promise<number> => page.evaluate(() => Math.round(window.scrollY));
 
@@ -91,79 +95,395 @@ async function scrollToEnd(page: Page): Promise<number> {
   return scrollY(page);
 }
 
-for (const viewport of VIEWPORTS) {
-  test.describe(`a footer link opens its page at the top, at ${viewport.name}`, () => {
-    test.use({ viewport: { width: viewport.width, height: viewport.height } });
+/** A value that a full page load would lose. */
+async function mark(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    (window as unknown as { __kept: boolean }).__kept = true;
+  });
+}
 
-    for (const label of FOOTER_LINKS) {
-      test(label, async ({ page }) => {
-        await page.goto('/');
-        await hydrated(page);
+async function wasKept(page: Page): Promise<boolean> {
+  return page.evaluate(() => (window as unknown as { __kept?: boolean }).__kept === true);
+}
 
-        const scrolledTo = await scrollToEnd(page);
-        expect(scrolledTo, 'the home page must be long enough to scroll, or this proves nothing').toBeGreaterThan(300);
-        const from = page.url();
+/**
+ * Runs `click` from a page that is scrolled down, and checks the page it opens starts at the top, is a client-side
+ * navigation (the marker survives), and has its heading on screen.
+ */
+async function opensAtTop(
+  page: Page,
+  label: string,
+  click: () => Promise<void>,
+  timeout = 5_000,
+): Promise<void> {
+  const from = page.url();
+  await mark(page);
 
-        await page
-          .getByRole('contentinfo')
-          .getByRole('link', { name: label, exact: true })
-          .first()
-          .click();
+  await click();
 
-        await expect(page).not.toHaveURL(from);
-        await expect
-          .poll(() => scrollY(page), { message: `"${label}" should open scrolled to the top` })
-          .toBe(0);
-        await expect(page.getByRole('heading', { level: 1 }).first()).toBeInViewport();
-      });
+  await expect(page, `"${label}" should go to another page`).not.toHaveURL(from, { timeout });
+  await expect
+    .poll(() => scrollY(page), { message: `"${label}" should open scrolled to the top`, timeout })
+    .toBe(0);
+  expect(await wasKept(page), `"${label}" did a full page load, not a client-side navigation`).toBe(true);
+
+  // The page is there and its top is on screen. Not "the heading is on screen": at 390 px a department's hero or a
+  // product's gallery is taller than the phone, so the heading is rightly below the fold at scroll offset 0.
+  await expect(page.getByRole('heading', { level: 1 }).first()).toBeAttached({ timeout });
+  await expect(page.locator('main#main')).toBeInViewport({ timeout });
+}
+
+const header = (page: Page): Locator => page.locator('header').first();
+
+/**
+ * Applies a change of state and waits for the page to answer it, applying it again until it does.
+ *
+ * Why it is a loop: the route's component is lazy, and on a server-rendered page the load's own navigation ends
+ * only after the start-up requests have answered, so for a moment after `ng-version` the page's listeners are not
+ * attached and a change dispatched in that moment is lost (a dispatched `change` event is not replayed). The
+ * changes passed in are idempotent (set a value, never toggle), so applying one twice is the same as once.
+ */
+async function applyUntil(page: Page, apply: () => Promise<void>, answered: RegExp): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        await apply();
+        return page.url();
+      },
+      { timeout: 15_000 },
+    )
+    .toMatch(answered);
+}
+
+/** Sets a select to a value it does not hold now, and returns that value; setting it again changes nothing. */
+async function otherOption(select: Locator): Promise<string> {
+  return select.evaluate((element: HTMLSelectElement) => {
+    const other = [...element.options].map((option) => option.value).find((value) => value !== element.value);
+    return other ?? element.value;
+  });
+}
+
+async function chooseOption(select: Locator, value: string): Promise<void> {
+  await select.evaluate((element: HTMLSelectElement, chosen: string) => {
+    element.value = chosen;
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  }, value);
+}
+
+/** Ticks a checkbox that is not ticked; a tick that is already there is left alone. */
+async function tick(box: Locator): Promise<void> {
+  await box.evaluate((element: HTMLInputElement) => {
+    if (!element.checked) {
+      element.click();
     }
   });
 }
 
-test.describe('Back and Forward', () => {
-  test.use({ viewport: { width: 1280, height: 800 } });
+/** Opens the phone's menu drawer, or does nothing at a width that shows the navigation in the header. */
+async function openMenuIfPhone(page: Page): Promise<void> {
+  const toggle = page.locator('[data-testid="menu-toggle"]');
+  if (await toggle.isVisible()) {
+    await toggle.click();
+    await expect(page.locator('#storefront-menu')).toBeVisible();
+  }
+}
 
-  test('Back returns the shopper to where they left the page', async ({ page }) => {
-    await page.goto('/');
-    await hydrated(page);
-    const before = await scrollToEnd(page);
+/** The link to a department, wherever this width keeps it: the header, or the phone's drawer. */
+function departmentLink(page: Page, name: string): Locator {
+  return page.locator('header, #storefront-menu').getByRole('link', { name, exact: true }).first();
+}
 
-    await page.getByRole('contentinfo').getByRole('link', { name: 'Sale', exact: true }).first().click();
-    await expect.poll(() => scrollY(page)).toBe(0);
+for (const viewport of VIEWPORTS) {
+  test.describe(`a link opens its page at the top, at ${viewport.name}, with no wait after load`, () => {
+    test.use({ viewport: { width: viewport.width, height: viewport.height } });
 
-    await page.goBack();
+    for (const label of FOOTER_LINKS) {
+      test(`footer: ${label}`, async ({ page }) => {
+        await page.goto('/');
+        await loaded(page);
+        expect(await scrollToEnd(page), 'the home page must be long enough to scroll').toBeGreaterThan(300);
 
-    // A little tolerance: the server's page and the hydrated one can differ by a few pixels of layout.
-    await expect
-      .poll(() => scrollY(page), { message: 'Back should restore the earlier position' })
-      .toBeGreaterThan(before - 60);
+        await opensAtTop(page, label, () =>
+          page.getByRole('contentinfo').getByRole('link', { name: label, exact: true }).first().click(),
+        );
+      });
+    }
+
+    // On the phone, Men and Kids in the drawer are accordions that expand to their categories, not links; the plain
+    // links are New Arrivals and Sale. The categories inside them are links, and are the mega menu's at 1280 px.
+    const headerLabels = viewport.width < 768 ? ['New Arrivals', 'Sale'] : ['Men', 'Kids', 'New Arrivals', 'Sale'];
+
+    for (const label of headerLabels) {
+      test(`header: ${label}`, async ({ page }) => {
+        await page.goto('/');
+        await loaded(page);
+        await scrollTo(page, 900);
+
+        await opensAtTop(page, label, async () => {
+          await openMenuIfPhone(page);
+          await departmentLink(page, label).click();
+        });
+      });
+    }
+
+    test('header: the wordmark, from a listing', async ({ page }) => {
+      await page.goto(LISTING);
+      await loaded(page);
+      await scrollTo(page, 900);
+
+      await opensAtTop(page, 'wordmark', () => page.locator('header a[href="/"]').first().click());
+    });
+
+    test('breadcrumb: Women, from a category', async ({ page }) => {
+      await page.goto(LISTING);
+      await contentLoaded(page);
+      await scrollTo(page, 600);
+
+      await opensAtTop(page, 'breadcrumb Women', () =>
+        page
+          .getByRole('navigation', { name: /breadcrumb/i })
+          .getByRole('link', { name: 'Women', exact: true })
+          .evaluate((link: HTMLElement) => link.click()),
+      );
+    });
+
+    test('product card: the product name', async ({ page }) => {
+      await page.goto(LISTING);
+      await contentLoaded(page);
+      await scrollTo(page, 600);
+
+      await opensAtTop(page, 'product card', () => page.locator('.card__name a').first().click());
+      await expect(page).toHaveURL(/\/product\//);
+    });
+
+    test('quick view: "full details"', async ({ page }) => {
+      await page.goto(LISTING);
+      await contentLoaded(page);
+      await scrollTo(page, 600);
+
+      const dialog = page.locator('#quick-view');
+      const trigger = page.locator('[data-testid="card-quick-view"]').first();
+      await expect
+        .poll(
+          async () => {
+            if (!(await dialog.isVisible())) {
+              await trigger.click();
+            }
+            return dialog.isVisible();
+          },
+          { timeout: 15_000 },
+        )
+        .toBe(true);
+
+      await opensAtTop(page, 'quick view full details', () => dialog.locator('.qv__full').click());
+      await expect(page).toHaveURL(/\/product\//);
+    });
+
+    test('a home section: the first link in a section', async ({ page }) => {
+      await page.goto('/');
+      await contentLoaded(page);
+      await scrollTo(page, 900);
+
+      const link = page
+        .locator('sd-department-tiles a, sd-feature-banner a, sd-product-row a')
+        .filter({ visible: true })
+        .first();
+
+      await opensAtTop(page, 'home section link', () => link.evaluate((anchor: HTMLElement) => anchor.click()));
+    });
+
+    test('a search suggestion in the header', async ({ page }) => {
+      await page.goto('/');
+      await loaded(page);
+      await scrollTo(page, 900);
+
+      const toggle = page.locator('[data-testid="search-toggle"]');
+      if (await toggle.isVisible()) {
+        await toggle.click();
+      }
+
+      // The header has three comboboxes (the delivery country, the district, the search); this is the search.
+      const box = header(page).locator('[role="combobox"][id^="sd-search"]').filter({ visible: true }).first();
+      await box.click();
+      await box.pressSequentially('jeans', { delay: 20 });
+      // The suggestions of the search box, and not the options of the country selector beside it.
+      const option = header(page).locator('sd-header-search .suggestions [role="option"]').first();
+      await expect(option).toBeVisible();
+
+      await opensAtTop(page, 'search suggestion', () => option.click());
+    });
+  });
+}
+
+test.describe('a link opens its page at the top, on slow 3G with a 4x slower CPU', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  test.setTimeout(300_000);
+
+  /** The next page's code downloads at 400 kbit/s with a 2 s round trip: a navigation takes a good while. */
+  const SLOW_NAVIGATION_MS = 120_000;
+
+  /**
+   * The condition under which the first version of this fix failed everywhere: a slow connection and a slow CPU
+   * stretch the time between the page bootstrapping and the app being stable, so a router that waits for stability
+   * waits a long time. Chrome's DevTools "Slow 3G" figures: 400 kbit/s each way and a 2 s round trip.
+   */
+  async function throttle(page: Page): Promise<void> {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Network.enable');
+    await cdp.send('Network.emulateNetworkConditions', {
+      offline: false,
+      latency: 2000,
+      downloadThroughput: (400 * 1024) / 8,
+      uploadThroughput: (400 * 1024) / 8,
+    });
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+  }
+
+  for (const label of ['Women', 'Sale', 'Track your order']) {
+    test(`footer: ${label}`, async ({ page }) => {
+      await throttle(page);
+      await page.goto('/', { timeout: 240_000 });
+      await loaded(page, 240_000);
+      await scrollToEnd(page);
+
+      await opensAtTop(page, label, () =>
+        page.getByRole('contentinfo').getByRole('link', { name: label, exact: true }).first().click(),
+        SLOW_NAVIGATION_MS,
+      );
+    });
+  }
+
+  test('product card', async ({ page }) => {
+    await throttle(page);
+    await page.goto(LISTING, { timeout: 240_000 });
+    await contentLoaded(page, 240_000);
+    // Not 600: with the images not yet downloaded the listing is only just taller than a phone.
+    await scrollTo(page, 300);
+
+    await opensAtTop(page, 'product card', () => page.locator('.card__name a').first().click(), SLOW_NAVIGATION_MS);
   });
 });
 
-test.describe('the "Skip to content" link', () => {
-  test.use({ viewport: { width: 1280, height: 800 } });
+test.describe('Back, Forward and a reload are the browser\'s', () => {
+  for (const viewport of VIEWPORTS) {
+    test(`Back returns to where the shopper was and Forward goes to the top, at ${viewport.name}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto('/');
+      await loaded(page);
+      const before = await scrollToEnd(page);
 
-  /**
-   * It is a plain `#main` anchor, and it must still work with the router's scroll handling on. **This test cannot
-   * tell "scrolled to the anchor" from "scrolled to the top", and says so rather than pretending to:** the header
-   * keeps `scroll-padding-top` equal to its own height (`site-header.ts`, `trackHeaderHeight`), so scrolling
-   * `main` into view lands at 0, exactly where a scroll to the top lands. What it can check, and what the skip
-   * link exists for, is that the page leaves where the shopper was, that `main` is on screen under the header,
-   * and that keyboard focus moves into `main`, so the next Tab starts in the content and not in the header.
-   */
-  test('takes the shopper to the content and moves focus into it', async ({ page }) => {
-    await page.goto(LISTING);
-    await hydrated(page);
-    await scrollTo(page, 400);
+      await page.getByRole('contentinfo').getByRole('link', { name: 'Sale', exact: true }).first().click();
+      await expect.poll(() => scrollY(page)).toBe(0);
+      await expect(page).toHaveURL(/\/sale/);
 
-    await page.locator('.skip-link').focus();
-    await page.keyboard.press('Enter');
+      await page.goBack();
+      await expect(page).toHaveURL(/\/$/);
+      // A little tolerance: the server's page and the hydrated one can differ by a few pixels of layout.
+      await expect
+        .poll(() => scrollY(page), { message: 'Back should restore the earlier position' })
+        .toBeGreaterThan(before - 60);
 
-    await expect(page).toHaveURL(/#main$/);
-    await expect(page.locator('main#main')).toBeInViewport();
-    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('main');
-    expect(await scrollY(page), 'the skip link left the shopper where they were').toBeLessThan(400);
+      await page.goForward();
+      await expect(page).toHaveURL(/\/sale/);
+      await expect.poll(() => scrollY(page), { message: 'Forward should open the Sale page at its top' }).toBe(0);
+    });
+
+    test(`a reload comes back at the same offset, at ${viewport.name}`, async ({ page }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto('/');
+      await loaded(page);
+      const before = await scrollToEnd(page);
+
+      await page.reload();
+      await loaded(page);
+
+      await expect
+        .poll(() => scrollY(page), { message: 'a reload at the bottom should come back at the bottom' })
+        .toBeGreaterThan(before - 5);
+    });
+  }
+
+  test('a reload of a listing three pages deep comes back at the same offset', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(`${LISTING}?pages=3`);
+    await loaded(page);
+    await scrollTo(page, 2500);
+
+    await page.reload();
+    await loaded(page);
+
+    await expect.poll(() => scrollY(page)).toBeGreaterThan(2490);
   });
+
+  test('a footer click, a reload and then Back still returns to the page above', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await loaded(page);
+    await scrollToEnd(page);
+
+    await page.getByRole('contentinfo').getByRole('link', { name: 'Sale', exact: true }).first().click();
+    await expect.poll(() => scrollY(page)).toBe(0);
+    await page.reload();
+    await loaded(page);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+    await expect.poll(() => scrollY(page), { message: 'Back after a reload should restore a position' }).toBeGreaterThan(0);
+  });
+
+  test('a direct visit with a #fragment scrolls to it, under the header', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/#newsletter-title');
+    await loaded(page);
+
+    const target = page.locator('#newsletter-title');
+    await expect.poll(() => scrollY(page)).toBeGreaterThan(300);
+    await expect(target).toBeInViewport();
+    const gap = await page.evaluate(() => {
+      const bottom = document.querySelector('header')?.getBoundingClientRect().bottom ?? 0;
+      return Math.round((document.querySelector('#newsletter-title')?.getBoundingClientRect().top ?? 0) - bottom);
+    });
+    expect(gap, 'the fragment target is hidden behind the header').toBeGreaterThanOrEqual(-1);
+  });
+});
+
+test.describe('the "Skip to content" link keeps the shopper on the page', () => {
+  const PAGES = [
+    { name: 'a listing', path: LISTING },
+    { name: 'a product page', path: PRODUCT },
+    { name: 'the search results', path: '/search?q=test' },
+    { name: 'the home page', path: '/' },
+  ] as const;
+
+  for (const viewport of VIEWPORTS) {
+    for (const entry of PAGES) {
+      test(`${entry.name}, at ${viewport.name}`, async ({ page }) => {
+        await page.setViewportSize({ width: viewport.width, height: viewport.height });
+        await page.goto(entry.path);
+        await loaded(page);
+        await scrollTo(page, 500);
+        await mark(page);
+        const from = page.url();
+
+        await page.locator('.skip-link').focus();
+        await page.keyboard.press('Enter');
+
+        expect(await wasKept(page), 'the skip link did a full page load').toBe(true);
+        expect(page.url(), 'the skip link left the page').toBe(from);
+        await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('main');
+
+        const { mainTop, headerBottom } = await page.evaluate(() => ({
+          mainTop: Math.round(document.querySelector('main#main')?.getBoundingClientRect().top ?? -1),
+          headerBottom: Math.round(document.querySelector('header')?.getBoundingClientRect().bottom ?? 0),
+        }));
+
+        expect(mainTop, 'the first of the content is hidden behind the header').toBeGreaterThanOrEqual(headerBottom - 1);
+        expect(await scrollY(page), 'the skip link did not leave the place it was pressed at').toBeLessThan(500);
+      });
+    }
+  }
 });
 
 test.describe('a change of state does not move the shopper', () => {
@@ -171,99 +491,234 @@ test.describe('a change of state does not move the shopper', () => {
 
   test('ticking a filter keeps the position', async ({ page }) => {
     await page.goto(LISTING);
-    await hydrated(page);
+    await loaded(page);
     await expect(page.locator('.plp__count')).toContainText('120');
     await scrollTo(page, 900);
+    await mark(page);
 
-    await page
-      .locator('.plp__sidebar')
-      .getByRole('checkbox', { name: 'Blue' })
-      .evaluate((box: HTMLInputElement) => box.click());
+    const blue = page.locator('.plp__sidebar').getByRole('checkbox', { name: 'Blue' });
+    await applyUntil(page, () => tick(blue), /colour=blue/);
 
-    await expect(page).toHaveURL(/colour=blue/);
     await expect(page.locator('.plp__count')).toContainText('30');
     expect(await scrollY(page), 'a filter threw the shopper to the top').toBeGreaterThan(700);
+    expect(await wasKept(page)).toBe(true);
   });
 
   test('changing the sort keeps the position', async ({ page }) => {
     await page.goto(LISTING);
-    await hydrated(page);
+    await loaded(page);
     await scrollTo(page, 900);
 
-    await page.locator('#listing-sort').evaluate((select: HTMLSelectElement) => {
-      const other = [...select.options].map((option) => option.value).find((value) => value !== select.value);
-      select.value = other ?? select.value;
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-    });
+    const sort = page.locator('#listing-sort');
+    const value = await otherOption(sort);
+    await applyUntil(page, () => chooseOption(sort, value), /sort=/);
 
-    await expect(page).toHaveURL(/sort=/);
     expect(await scrollY(page), 'the sort threw the shopper to the top').toBeGreaterThan(700);
+  });
+
+  test('removing a filter chip keeps the position', async ({ page }) => {
+    await page.goto(`${LISTING}?colour=blue`);
+    await loaded(page);
+    await scrollTo(page, 900);
+
+    const chip = page.getByRole('button', { name: /Remove filter: Colour: Blue/ }).first();
+    await expect
+      .poll(
+        async () => {
+          if (await chip.count()) {
+            await chip.evaluate((button: HTMLElement) => button.click());
+          }
+          return page.url();
+        },
+        { timeout: 15_000 },
+      )
+      .not.toMatch(/colour=blue/);
+
+    expect(await scrollY(page), 'removing a chip threw the shopper to the top').toBeGreaterThan(700);
   });
 
   test('Load More appends and keeps the position', async ({ page }) => {
     await page.goto(LISTING);
-    await hydrated(page);
+    await loaded(page);
 
     const cards = page.locator('.product-grid > li');
     const first = await cards.count();
     const before = await scrollToEnd(page);
 
-    await page.getByRole('button', { name: 'Load More' }).evaluate((button: HTMLElement) => button.click());
+    // Clicked only while nothing has been appended yet, so a click the page was not ready for is repeated and a
+    // click it did answer is not.
+    await expect
+      .poll(
+        async () => {
+          if ((await cards.count()) === first) {
+            await page.getByRole('button', { name: 'Load More' }).evaluate((button: HTMLElement) => button.click());
+          }
+          return cards.count();
+        },
+        { timeout: 15_000 },
+      )
+      .toBeGreaterThan(first);
 
-    await expect.poll(() => cards.count()).toBeGreaterThan(first);
     expect(await scrollY(page), 'Load More threw the shopper to the top').toBeGreaterThanOrEqual(before - 30);
   });
 
-  /** The counterpart: a different department is a different page, and starts at its top like any link. */
+  /**
+   * The same page spelled another way: capitals, and a trailing slash. The listing writes its own canonical path, so
+   * the first state change moves the address from one spelling to the other. A rule that compared the text of the
+   * path would scroll to the top there, for a page the shopper never left.
+   */
+  for (const spelling of ['/WOMEN/Jeans', '/women/jeans/']) {
+    test(`a filter keeps the position on ${spelling}, the same page spelled another way`, async ({ page }) => {
+      await page.goto(`${spelling}?pages=2`);
+      await loaded(page);
+      await scrollTo(page, 900);
+
+      await applyUntil(page, () => tick(page.locator('.plp__sidebar').getByRole('checkbox', { name: 'Blue' })), /colour=blue/);
+
+      expect(await scrollY(page), `a filter on ${spelling} threw the shopper to the top`).toBeGreaterThan(700);
+    });
+  }
+
   test('choosing another department goes to the top of that page', async ({ page }) => {
     await page.goto(LISTING);
-    await hydrated(page);
+    await loaded(page);
+    await scrollTo(page, 900);
+
+    await applyUntil(page, () => tick(page.locator('.plp__sidebar').getByRole('radio', { name: 'Men', exact: true })), /\/men/);
+
+    await expect.poll(() => scrollY(page), { message: 'a new department should open at its top' }).toBe(0);
+  });
+
+  /**
+   * A category inside the same department is a different page too. A rule that compared only the department (the
+   * first segment of the path) would leave the shopper where they were here.
+   */
+  test('switching category inside a department goes to the top, and back again', async ({ page }) => {
+    await page.goto(LISTING);
+    await loaded(page);
     await scrollTo(page, 900);
 
     await page
-      .locator('.plp__sidebar')
-      .getByRole('radio', { name: 'Men', exact: true })
-      .evaluate((radio: HTMLInputElement) => radio.click());
+      .getByRole('navigation', { name: /breadcrumb/i })
+      .getByRole('link', { name: 'Women', exact: true })
+      .evaluate((link: HTMLElement) => link.click());
+    await expect(page).toHaveURL(/\/women$/);
+    await expect.poll(() => scrollY(page), { message: 'category to department should open at the top' }).toBe(0);
 
-    await expect(page).toHaveURL(/\/men/);
-    await expect.poll(() => scrollY(page), { message: 'a new department should open at its top' }).toBe(0);
+    await scrollTo(page, 900);
+    await applyUntil(
+      page,
+      () => tick(page.locator('.plp__sidebar').getByRole('radio', { name: 'Jeans', exact: true })),
+      /\/women\/jeans/,
+    );
+    await expect.poll(() => scrollY(page), { message: 'department to category should open at the top' }).toBe(0);
   });
 });
 
 test.describe('on the search results', () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
-  /** The search page has its own `apply()`, so it has its own opt-out and its own test. */
+  /** The search page has its own `apply()`; its state changes need their own proof. */
   test('changing the sort keeps the position', async ({ page }) => {
     await page.goto('/search?q=test&pages=2');
-    await hydrated(page);
+    await loaded(page);
     await expect(page.locator('.product-grid > li').first()).toBeVisible();
     await scrollTo(page, 900);
 
-    await page.locator('#search-sort').evaluate((select: HTMLSelectElement) => {
-      const other = [...select.options].map((option) => option.value).find((value) => value !== select.value);
-      select.value = other ?? select.value;
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-    });
+    const sort = page.locator('#search-sort');
+    const value = await otherOption(sort);
+    await applyUntil(page, () => chooseOption(sort, value), /sort=/);
 
-    await expect(page).toHaveURL(/sort=/);
     expect(await scrollY(page), 'the sort on the search results threw the shopper to the top').toBeGreaterThan(700);
+  });
+
+  test('ticking a filter and removing its chip keep the position', async ({ page }) => {
+    await page.goto('/search?q=test&pages=2');
+    await loaded(page);
+    await expect(page.locator('.product-grid > li').first()).toBeVisible();
+    await scrollTo(page, 900);
+
+    await applyUntil(page, () => tick(page.locator('.search__sidebar').getByRole('checkbox', { name: 'Blue' })), /colour=blue/);
+    expect(await scrollY(page), 'a filter on the search results threw the shopper to the top').toBeGreaterThan(700);
+
+    const chip = page.getByRole('button', { name: /Remove filter: Colour: Blue/ }).first();
+    await expect
+      .poll(
+        async () => {
+          if (await chip.count()) {
+            await chip.evaluate((button: HTMLElement) => button.click());
+          }
+          return page.url();
+        },
+        { timeout: 15_000 },
+      )
+      .not.toMatch(/colour=blue/);
+    expect(await scrollY(page), 'removing a chip on the search results threw the shopper to the top').toBeGreaterThan(
+      700,
+    );
+  });
+
+  test('Load More keeps the position', async ({ page }) => {
+    await page.goto('/search?q=test');
+    await loaded(page);
+    const cards = page.locator('.product-grid > li');
+    await expect(cards.first()).toBeVisible();
+    const first = await cards.count();
+    const before = await scrollToEnd(page);
+
+    await expect
+      .poll(
+        async () => {
+          if ((await cards.count()) === first) {
+            await page.getByRole('button', { name: 'Load More' }).evaluate((button: HTMLElement) => button.click());
+          }
+          return cards.count();
+        },
+        { timeout: 15_000 },
+      )
+      .toBeGreaterThan(first);
+    expect(await scrollY(page), 'Load More on the search results threw the shopper to the top').toBeGreaterThanOrEqual(
+      before - 30,
+    );
   });
 });
 
 test.describe('on the product page', () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test('choosing a size does not carry the shopper back to the top', async ({ page }) => {
+  test('choosing a size and a colour does not carry the shopper back to the top', async ({ page }) => {
     await page.goto(PRODUCT);
-    await hydrated(page);
+    await loaded(page);
     await scrollTo(page, 500);
 
+    // A size or a colour is chosen only while it is not chosen yet: choosing the chosen size again clears it.
     const size = page.locator('.sd-size:not([disabled])').first();
-    await size.evaluate((button: HTMLElement) => button.click());
-
+    await applyUntil(
+      page,
+      () =>
+        size.evaluate((button: HTMLElement) => {
+          if (button.getAttribute('aria-pressed') !== 'true') {
+            button.click();
+          }
+        }),
+      /size=/,
+    );
     await expect(size).toHaveAttribute('aria-pressed', 'true');
-    await expect(page).toHaveURL(/size=/);
     expect(await scrollY(page), 'choosing a size threw the shopper to the top').toBeGreaterThan(400);
+
+    const colours = page.locator('.pdp__group[aria-labelledby="pdp-colour-label"] button:not([disabled])');
+    if ((await colours.count()) > 1) {
+      await applyUntil(
+        page,
+        () =>
+          colours.nth(1).evaluate((button: HTMLElement) => {
+            if (button.getAttribute('aria-pressed') !== 'true') {
+              button.click();
+            }
+          }),
+        /colour=/,
+      );
+      expect(await scrollY(page), 'choosing a colour threw the shopper to the top').toBeGreaterThan(400);
+    }
   });
 });

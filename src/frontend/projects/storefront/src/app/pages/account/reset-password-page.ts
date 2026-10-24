@@ -174,11 +174,10 @@ export class ResetPasswordPage {
       // field initialiser, which runs before this, so the order is a property of the class rather than
       // of the scheduler. `replaceUrl` so the entry holding the token is not left in history, and
       // `queryParams: {}` with the default `handling` so the whole query string goes rather than being
-      // merged with. `scroll: 'manual'` because it only takes the token out of the address bar, on the page the
-      // shopper is already on.
+      // merged with.
       afterNextRender(() => {
         if (this.hasToken()) {
-          void this.router.navigate([], { queryParams: {}, replaceUrl: true, scroll: 'manual' });
+          void this.router.navigate([], { queryParams: {}, replaceUrl: true });
         }
       });
     }

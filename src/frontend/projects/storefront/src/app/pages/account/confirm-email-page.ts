@@ -208,8 +208,7 @@ export class ConfirmEmailPage {
 
     if (isPlatformBrowser(inject(PLATFORM_ID)) && this.hasToken()) {
       afterNextRender(() => {
-        // `scroll: 'manual'`: this only takes the token out of the address bar, on the page the shopper is already on.
-        void this.router.navigate([], { queryParams: {}, replaceUrl: true, scroll: 'manual' });
+        void this.router.navigate([], { queryParams: {}, replaceUrl: true });
         this.confirm();
       });
     }

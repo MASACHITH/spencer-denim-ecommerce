@@ -1043,14 +1043,14 @@ test.describe('a footer link opens the page at the top', () => {
         await page.goto('/');
         await page.waitForFunction(() => document.querySelector('sd-root')?.hasAttribute('ng-version'));
 
-        // Settled, not only hydrated: the router does not scroll while the application is still hydrating, so a
-        // click in the first moments after load is not scrolled at all (measured; see `SETTLE_MS` in
-        // `navigation-scroll.e2e.ts`).
-        await page.waitForLoadState('networkidle');
-        await page.waitForTimeout(3000);
-
+        // No wait after the page boots: a click in the first moments is what is measured (see
+        // `navigation-scroll.e2e.ts`). The marker is what a full page load would lose: a link that fell back to
+        // one would also land at the top, and would pass for the wrong reason.
         await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
         await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBeGreaterThan(300);
+        await page.evaluate(() => {
+          (window as unknown as { __kept: boolean }).__kept = true;
+        });
         const from = page.url();
 
         await page
@@ -1066,6 +1066,10 @@ test.describe('a footer link opens the page at the top', () => {
             message: `"${label}" should open scrolled to the top`,
           })
           .toBe(0);
+        expect(
+          await page.evaluate(() => (window as unknown as { __kept?: boolean }).__kept === true),
+          `"${label}" did a full page load, not a client-side navigation`,
+        ).toBe(true);
         await expect(page.getByRole('heading', { level: 1 }).first()).toBeInViewport();
       });
     }

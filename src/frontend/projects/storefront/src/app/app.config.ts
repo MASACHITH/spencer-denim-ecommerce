@@ -10,35 +10,18 @@ import {
   withEventReplay,
   withNoHttpTransferCache,
 } from '@angular/platform-browser';
-import {
-  provideRouter,
-  withComponentInputBinding,
-  withInMemoryScrolling,
-} from '@angular/router';
+import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { apiBaseUrlInterceptor } from '@spencer-denim/shared';
 
 import { cartCookieInterceptor } from './core/cart/cart-cookie.interceptor';
 import { routes } from './app.routes';
+import { NavigationScroll } from './core/platform/navigation-scroll';
 import { PageViewTracker } from './core/traffic/page-view-tracker';
 
 export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
-    provideRouter(
-      routes,
-      withComponentInputBinding(),
-      // Without this the router never scrolls: a shopper who clicked "About us" or "Returns and exchanges" in
-      // the footer arrived on the new page still scrolled to the bottom of the old one, looking at a footer
-      // under an empty-looking page. `enabled` takes a forward navigation to the top and puts Back and
-      // Forward at the position the shopper left. `anchorScrolling` keeps a `#fragment` navigation (the
-      // "Skip to content" link is one) going to its anchor: with restoration on and anchors off the router
-      // would scroll to the top instead. Today the two coincide, because the header keeps scroll-padding-top
-      // equal to its own height, so this is for the next anchor and not a visible fix. A navigation that only
-      // changes what the same page shows (a filter, the sort, Load More, a size) passes `scroll: 'manual'` and
-      // stays where it is. The router does not scroll until the freshly hydrated app is first stable (Angular's
-      // own guard), so a click in the first moments after a load is left where it is.
-      withInMemoryScrolling({ scrollPositionRestoration: 'enabled', anchorScrolling: 'enabled' }),
-    ),
+    provideRouter(routes, withComponentInputBinding()),
     // The HTTP transfer cache is off. It cannot serve this application — it keys a response on
     // the request URL as it sees it, and it runs after `apiBaseUrlInterceptor` has rewritten that
     // URL to the API's internal address, so the browser never finds the entry (see
@@ -54,5 +37,9 @@ export const appConfig: ApplicationConfig = {
     // Traffic recording (W4-03): in the browser, every page reached by clicking, and the first page when
     // the server did not record it. A no-op on the server. See `core/traffic/page-view-tracker.ts`.
     provideAppInitializer(() => inject(PageViewTracker).start()),
+    // A link that opens a different page opens it at the top (a footer link used to leave the shopper at the
+    // bottom of the new page). Not `withInMemoryScrolling`: see `core/platform/navigation-scroll.ts`. A no-op
+    // on the server.
+    provideAppInitializer(() => inject(NavigationScroll).start()),
   ],
 };

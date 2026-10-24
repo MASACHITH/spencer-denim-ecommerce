@@ -814,18 +814,7 @@ export class ListingPage {
   }
 
   protected apply(next: ListingState): void {
-    const commands = this.commandsFor(next);
-
-    // A filter, the sort, a removed chip or one more page changes what this listing shows and nothing about where
-    // the shopper is, so the page stays where it is: scrolling to the top on every tick would throw them out of
-    // the results they are reading. A different department or category is a different page, and starts at its
-    // top like any other link does.
-    const sameListing = routePath(commands) === routePath(this.commandsFor(this.state()));
-
-    this.router.navigate(commands, {
-      queryParams: this.queryParamsFor(next),
-      scroll: sameListing ? 'manual' : 'after-transition',
-    });
+    this.router.navigate(this.commandsFor(next), { queryParams: this.queryParamsFor(next) });
   }
 
   protected onSortChange(event: Event): void {
@@ -939,7 +928,13 @@ export class ListingPage {
    */
   private readonly canonicalUrl = computed(() => {
     const state = this.state();
-    const path = routePath(this.commandsFor(state));
+    // `commandsFor` speaks the router's language — a leading '/' segment, and a whole path for
+    // the fixed listings — so the segments are flattened back into one before they are joined.
+    const path = this.commandsFor(state)
+      .map((segment) => String(segment))
+      .flatMap((segment) => segment.split('/'))
+      .filter((segment) => segment.length > 0)
+      .join('/');
     const query = new URLSearchParams();
 
     for (const [key, value] of Object.entries(this.queryParamsFor({ ...state, loadedPages: 1 }))) {
@@ -954,17 +949,6 @@ export class ListingPage {
     const search = query.toString();
     return `/${path}${search ? `?${search}` : ''}`;
   });
-}
 
-/**
- * The path a list of router commands names, without its leading slash. `commandsFor` speaks the router's
- * language — a leading '/' segment, and a whole path for the fixed listings — so the segments are flattened
- * back into one before they are joined. Two states with the same path are the same page.
- */
-function routePath(commands: readonly unknown[]): string {
-  return commands
-    .map((segment) => String(segment))
-    .flatMap((segment) => segment.split('/'))
-    .filter((segment) => segment.length > 0)
-    .join('/');
+
 }
