@@ -230,6 +230,27 @@ test.describe('a change of state does not move the shopper', () => {
   });
 });
 
+test.describe('on the search results', () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  /** The search page has its own `apply()`, so it has its own opt-out and its own test. */
+  test('changing the sort keeps the position', async ({ page }) => {
+    await page.goto('/search?q=test&pages=2');
+    await hydrated(page);
+    await expect(page.locator('.product-grid > li').first()).toBeVisible();
+    await scrollTo(page, 900);
+
+    await page.locator('#search-sort').evaluate((select: HTMLSelectElement) => {
+      const other = [...select.options].map((option) => option.value).find((value) => value !== select.value);
+      select.value = other ?? select.value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    await expect(page).toHaveURL(/sort=/);
+    expect(await scrollY(page), 'the sort on the search results threw the shopper to the top').toBeGreaterThan(700);
+  });
+});
+
 test.describe('on the product page', () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
