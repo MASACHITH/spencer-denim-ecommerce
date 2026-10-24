@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, ElementRef, viewChild } from '@angular/core';
+import { DOCUMENT } from '@angular/common';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 
 import { SiteFooter } from './layout/site-footer/site-footer';
@@ -29,7 +30,7 @@ import { WhatsappButton } from './layout/whatsapp-button/whatsapp-button';
   template: `
     <a class="skip-link" href="#main">Skip to content</a>
     <sd-site-header />
-    <main id="main" tabindex="-1" #main>
+    <main id="main" tabindex="-1">
       <router-outlet />
     </main>
     <sd-site-footer />
@@ -50,7 +51,7 @@ import { WhatsappButton } from './layout/whatsapp-button/whatsapp-button';
   `,
 })
 export class App {
-  private readonly main = viewChild.required<ElementRef<HTMLElement>>('main');
+  private readonly document = inject(DOCUMENT);
 
   protected onDocumentClick(event: MouseEvent): void {
     const target = event.target;
@@ -61,8 +62,11 @@ export class App {
 
     event.preventDefault();
 
-    const main = this.main().nativeElement;
-    main.focus({ preventScroll: true });
-    main.scrollIntoView({ block: 'start' });
+    // Looked up by id and not through a template reference: a reference takes a slot in the component's view, which
+    // moves the router outlet's index in the hydration data the server writes, and the server-rendered state
+    // should stay as it was.
+    const main = this.document.getElementById('main');
+    main?.focus({ preventScroll: true });
+    main?.scrollIntoView({ block: 'start' });
   }
 }

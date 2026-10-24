@@ -40,7 +40,8 @@ describe('NavigationScroll', () => {
 
     router = TestBed.inject(Router);
     const viewport = TestBed.inject(ViewportScroller);
-    scrollToPosition = vi.spyOn(viewport, 'scrollToPosition');
+    // Not called through: jsdom has no layout and its `window.scrollTo` is a stub that only logs.
+    scrollToPosition = vi.spyOn(viewport, 'scrollToPosition').mockImplementation(() => undefined);
     getScrollPosition = vi.spyOn(viewport, 'getScrollPosition').mockReturnValue([0, 0]);
     TestBed.inject(NavigationScroll).start();
   }
