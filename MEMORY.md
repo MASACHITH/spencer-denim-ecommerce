@@ -1,4 +1,4 @@
-# MEMORY — Project Log
+﻿# MEMORY — Project Log
 
 Running record of what was done, what was decided, and what's next. **Newest entry on top.** Read this first every session.
 
@@ -6,7 +6,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Current state (keep this section up to date)
 
-- **2026-10-21 (later):** ADM-22 Settings verified end to end and the **email account made editable in admin** (Super Admin, `Settings.Security`; N2 dual send through old and new account; DB wins over `Email__Smtp__*`). Branch `feature/22-settings-smtp-verify`, not pushed, awaiting tester. Fixed: a bank-details change raised no sensitive-settings alert. **Gap for the owner: delivery fees have no admin screen**, so Settings is not marked Done on the tracker. Journal `docs/journal/2026-10-21-settings-smtp.md`.
+- **2026-10-23–24 (sessions 4–5):** **Merged: #234, #235** (plus #232, #233, #236, #237, #238 earlier in session 3). Total merged this cycle: 7 PRs. PR #235 needed a post-rebase fix (restored `ProductPageInfoValues`/`ProductPageInfoSaveResponse`/`PRODUCT_PAGE_INFO_MAX_LENGTH` dropped in conflict resolution). PR #234 needed two extra rebase rounds after #235 merged (additive Seed key conflicts + missing `ICheckoutReader`/`IDeliveryCountryReader` stubs in `FakeCheckoutReader`). Search branch `feature/78-118-search` rebased onto latest main and pushed for independent tester. Owner decisions resolved: delivery tiers = Standard & Express; sanctioned countries = blocklist. Issues #239 (delivery rates) and #240 (country blocklist) created. Client progress page updated (progress-data.js: delivery, PayPal, product info all marked done) — **needs publishing: user must run `tools/publish-client-progress.ps1`.** Next: independent tester to run against search branch; build #239 and #240 after tester pass.
 - **2026-10-21:** four more taken back from #187 and merged: **#189 reviews + moderation** (#216), **#191 campaign product targets + Sale banner** (#220), **#192 homepage/content editing** (#214), **#215 mega-menu promo cards** (#225). Follow-ups: #223 (media delete edge cases + lock order for product media/categories/department hero), #226 (dependency audit gate red on main — Angular dev-tooling advisories).
 - **2026-10-20:** the owner took four items back from #187 and Sachith's side built them: **#186 demo-style admin charts** (plus a Customers report chart), **#190 inventory screen + `InventoryMovements` ledger**, **#193 settings remainder**, and the sale-campaign test time-bomb. All are merged (#208–#212); the rest of #187 is still Tharanga's.
 - **Phase:** Development handed over to **Tharanga** on **2026-10-16** (owner's instruction). **All remaining work and every open issue (57) is his**, tracked in the pinned handover issue **#187**: remaining features, security fixes before Live, then **deploy UAT (`staging`) and Live (`production`), map the domain, run a full UAT round, and document it**. The original 15 Oct deadline passed with the core shop complete: browse, search, bag, wishlist, checkout, bank transfer, emails, customer accounts with order history and tracking, admin orders, promo codes and sale campaigns, customers, newsletter, dashboard, reports and traffic.
@@ -45,23 +45,25 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
-### 2026-10-21 — ADM-22: settings verified end to end, the email account editable in admin
+### 2026-10-21 to 2026-10-22 — scope change (worldwide delivery + PayPal only), plus six features through dev→test loop
 
-Branch `feature/22-settings-smtp-verify` (from `6cece38`), not pushed, developer side only (tester next). Owner: admin
-must be able to add and change the bank account, the email account and couriers at any time.
+`main`: after **#230** (CI timeout fix). Owner scope additions: worldwide delivery + PayPal-only + LKR/USD split (confirmed via explicit decision prompts). Merged #229 (UAT/Live scripts, security fixes from #219 review) and #230 (CI timeout). Tharanga's unreviewed merged PRs (#203–#207, #217–#218) independently post-merge reviewed; #207 had a Major log-leak (SQL duplicate-key error messages leaking checkout idempotency keys into retained logs) — logged as separate fix #207 fix.
 
-- **Verified** bank (save/change/clear → order page, instructions email; withheld when empty; audited + alert), couriers
-  (add/edit/switch off/reorder, placeholder + https, link on order page, shipped email, account history), contact/social,
-  invoice, logo. New tests where a claim had none. **Defect:** bank changes raised no `SensitiveSettingsChanged` banner.
-- **Email account:** the seven `Email.Smtp.*` keys seeded empty and removed from `DeferredSettingKeys`; transport takes the
-  account per send; `SendEmails` reads it each sweep; complete valid DB account wins, else `Email__Smtp__*`, never mixed;
-  password write-only, encrypted, `[secret changed]`; N2 dual send via `TransportOverrideProtected` (sent even when no
-  current account exists); "Send test email" with safe messages. No migration.
-- **Open for the owner:** delivery fees have no admin screen (Settings left not Done); no SSL/465; bank/PayPal changes
-  still send no email (banner only).
+**Features through full dev→test loop:**
+- **Settings + email account (ADM-22)** — bank details, couriers and email account verified end-to-end (each reaching where it's used); N2 dual-send alert; PR #233 CI green, pending merge.
+- **Worldwide delivery + PayPal-only** — `ref.Countries` 249, `sales.DeliveryRegions` 6, PayPal seeded off / bank transfer seeded off (admin switch); PASS (tester + 1,295 Playwright); PR #234 CI running.
+- **Delivery & returns panel (#33)** — PDP delivery panel, Shipping/Returns policy pages, admin editor, courier seed; PASS (round 2, all 4 Medium defects fixed, 24/24 mutants killed); PR #235 CI running.
+- **Search popular-searches + suggestions regression (#78/#118)** — HIGH abuse-control bypass closed, rate limit added, #118 start-up regression fixed; dev done (26d37f78); search migration needs timestamp update after intl-delivery (#234) merges, then independent tester.
+- **Media-delete-locks extended to products/categories/departments (#223)** — `MediaAssetRowLocks.cs`, `CatalogMediaClaim.cs`; PASS (11/11 mutants, 2 acceptable survivors); PR #237 CI running.
+- **#207 log-leak fix** — two-layer fix (EF Core event lowering + Serilog `SqlErrorRedactingSink`); dev done (c684d0a8), independent tester running.
 
-**Lessons:** the Write tool turns `\u2028` escapes into the literal character, which breaks a C# char literal — scan
-for U+2028/2029 after writing. Bash heredocs failed on some long Python edits; scripts in the scratchpad were reliable.
+**Tharanga's #232** (deploy-script fixes for Ubuntu 26.04 uutils, seed-password rule, verify-public fingerprint): CI rerunning (cleanup flake), pending merge.
+
+**Lock order documented in doc 08 §5.3:** department row → MediaAssets rows ascending Id → writes. Extended to cover products, categories, departments, sale campaigns, homepage items, size guides, mega-menu cards.
+
+**Open owner decisions (go-live, not code):** (1) sanctioned-country block list; (2) real region delivery fees. PayPal sandbox testing still pending (needs owner to enter sandbox credentials).
+
+**Standing issues:** #231 (SqlServerDatabaseFixture cleanup deadlock flake, non-blocking), PID 26944 test-host orphan (may be gone — not re-checked).
 
 ### 2026-10-20 to 2026-10-21 — reviews, campaigns, homepage editing, mega-menu cards
 
