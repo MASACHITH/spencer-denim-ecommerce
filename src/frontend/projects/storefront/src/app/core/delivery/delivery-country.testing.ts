@@ -89,6 +89,42 @@ export const TEST_COUNTRIES: readonly DeliveryCountry[] = [
     expressEstimatedDaysMin: null,
     expressEstimatedDaysMax: null,
   },
+  /** Express-only: no standard delivery, Express only — used by checkout spec Fix 1 tests. */
+  {
+    code: 'JP',
+    name: 'Japan',
+    isDomestic: false,
+    isAvailable: true,
+    postalCodeRequired: true,
+    regionRequired: false,
+    fee: null,
+    estimatedDaysMin: null,
+    estimatedDaysMax: null,
+    standardFee: null,
+    standardEstimatedDaysMin: null,
+    standardEstimatedDaysMax: null,
+    expressFee: 15_000,
+    expressEstimatedDaysMin: 3,
+    expressEstimatedDaysMax: 5,
+  },
+  /** Both tiers: Standard and Express both configured — used by checkout spec tier-picker tests. */
+  {
+    code: 'CA',
+    name: 'Canada',
+    isDomestic: false,
+    isAvailable: true,
+    postalCodeRequired: true,
+    regionRequired: true,
+    fee: 9_000,
+    estimatedDaysMin: 10,
+    estimatedDaysMax: 14,
+    standardFee: 9_000,
+    standardEstimatedDaysMin: 10,
+    standardEstimatedDaysMax: 14,
+    expressFee: 16_000,
+    expressEstimatedDaysMin: 3,
+    expressEstimatedDaysMax: 5,
+  },
 ];
 
 /** Answers the country list without HTTP, so a spec's `HttpTestingController.verify()` stays meaningful. */

@@ -1958,11 +1958,15 @@ export class CheckoutPage {
    * shown. Does nothing when the tier is already the chosen one.
    */
   protected chooseTier(tier: string): void {
-    if (this.chosenOverseasTier() === tier) {
+    // Normalize before comparing: the signal holds null for Standard and 'Express' for Express.
+    // Without this, clicking Standard when the signal is null (its default) compares null === 'Standard'
+    // → false, which triggers a spurious set(null) + read().
+    const normalized = tier === 'Standard' ? null : tier;
+    if (this.chosenOverseasTier() === normalized) {
       return;
     }
 
-    this.chosenOverseasTier.set(tier === 'Standard' ? null : tier);
+    this.chosenOverseasTier.set(normalized);
 
     // Drop the delivery method selection so the server re-prices it for the new tier.
     this.chosenDeliveryMethodId.set(null);
@@ -2486,6 +2490,39 @@ export class CheckoutPage {
     if (overseas && session.selectedDeliveryMethodId === null && only?.isAvailable) {
       this.chosenDeliveryMethodId.set(only.id);
       this.read();
+    }
+
+    // Recovery for express-only countries on initial load (#239 Fix 1).
+    //
+    // When the page first loads with a pre-stored express-only country (e.g. JP, which has
+    // `expressFee` set but `fee` null), `chosenOverseasTier` is null (= Standard) because
+    // `autoSelectTier` is only wired into `chooseCountry()`. The first read() therefore asks for
+    // Standard, the server answers with IsAvailable = false, and neither the `only` block above
+    // (condition: `only?.isAvailable`) nor any other path corrects it — leaving the shopper with
+    // "No delivery option available".
+    //
+    // This block detects that situation and triggers a self-correcting retry:
+    //  1. We are overseas, no method was selected, and no option came back available.
+    //  2. `autoSelectTier(c)` sets `chosenOverseasTier` to 'Express' for an express-only country.
+    //  3. If the tier actually changed (null → 'Express'), a second read() goes out with the right tier.
+    //
+    // Infinite-loop guard: on the second pass the Express option is available
+    // (`only?.isAvailable === true`), so `selectedDeliveryMethodId` will be non-null and this block
+    // will not be entered again.
+    if (overseas && session.selectedDeliveryMethodId === null) {
+      const hasAvailable = session.deliveryOptions.some((m) => m.isAvailable);
+      if (!hasAvailable) {
+        const c = this.country();
+        if (c !== null && !c.isDomestic) {
+          const tierBefore = this.chosenOverseasTier();
+          this.autoSelectTier(c);
+          if (this.chosenOverseasTier() !== tierBefore) {
+            // Tier changed (null → 'Express') — retry with the correct tier.
+            this.read();
+            return;
+          }
+        }
+      }
     }
 
     this.applyPromoEcho(session);

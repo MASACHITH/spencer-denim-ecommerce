@@ -1930,6 +1930,87 @@ describe('CheckoutPage (CHK-01..03)', () => {
 
       expect(element.querySelector('#co-district')).not.toBeNull();
     });
+
+    /**
+     * Fix 1 (#239): express-only country selected before the shopper reaches the checkout page.
+     *
+     * JP has `fee: null` / `expressFee: 15_000`, so Standard is not configured. The first read()
+     * goes out without `overseasTier` (= Standard default). The server answers with the International
+     * option flagged as unavailable. `apply()` detects this, calls `autoSelectTier(JP)` which sets
+     * `chosenOverseasTier = 'Express'`, and fires a second read() with `overseasTier=Express`.
+     * The second answer carries the option as available, so the shopper can proceed.
+     */
+    it('auto-selects Express and shows it as available when the country has only Express configured', async () => {
+      localStorage.setItem(DELIVERY_COUNTRY_STORAGE_KEY, 'JP');
+      create();
+      await settle();
+
+      // First request: no overseasTier sent (Standard). JP has no Standard → option not available.
+      const firstRequest = checkoutRequest();
+      expect(firstRequest.request.params.get('countryCode')).toBe('JP');
+      expect(firstRequest.request.params.has('overseasTier')).toBe(false);
+
+      firstRequest.flush(
+        session({
+          selectedCountryCode: 'JP',
+          selectedDistrictId: null,
+          selectedDeliveryMethodId: null,
+          deliveryOptions: [
+            { ...INTERNATIONAL, isAvailable: false, fee: null, feeAfterDiscount: null },
+          ],
+          totals: totals({ deliveryFeeAmount: null, grandTotal: null }),
+        }),
+      );
+      await settle();
+
+      // apply() detects no available option, calls autoSelectTier(), tier changes null → 'Express',
+      // and a second read() is fired with overseasTier=Express.
+      const secondRequest = checkoutRequest();
+      expect(secondRequest.request.params.get('overseasTier')).toBe('Express');
+
+      secondRequest.flush(
+        session({
+          selectedCountryCode: 'JP',
+          selectedDistrictId: null,
+          selectedDeliveryMethodId: INTERNATIONAL.id,
+          deliveryOptions: [INTERNATIONAL],
+          paymentMethods: [PAYPAL],
+          totals: totals({ deliveryFeeAmount: INTERNATIONAL.feeAfterDiscount, grandTotal: 18_284 }),
+        }),
+      );
+      await settle();
+
+      // The International delivery option is rendered as available.
+      const intlRadio = element.querySelector<HTMLInputElement>(
+        `input[name="deliveryMethodId"][value="${INTERNATIONAL.id}"]`,
+      );
+      expect(intlRadio).not.toBeNull();
+      expect(intlRadio!.disabled).toBe(false);
+      expect(intlRadio!.closest('label')?.classList.contains('is-unavailable')).toBe(false);
+    });
+
+    /**
+     * Owner decision 2026-10-23: a country with both Standard and Express configured shows the tier
+     * picker so the shopper can choose. CA has `fee: 9_000` and `expressFee: 16_000`, so
+     * `hasBothTiers()` is true and the picker is rendered.
+     */
+    it('shows Standard and Express tier radios when the country has both tiers configured', async () => {
+      await openOverseas(
+        'CA',
+        session({
+          selectedCountryCode: 'CA',
+          selectedDistrictId: null,
+          selectedDeliveryMethodId: INTERNATIONAL.id,
+          deliveryOptions: [INTERNATIONAL],
+          paymentMethods: [PAYPAL],
+          totals: totals({ deliveryFeeAmount: 9_000, grandTotal: 17_784 }),
+        }),
+      );
+
+      // Both tier radios are rendered (hasBothTiers() is true for CA).
+      expect(element.querySelector('input[name="overseasTier"][value="Standard"]')).not.toBeNull();
+      expect(element.querySelector('input[name="overseasTier"][value="Express"]')).not.toBeNull();
+    });
   });
 
   describe('when no payment method is switched on', () => {
