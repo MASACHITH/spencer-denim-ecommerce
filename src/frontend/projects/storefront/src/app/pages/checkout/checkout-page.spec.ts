@@ -2011,6 +2011,95 @@ describe('CheckoutPage (CHK-01..03)', () => {
       expect(element.querySelector('input[name="overseasTier"][value="Standard"]')).not.toBeNull();
       expect(element.querySelector('input[name="overseasTier"][value="Express"]')).not.toBeNull();
     });
+
+    /**
+     * Gap 1 (#239): the shopper picks the Express tier by interacting with the radio, and the
+     * re-quote must carry `overseasTier=Express` so the server prices the right tier.
+     */
+    it('sends overseasTier=Express on GET when the shopper picks the Express radio', async () => {
+      await openOverseas(
+        'CA',
+        session({
+          selectedCountryCode: 'CA',
+          selectedDistrictId: null,
+          selectedDeliveryMethodId: INTERNATIONAL.id,
+          deliveryOptions: [INTERNATIONAL],
+          paymentMethods: [PAYPAL],
+          totals: totals({ deliveryFeeAmount: 9_000, grandTotal: 17_784 }),
+        }),
+      );
+
+      // Both tier radios must be present before the shopper can pick one.
+      expect(element.querySelector('input[name="overseasTier"][value="Standard"]')).not.toBeNull();
+      expect(element.querySelector('input[name="overseasTier"][value="Express"]')).not.toBeNull();
+
+      // Shopper selects the Express radio — the template binds (change)="chooseTier('Express')".
+      const expressRadio = element.querySelector<HTMLInputElement>(
+        'input[name="overseasTier"][value="Express"]',
+      )!;
+      expressRadio.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle();
+
+      // chooseTier() sets chosenOverseasTier to 'Express' and calls read(); the GET must carry it.
+      const request = checkoutRequest();
+      expect(request.request.params.get('overseasTier')).toBe('Express');
+
+      request.flush(
+        session({
+          selectedCountryCode: 'CA',
+          selectedDistrictId: null,
+          selectedDeliveryMethodId: INTERNATIONAL.id,
+          deliveryOptions: [{ ...INTERNATIONAL, fee: 16_000, feeAfterDiscount: 16_000 }],
+          paymentMethods: [PAYPAL],
+          totals: totals({ deliveryFeeAmount: 16_000, grandTotal: 24_784 }),
+        }),
+      );
+      await settle();
+    });
+
+    /**
+     * Gap 2 (#239): an express-only country (JP: fee=null, expressFee set) auto-selects Express
+     * and must not render the tier picker — `hasBothTiers()` is false when only one tier is
+     * configured, so there is nothing for the shopper to choose.
+     */
+    it('does not show the tier picker for an express-only country', async () => {
+      localStorage.setItem(DELIVERY_COUNTRY_STORAGE_KEY, 'JP');
+      create();
+      await settle();
+
+      // First read: no overseasTier sent (Standard default). JP has no Standard → not available.
+      const firstRequest = checkoutRequest();
+      firstRequest.flush(
+        session({
+          selectedCountryCode: 'JP',
+          selectedDistrictId: null,
+          selectedDeliveryMethodId: null,
+          deliveryOptions: [
+            { ...INTERNATIONAL, isAvailable: false, fee: null, feeAfterDiscount: null },
+          ],
+          totals: totals({ deliveryFeeAmount: null, grandTotal: null }),
+        }),
+      );
+      await settle();
+
+      // apply() detects no available option and autoSelectTier sets chosenOverseasTier to 'Express',
+      // triggering a second read() with overseasTier=Express.
+      const secondRequest = checkoutRequest();
+      secondRequest.flush(
+        session({
+          selectedCountryCode: 'JP',
+          selectedDistrictId: null,
+          selectedDeliveryMethodId: INTERNATIONAL.id,
+          deliveryOptions: [INTERNATIONAL],
+          paymentMethods: [PAYPAL],
+          totals: totals({ deliveryFeeAmount: INTERNATIONAL.feeAfterDiscount, grandTotal: 18_284 }),
+        }),
+      );
+      await settle();
+
+      // hasBothTiers() is false for JP (only Express configured), so no tier-picker radios.
+      expect(element.querySelector('input[name="overseasTier"]')).toBeNull();
+    });
   });
 
   describe('when no payment method is switched on', () => {
