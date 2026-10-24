@@ -1292,6 +1292,120 @@ describe('SettingsPage (ADM-22)', () => {
     });
   });
 
+  describe('display currencies (issue #248)', () => {
+    /**
+     * The ordinary payload plus the `Currency.Display` group (`Settings.Edit`), with its own token as the server sends
+     * it. Present only for a caller who may read it: the read model filters every row by its own permission.
+     */
+    function payloadWithCurrencies(values: Record<string, string | null> = {}): AdminSettings {
+      const base = payload();
+
+      return {
+        ...base,
+        groups: [
+          ...base.groups,
+          {
+            groupKey: 'Currency.Display',
+            rowVersion: 'currency-rv-1',
+            settings: [
+              SETTING_KEYS.currencyUsd,
+              SETTING_KEYS.currencyGbp,
+              SETTING_KEYS.currencyEur,
+              SETTING_KEYS.currencyAud,
+              SETTING_KEYS.currencyAed,
+            ].map((key) => ({
+              key,
+              valueType: 'Decimal' as const,
+              value: values[key] ?? null,
+              isSecret: false,
+              hasValue: values[key] != null,
+              requiredPermission: 'Settings.Edit',
+              description: `What ${key} is for.`,
+              updatedAtUtc: values[key] != null ? '2026-10-20T06:00:00.000Z' : null,
+            })),
+          },
+        ],
+      };
+    }
+
+    it('is absent for a caller who does not receive the Currency.Display group', async () => {
+      await open(payload());
+
+      expect(element.querySelector('[data-testid="currency-panel"]')).toBeNull();
+      expect(element.querySelector('#currency-usd')).toBeNull();
+    });
+
+    it('is drawn, with its five boxes, for a caller who does', async () => {
+      await open(payloadWithCurrencies({ [SETTING_KEYS.currencyGbp]: '399.5' }));
+
+      expect(element.querySelector('[data-testid="currency-panel"]')).not.toBeNull();
+      expect(element.querySelectorAll('[data-testid^="currency-field-"]').length).toBe(5);
+      expect((element.querySelector('[data-testid="currency-field-gbp"]') as HTMLInputElement).value).toBe('399.5');
+    });
+
+    it('does not say there is nothing to edit when this is the only group the caller can edit', async () => {
+      await open({ groups: [payloadWithCurrencies().groups.at(-1)!], logo: null });
+
+      expect(element.querySelector('[data-testid="currency-panel"]')).not.toBeNull();
+      expect(element.querySelector('[data-testid="nothing-to-edit"]')).toBeNull();
+    });
+
+    it('says there is nothing to edit when the caller receives no group at all', async () => {
+      await open({ groups: [], logo: null });
+
+      expect(element.querySelector('[data-testid="currency-panel"]')).toBeNull();
+      expect(element.querySelector('[data-testid="nothing-to-edit"]')).not.toBeNull();
+    });
+
+    it('re-reads the settings after a save, so the next save carries the new row version', async () => {
+      await open(payloadWithCurrencies());
+
+      const input = element.querySelector('[data-testid="currency-field-usd"]') as HTMLInputElement;
+      input.value = '321.5';
+      input.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      (element.querySelector('[data-testid="save-currency"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      controller.expectOne('/api/admin/auth/antiforgery-token').flush({ token: 'xsrf' });
+
+      const save = controller.expectOne(AdminSettingsApi.currencyRatesUrl);
+      expect(save.request.body).toEqual({ usd: '321.5', rowVersion: 'currency-rv-1' });
+      save.flush(null, { status: 204, statusText: 'No Content' });
+
+      const reread = payloadWithCurrencies({ [SETTING_KEYS.currencyUsd]: '321.5' });
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush({
+        ...reread,
+        groups: reread.groups.map((group) =>
+          group.groupKey === 'Currency.Display' ? { ...group, rowVersion: 'currency-rv-2' } : group,
+        ),
+      });
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect((element.querySelector('[data-testid="currency-field-usd"]') as HTMLInputElement).value).toBe('321.5');
+      expect(element.querySelector('[data-testid="currency-saved"]')?.textContent?.trim()).toBe('Rates saved.');
+
+      // The panel survived the re-read (it was not torn down and rebuilt), so its message is still there, and the
+      // row version it will send next is the one the re-read brought.
+      const again = element.querySelector('[data-testid="currency-field-gbp"]') as HTMLInputElement;
+      again.value = '399.5';
+      again.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      (element.querySelector('[data-testid="save-currency"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      controller.expectOne('/api/admin/auth/antiforgery-token').flush({ token: 'xsrf' });
+      const second = controller.expectOne(AdminSettingsApi.currencyRatesUrl);
+      expect(second.request.body).toEqual({ gbp: '399.5', rowVersion: 'currency-rv-2' });
+      second.flush(null, { status: 204, statusText: 'No Content' });
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(payloadWithCurrencies());
+    });
+  });
+
   describe('traffic (issue #193)', () => {
     /**
      * The ordinary payload plus the `Traffic` group (`Settings.Edit`), with its own token as the server sends it
