@@ -668,7 +668,13 @@ export class SearchPage {
   }
 
   private apply(next: SearchState): void {
-    void this.router.navigate(['/search'], { queryParams: toSearchQueryParams(next) });
+    // Every caller keeps the search term and changes what is shown for it (a filter, the sort, a chip, Load More),
+    // so the page stays where it is. A new search term arrives through the header's search box instead, which is
+    // a fresh page and starts at the top.
+    void this.router.navigate(['/search'], {
+      queryParams: toSearchQueryParams(next),
+      scroll: 'manual',
+    });
   }
 
   /**

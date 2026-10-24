@@ -1016,3 +1016,58 @@ test.describe('the Shipping and Returns pages and the product page links (#33)',
     expect(results.violations.map((violation) => `${violation.id}: ${violation.help}`)).toEqual([]);
   });
 });
+
+/**
+ * The bug this block exists for: the router had no scroll handling, so a shopper who clicked "About us" or
+ * "Returns and exchanges" in the footer arrived on the new page still scrolled to the bottom of the old one,
+ * looking at a footer under an empty-looking page. The four footer links that are published pages live here,
+ * because this file is the one writer of the content-pages switch; the rest of the router's scroll behaviour
+ * is in `navigation-scroll.e2e.ts`.
+ */
+test.describe('a footer link opens the page at the top', () => {
+  test.beforeEach(async ({ page }) => {
+    await publish(page, 'all');
+  });
+
+  test.afterEach(async ({ page }) => {
+    await publish(page, 'none');
+  });
+
+  for (const viewport of [
+    { name: '390 px', width: 390, height: 844 },
+    { name: '1280 px', width: 1280, height: 800 },
+  ]) {
+    for (const label of ['About us', 'Delivery and shipping', 'Returns and exchanges', 'Contact us']) {
+      test(`${label} at ${viewport.name}`, async ({ page }) => {
+        await page.setViewportSize({ width: viewport.width, height: viewport.height });
+        await page.goto('/');
+        await page.waitForFunction(() => document.querySelector('sd-root')?.hasAttribute('ng-version'));
+
+        // Settled, not only hydrated: the router does not scroll while the application is still hydrating, so a
+        // click in the first moments after load is not scrolled at all (measured; see `SETTLE_MS` in
+        // `navigation-scroll.e2e.ts`).
+        await page.waitForLoadState('networkidle');
+        await page.waitForTimeout(3000);
+
+        await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+        await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBeGreaterThan(300);
+        const from = page.url();
+
+        await page
+          .getByRole('contentinfo')
+          .getByRole('link', { name: label, exact: true })
+          .first()
+          .click();
+
+        await expect(page).not.toHaveURL(from);
+        await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
+        await expect
+          .poll(() => page.evaluate(() => Math.round(window.scrollY)), {
+            message: `"${label}" should open scrolled to the top`,
+          })
+          .toBe(0);
+        await expect(page.getByRole('heading', { level: 1 }).first()).toBeInViewport();
+      });
+    }
+  }
+});

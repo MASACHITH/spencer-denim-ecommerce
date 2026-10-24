@@ -490,6 +490,8 @@ export class OrdersPage {
       return;
     }
 
+    // Deliberately NOT `scroll: 'manual'`, unlike the listing's Load More: this replaces the list with another page of
+    // orders, so the shopper should be taken to the top of it and not left at the foot of a list they have left.
     void this.router.navigate([], {
       // `page: null` for page 1 so the first page's address is `/account/orders` and not
       // `/account/orders?page=1`: two addresses for one page is two entries in the back button.

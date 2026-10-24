@@ -1085,7 +1085,8 @@ export class ProductPage {
 
   /**
    * Writes the selection into the URL. `replaceUrl` is deliberate for the colour and the size:
-   * trying four sizes should not cost four presses of Back to leave the page.
+   * trying four sizes should not cost four presses of Back to leave the page. `scroll: 'manual'` for the same
+   * reason: choosing a size must not carry the shopper from the buy box back up to the top of the page.
    */
   private apply(selection: { colourId: number | null; sizeId: number | null }): void {
     void this.router.navigate([], {
@@ -1093,6 +1094,7 @@ export class ProductPage {
       queryParams: toVariantParams(selection),
       queryParamsHandling: 'merge',
       replaceUrl: true,
+      scroll: 'manual',
     });
   }
 }
