@@ -208,6 +208,16 @@ export const routes: Routes = [
       import('./pages/settings/overseas-delivery-page').then((m) => m.OverseasDeliveryPage),
   },
   {
+    // Owner decision 2026-10-23: open-by-default model — tick = blocked, untick = open. Session guard
+    // only, like every admin route; the API enforces Settings.View / Settings.Edit and the page says so
+    // to a role without them.
+    path: 'settings/blocked-countries',
+    title: `Blocked countries — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/settings/blocked-countries-page').then((m) => m.BlockedCountriesPage),
+  },
+  {
     // ADM-17 / GLB-10 (W2-11). Like every other admin route the guard only asks for a session: the API
     // is the security boundary (doc 03 §3a), and a user without Content.View is shown the refusal rather
     // than bounced from a page that then cannot explain itself.

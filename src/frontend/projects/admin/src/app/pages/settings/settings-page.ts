@@ -67,6 +67,7 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
     <section class="settings">
       <h1 class="settings__title">Settings</h1>
       <p><a class="adm-link" routerLink="/settings/overseas-delivery" data-testid="settings-overseas-link">Overseas delivery: regions, countries and fees</a></p>
+      <p><a class="adm-link" routerLink="/settings/blocked-countries" data-testid="settings-blocked-countries-link">Blocked countries: stop specific countries at checkout</a></p>
       <p class="sr-only" role="status" data-testid="announcement">{{ announcement() }}</p>
 
       @if (failure(); as problem) {
