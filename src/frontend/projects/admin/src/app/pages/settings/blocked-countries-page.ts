@@ -287,6 +287,11 @@ export class BlockedCountriesPage {
         deliveryFeeOverride: country.deliveryFeeOverride,
         estimatedDaysMinOverride: country.estimatedDaysMinOverride,
         estimatedDaysMaxOverride: country.estimatedDaysMaxOverride,
+        // The endpoint replaces every field on every save, so the Express overrides travel back unchanged: leaving
+        // them out would clear a country's Express fee and estimate each time it is blocked or reopened.
+        expressFeeOverride: country.expressFeeOverride,
+        expressDaysMinOverride: country.expressDaysMinOverride,
+        expressDaysMaxOverride: country.expressDaysMaxOverride,
         rowVersion: country.rowVersion,
       })
       .subscribe({
