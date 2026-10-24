@@ -16,11 +16,17 @@ public sealed record GetDeliveryCountriesQuery;
 /// <param name="PostalCodeRequired">Whether an address here must carry a postcode.</param>
 /// <param name="RegionRequired">Whether an address here must name a state or region.</param>
 /// <param name="Fee">
-/// The overseas delivery fee in LKR, or null for Sri Lanka (priced by district at checkout) and for a country
-/// that is not available.
+/// Standard delivery fee in LKR, or null for Sri Lanka and for a country where standard is not available.
+/// Kept for backward-compat; identical to <paramref name="StandardFee"/>.
 /// </param>
-/// <param name="EstimatedDaysMin">The overseas estimate, or null like <paramref name="Fee"/>.</param>
-/// <param name="EstimatedDaysMax">The overseas estimate, or null like <paramref name="Fee"/>.</param>
+/// <param name="EstimatedDaysMin">Standard estimate, or null like <paramref name="Fee"/>.</param>
+/// <param name="EstimatedDaysMax">Standard estimate, or null like <paramref name="Fee"/>.</param>
+/// <param name="StandardFee">Standard delivery fee in LKR, or null when not available.</param>
+/// <param name="StandardEstimatedDaysMin">Standard delivery estimate, or null when not available.</param>
+/// <param name="StandardEstimatedDaysMax">Standard delivery estimate, or null when not available.</param>
+/// <param name="ExpressFee">Express delivery fee in LKR, or null when express is not offered for this country.</param>
+/// <param name="ExpressEstimatedDaysMin">Express estimate, or null when not available.</param>
+/// <param name="ExpressEstimatedDaysMax">Express estimate, or null when not available.</param>
 public sealed record DeliveryCountryDto(
     string Code,
     string Name,
@@ -30,7 +36,13 @@ public sealed record DeliveryCountryDto(
     bool RegionRequired,
     decimal? Fee,
     byte? EstimatedDaysMin,
-    byte? EstimatedDaysMax);
+    byte? EstimatedDaysMax,
+    decimal? StandardFee,
+    byte? StandardEstimatedDaysMin,
+    byte? StandardEstimatedDaysMax,
+    decimal? ExpressFee,
+    byte? ExpressEstimatedDaysMin,
+    byte? ExpressEstimatedDaysMax);
 
 /// <summary>Reads the country list through <see cref="IDeliveryCountryReader"/>, the one checkout uses.</summary>
 public sealed class GetDeliveryCountriesQueryHandler(IDeliveryCountryReader reader)
@@ -45,12 +57,13 @@ public sealed class GetDeliveryCountriesQueryHandler(IDeliveryCountryReader read
         return countries.Select(ToDto).ToList().AsReadOnly();
     }
 
-    /// <summary>The DTO for one country: an overseas fee only where one can actually be charged.</summary>
+    /// <summary>The DTO for one country: overseas fees only where they can actually be charged.</summary>
     public static DeliveryCountryDto ToDto(CheckoutCountry country)
     {
         ArgumentNullException.ThrowIfNull(country);
 
-        var priced = !country.IsDomestic && country.Quote.IsAvailable;
+        var standardPriced = !country.IsDomestic && country.StandardQuote.IsAvailable;
+        var expressPriced = !country.IsDomestic && country.ExpressQuote.IsAvailable;
 
         return new DeliveryCountryDto(
             country.Code,
@@ -59,8 +72,14 @@ public sealed class GetDeliveryCountriesQueryHandler(IDeliveryCountryReader read
             country.IsServed,
             country.PostalCodeRequired,
             country.RegionRequired,
-            priced ? country.Quote.Fee : null,
-            priced ? country.Quote.EstimatedDaysMin : null,
-            priced ? country.Quote.EstimatedDaysMax : null);
+            standardPriced ? country.StandardQuote.Fee : null,
+            standardPriced ? country.StandardQuote.EstimatedDaysMin : null,
+            standardPriced ? country.StandardQuote.EstimatedDaysMax : null,
+            standardPriced ? country.StandardQuote.Fee : null,
+            standardPriced ? country.StandardQuote.EstimatedDaysMin : null,
+            standardPriced ? country.StandardQuote.EstimatedDaysMax : null,
+            expressPriced ? country.ExpressQuote.Fee : null,
+            expressPriced ? country.ExpressQuote.EstimatedDaysMin : null,
+            expressPriced ? country.ExpressQuote.EstimatedDaysMax : null);
     }
 }

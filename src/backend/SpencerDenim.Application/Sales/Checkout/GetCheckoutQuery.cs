@@ -43,7 +43,8 @@ public sealed record GetCheckoutQuery(
     int? DistrictId,
     int? DeliveryMethodId,
     string? PromoCode = null,
-    string? CountryCode = null);
+    string? CountryCode = null,
+    string? OverseasTier = null);
 
 /// <summary>
 /// What the GET answered: the session, plus whatever the guest cookie must now say.
@@ -100,7 +101,7 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
         // R7). Until a method is chosen there is nothing to resolve, and with no pickup location seeded
         // (§9 gives zero, client input D8) the pickup branch has nothing to resolve to either.
         var methods = overseas
-            ? await OverseasMethodsAsync(country!, cancellationToken)
+            ? await OverseasMethodsAsync(country!, query.OverseasTier, cancellationToken)
             : district is { } chosen
                 ? await reader.DeliveryMethodsForZoneAsync(chosen.DeliveryZone, cancellationToken)
                 : [];
@@ -168,17 +169,20 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
     /// uses.
     /// </summary>
     /// <summary>
-    /// The one option an overseas country gets: International delivery at the country's fee, or the same option
-    /// marked unavailable when the country is not served — and nothing at all when International delivery is
-    /// switched off.
+    /// The one option an overseas country gets: International delivery at the country's fee for the chosen tier,
+    /// or the same option marked unavailable when the country is not served — and nothing at all when
+    /// International delivery is switched off.
+    /// When <paramref name="overseasTier"/> is null the standard tier rate is used so totals render even
+    /// before the shopper has picked a tier.
     /// </summary>
     private async Task<IReadOnlyList<CheckoutDeliveryMethod>> OverseasMethodsAsync(
         CheckoutCountry country,
+        string? overseasTier,
         CancellationToken cancellationToken)
     {
         var international = await reader.InternationalMethodAsync(cancellationToken);
 
-        return international is null ? [] : [international with { Rate = country.OverseasRate }];
+        return international is null ? [] : [international with { Rate = country.OverseasRateFor(overseasTier) }];
     }
 
     private Task<ResolvedPromo> ResolvePromoAsync(

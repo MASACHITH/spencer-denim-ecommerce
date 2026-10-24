@@ -376,7 +376,8 @@ public sealed class CheckoutApiClient(HttpClient client)
         int? deliveryMethodId,
         CancellationToken cancellationToken,
         string? promoCode = null,
-        string? countryCode = null)
+        string? countryCode = null,
+        string? overseasTier = null)
     {
         var query = new List<string>();
 
@@ -384,6 +385,12 @@ public sealed class CheckoutApiClient(HttpClient client)
         if (countryCode is not null)
         {
             query.Add($"countryCode={Uri.EscapeDataString(countryCode)}");
+        }
+
+        // Owner decision 2026-10-23. Omitted means Standard (the default).
+        if (overseasTier is not null)
+        {
+            query.Add($"overseasTier={Uri.EscapeDataString(overseasTier)}");
         }
 
         if (districtId is { } district)

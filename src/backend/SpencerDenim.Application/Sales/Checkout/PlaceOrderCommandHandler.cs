@@ -174,11 +174,11 @@ public sealed class PlaceOrderCommandHandler(
             return PlaceOrderResult.Invalid([destinationError]);
         }
 
-        // Overseas: the country's own quote (OverseasDeliveryRate), already known to be available. Sri Lanka:
-        // the district's zone rate, exactly as before.
+        // Overseas: the country's quote for the chosen tier (OverseasDeliveryRate), already known to be
+        // available. Sri Lanka: the district's zone rate, exactly as before.
         var rate = destination.District is { } district
             ? await reader.FindZoneRateAsync(deliveryMethod.Id, district.DeliveryZone, cancellationToken)
-            : destinationCountry.OverseasRate;
+            : destinationCountry.OverseasRateFor(command.OverseasTier);
         if (rate is not { IsAvailable: true } zoneRate)
         {
             // No row, or a row that says this method is not offered in this zone. Doc 08 §6 step 10 has no

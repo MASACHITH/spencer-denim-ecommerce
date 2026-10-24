@@ -15,6 +15,8 @@ internal sealed class DeliveryRegionConfiguration : IEntityTypeConfiguration<Del
         {
             table.HasCheckConstraint("CK_DeliveryRegions_Fee", "[Fee] IS NULL OR [Fee] >= 0");
             table.HasCheckConstraint("CK_DeliveryRegions_EstimatedDays", "[EstimatedDaysMin] <= [EstimatedDaysMax]");
+            table.HasCheckConstraint("CK_DeliveryRegions_ExpressFee", "[ExpressFee] IS NULL OR [ExpressFee] >= 0");
+            table.HasCheckConstraint("CK_DeliveryRegions_ExpressDays", "[ExpressDaysMin] <= [ExpressDaysMax]");
         });
 
         builder.HasKey(region => region.Code).HasName("PK_DeliveryRegions");
@@ -27,6 +29,9 @@ internal sealed class DeliveryRegionConfiguration : IEntityTypeConfiguration<Del
         builder.Property(region => region.Fee);
         builder.Property(region => region.EstimatedDaysMin).HasColumnType("tinyint").IsRequired();
         builder.Property(region => region.EstimatedDaysMax).HasColumnType("tinyint").IsRequired();
+        builder.Property(region => region.ExpressFee);
+        builder.Property(region => region.ExpressDaysMin).HasColumnType("tinyint").HasDefaultValue((byte)3).IsRequired();
+        builder.Property(region => region.ExpressDaysMax).HasColumnType("tinyint").HasDefaultValue((byte)7).IsRequired();
         builder.Property(region => region.IsEnabled).HasDefaultValue(true).IsRequired();
         builder.Property(region => region.SortOrder).HasDefaultValue((short)0).IsRequired();
 

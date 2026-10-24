@@ -30,14 +30,21 @@ public sealed record DeliveryRegionAdminDto(
     decimal? Fee,
     byte EstimatedDaysMin,
     byte EstimatedDaysMax,
+    decimal? ExpressFee,
+    byte ExpressDaysMin,
+    byte ExpressDaysMax,
     bool IsEnabled,
     int CountryCount,
     string RowVersion);
 
 /// <summary>One country: its own settings, and what a shopper is actually charged once its region is applied.</summary>
 /// <param name="Refusal">
-/// Why it cannot be ordered to (<c>MethodDisabled</c>, <c>CountryDisabled</c>, <c>RegionDisabled</c>,
+/// Why standard delivery is unavailable (<c>MethodDisabled</c>, <c>CountryDisabled</c>, <c>RegionDisabled</c>,
 /// <c>NotPriced</c>), or <c>None</c>.
+/// </param>
+/// <param name="ExpressRefusal">
+/// Why express delivery is unavailable, or <c>None</c>. When <c>ExpressNotPriced</c> the tier is simply
+/// not configured for this country/region and is not offered.
 /// </param>
 public sealed record CountryDeliveryAdminDto(
     string Code,
@@ -47,13 +54,20 @@ public sealed record CountryDeliveryAdminDto(
     decimal? DeliveryFeeOverride,
     byte? EstimatedDaysMinOverride,
     byte? EstimatedDaysMaxOverride,
+    decimal? ExpressFeeOverride,
+    byte? ExpressDaysMinOverride,
+    byte? ExpressDaysMaxOverride,
     bool PostalCodeRequired,
     bool RegionRequired,
     bool IsAvailable,
     decimal? EffectiveFee,
     byte? EffectiveDaysMin,
     byte? EffectiveDaysMax,
+    decimal? EffectiveExpressFee,
+    byte? EffectiveExpressDaysMin,
+    byte? EffectiveExpressDaysMax,
     string Refusal,
+    string ExpressRefusal,
     string RowVersion);
 
 /// <summary>What a write on the Overseas delivery screen came to.</summary>
@@ -118,6 +132,9 @@ public sealed record UpdateDeliveryRegionCommand(
     decimal? Fee,
     int? EstimatedDaysMin,
     int? EstimatedDaysMax,
+    decimal? ExpressFee,
+    int? ExpressDaysMin,
+    int? ExpressDaysMax,
     bool? IsEnabled,
     string? RowVersion,
     AdminActor Actor);
@@ -129,6 +146,9 @@ public sealed record UpdateCountryDeliveryCommand(
     decimal? DeliveryFeeOverride,
     int? EstimatedDaysMinOverride,
     int? EstimatedDaysMaxOverride,
+    decimal? ExpressFeeOverride,
+    int? ExpressDaysMinOverride,
+    int? ExpressDaysMaxOverride,
     string? RowVersion,
     AdminActor Actor);
 
@@ -166,6 +186,8 @@ public sealed class OverseasDeliveryCommandHandler(
         var errors = new List<ValidationError>();
         OverseasDeliveryRules.CheckFee(errors, "fee", command.Fee);
         OverseasDeliveryRules.CheckDays(errors, "estimatedDays", command.EstimatedDaysMin, command.EstimatedDaysMax, required: true);
+        OverseasDeliveryRules.CheckFee(errors, "expressFee", command.ExpressFee);
+        OverseasDeliveryRules.CheckDays(errors, "expressDays", command.ExpressDaysMin, command.ExpressDaysMax, required: command.ExpressFee is not null);
 
         if (command.IsEnabled is null)
         {
@@ -193,6 +215,9 @@ public sealed class OverseasDeliveryCommandHandler(
         region.Fee = command.Fee;
         region.EstimatedDaysMin = (byte)command.EstimatedDaysMin!.Value;
         region.EstimatedDaysMax = (byte)command.EstimatedDaysMax!.Value;
+        region.ExpressFee = command.ExpressFee;
+        region.ExpressDaysMin = command.ExpressDaysMin.HasValue ? (byte)command.ExpressDaysMin.Value : region.ExpressDaysMin;
+        region.ExpressDaysMax = command.ExpressDaysMax.HasValue ? (byte)command.ExpressDaysMax.Value : region.ExpressDaysMax;
         region.IsEnabled = command.IsEnabled!.Value;
 
         return await SaveAsync("DeliveryRegion", region.Code, before, Snapshot(region), command.Actor, cancellationToken);
@@ -216,6 +241,18 @@ public sealed class OverseasDeliveryCommandHandler(
             "estimatedDaysOverride",
             command.EstimatedDaysMinOverride,
             command.EstimatedDaysMaxOverride,
+            required: false);
+
+        if (command.ExpressFeeOverride is not null)
+        {
+            OverseasDeliveryRules.CheckFee(errors, "expressFeeOverride", command.ExpressFeeOverride);
+        }
+
+        OverseasDeliveryRules.CheckDays(
+            errors,
+            "expressDaysOverride",
+            command.ExpressDaysMinOverride,
+            command.ExpressDaysMaxOverride,
             required: false);
 
         if (command.IsShippingEnabled is null)
@@ -248,6 +285,9 @@ public sealed class OverseasDeliveryCommandHandler(
         country.DeliveryFeeOverride = command.DeliveryFeeOverride;
         country.EstimatedDaysMinOverride = (byte?)command.EstimatedDaysMinOverride;
         country.EstimatedDaysMaxOverride = (byte?)command.EstimatedDaysMaxOverride;
+        country.ExpressFeeOverride = command.ExpressFeeOverride;
+        country.ExpressDaysMinOverride = (byte?)command.ExpressDaysMinOverride;
+        country.ExpressDaysMaxOverride = (byte?)command.ExpressDaysMaxOverride;
 
         return await SaveAsync("Country", country.Code, before, Snapshot(country), command.Actor, cancellationToken);
     }
@@ -327,6 +367,9 @@ public sealed class OverseasDeliveryCommandHandler(
             ["fee"] = region.Fee?.ToString("0.00", CultureInfo.InvariantCulture),
             ["estimatedDaysMin"] = region.EstimatedDaysMin,
             ["estimatedDaysMax"] = region.EstimatedDaysMax,
+            ["expressFee"] = region.ExpressFee?.ToString("0.00", CultureInfo.InvariantCulture),
+            ["expressDaysMin"] = region.ExpressDaysMin,
+            ["expressDaysMax"] = region.ExpressDaysMax,
             ["isEnabled"] = region.IsEnabled,
         };
 
@@ -337,6 +380,9 @@ public sealed class OverseasDeliveryCommandHandler(
             ["deliveryFeeOverride"] = country.DeliveryFeeOverride?.ToString("0.00", CultureInfo.InvariantCulture),
             ["estimatedDaysMinOverride"] = country.EstimatedDaysMinOverride,
             ["estimatedDaysMaxOverride"] = country.EstimatedDaysMaxOverride,
+            ["expressFeeOverride"] = country.ExpressFeeOverride?.ToString("0.00", CultureInfo.InvariantCulture),
+            ["expressDaysMinOverride"] = country.ExpressDaysMinOverride,
+            ["expressDaysMaxOverride"] = country.ExpressDaysMaxOverride,
         };
 }
 

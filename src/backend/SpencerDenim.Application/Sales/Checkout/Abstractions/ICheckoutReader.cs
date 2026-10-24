@@ -12,9 +12,14 @@ namespace SpencerDenim.Application.Sales.Checkout.Abstractions;
 public readonly record struct CheckoutDistrict(int Id, string Name, DeliveryZone DeliveryZone);
 
 /// <summary>
-/// One <c>ref.Countries</c> row as checkout reads it (owner decision 2026-10-21), with its overseas quote
-/// already resolved by <see cref="OverseasDeliveryRate"/>. For Sri Lanka the quote is meaningless — delivery
-/// there is priced by district — and is reported as available.
+/// One <c>ref.Countries</c> row as checkout reads it (owner decision 2026-10-21), with its overseas quotes
+/// already resolved by <see cref="OverseasDeliveryRate"/>. For Sri Lanka the quotes are meaningless — delivery
+/// there is priced by district — and are reported as available.
+/// <para>
+/// Owner decision 2026-10-23: two tiers. <see cref="StandardQuote"/> is always resolved; <see cref="ExpressQuote"/>
+/// is resolved with <see cref="OverseasDeliveryRate.ResolveExpress"/> and will carry
+/// <see cref="OverseasRefusal.ExpressNotPriced"/> when no express fee is configured for the country/region.
+/// </para>
 /// </summary>
 public sealed record CheckoutCountry(
     string Code,
@@ -22,14 +27,24 @@ public sealed record CheckoutCountry(
     bool IsDomestic,
     bool PostalCodeRequired,
     bool RegionRequired,
-    OverseasQuote Quote)
+    OverseasQuote StandardQuote,
+    OverseasQuote ExpressQuote)
 {
-    /// <summary>Whether an order may be sent here at all.</summary>
-    public bool IsServed => IsDomestic || Quote.IsAvailable;
+    /// <summary>Whether an order may be sent here at all: domestic, or at least one tier available.</summary>
+    public bool IsServed => IsDomestic || StandardQuote.IsAvailable || ExpressQuote.IsAvailable;
 
-    /// <summary>The quote as a rate, for <see cref="CheckoutQuote.Price"/>. No free-above threshold overseas.</summary>
-    public CheckoutZoneRate OverseasRate =>
-        new(Quote.IsAvailable, Quote.Fee, null, Quote.EstimatedDaysMin, Quote.EstimatedDaysMax);
+    /// <summary>
+    /// The quote for the given tier as a <see cref="CheckoutZoneRate"/>. When <paramref name="tier"/> is
+    /// <c>"Express"</c> the express quote is used; anything else (including null) falls back to standard.
+    /// No free-above threshold overseas.
+    /// </summary>
+    public CheckoutZoneRate OverseasRateFor(string? tier)
+    {
+        var q = string.Equals(tier, "Express", StringComparison.OrdinalIgnoreCase)
+            ? ExpressQuote
+            : StandardQuote;
+        return new CheckoutZoneRate(q.IsAvailable, q.Fee, null, q.EstimatedDaysMin, q.EstimatedDaysMax);
+    }
 }
 
 /// <summary>

@@ -169,6 +169,9 @@ internal static class AdminDeliveryEndpoints
                 body!.Fee,
                 body.EstimatedDaysMin,
                 body.EstimatedDaysMax,
+                body.ExpressFee,
+                body.ExpressDaysMin,
+                body.ExpressDaysMax,
                 body.IsEnabled,
                 AdminWriteRequest.RowVersion(httpContext.Request, body.RowVersion),
                 AdminWriteRequest.Actor(httpContext)),
@@ -204,6 +207,9 @@ internal static class AdminDeliveryEndpoints
                 body.DeliveryFeeOverride,
                 body.EstimatedDaysMinOverride,
                 body.EstimatedDaysMaxOverride,
+                body.ExpressFeeOverride,
+                body.ExpressDaysMinOverride,
+                body.ExpressDaysMaxOverride,
                 AdminWriteRequest.RowVersion(httpContext.Request, body.RowVersion),
                 AdminWriteRequest.Actor(httpContext)),
             cancellationToken);
@@ -308,29 +314,41 @@ internal static class AdminDeliveryEndpoints
 public sealed record SetInternationalDeliveryRequest(bool? IsEnabled, string? RowVersion);
 
 /// <summary>One region, replaced.</summary>
-/// <param name="Fee">LKR, 0 to 1,000,000, or null for "not priced".</param>
+/// <param name="Fee">Standard LKR fee, 0 to 1,000,000, or null for "not priced".</param>
 /// <param name="EstimatedDaysMin">1 to 90.</param>
 /// <param name="EstimatedDaysMax">1 to 90, at least the minimum.</param>
+/// <param name="ExpressFee">Express LKR fee, or null when express is not offered for this region.</param>
+/// <param name="ExpressDaysMin">Express estimate min, required when <paramref name="ExpressFee"/> is set.</param>
+/// <param name="ExpressDaysMax">Express estimate max, required when <paramref name="ExpressFee"/> is set.</param>
 /// <param name="IsEnabled">Off switches off every country in the region.</param>
 /// <param name="RowVersion">The token from the screen.</param>
 public sealed record UpdateDeliveryRegionRequest(
     decimal? Fee,
     int? EstimatedDaysMin,
     int? EstimatedDaysMax,
+    decimal? ExpressFee,
+    int? ExpressDaysMin,
+    int? ExpressDaysMax,
     bool? IsEnabled,
     string? RowVersion);
 
 /// <summary>One country, replaced.</summary>
 /// <param name="IsShippingEnabled">Whether the country is delivered to.</param>
-/// <param name="DeliveryFeeOverride">LKR, or null to use the region's fee.</param>
+/// <param name="DeliveryFeeOverride">Standard LKR fee override, or null to use the region's fee.</param>
 /// <param name="EstimatedDaysMinOverride">With the maximum, or both null to use the region's estimate.</param>
 /// <param name="EstimatedDaysMaxOverride">With the minimum.</param>
+/// <param name="ExpressFeeOverride">Express LKR fee override, or null to use the region's express fee (or none).</param>
+/// <param name="ExpressDaysMinOverride">Express days override min, paired with the max or both null.</param>
+/// <param name="ExpressDaysMaxOverride">Express days override max.</param>
 /// <param name="RowVersion">The token from the screen.</param>
 public sealed record UpdateCountryDeliveryRequest(
     bool? IsShippingEnabled,
     decimal? DeliveryFeeOverride,
     int? EstimatedDaysMinOverride,
     int? EstimatedDaysMaxOverride,
+    decimal? ExpressFeeOverride,
+    int? ExpressDaysMinOverride,
+    int? ExpressDaysMaxOverride,
     string? RowVersion);
 
 /// <summary>One payment method's switch.</summary>

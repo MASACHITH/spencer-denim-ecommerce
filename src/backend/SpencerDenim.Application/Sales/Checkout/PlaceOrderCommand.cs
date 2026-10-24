@@ -59,7 +59,8 @@ public sealed record PlaceOrderCommand(
     string? CustomerNote,
     string? PlacedIpAddress,
     string? PromoCode = null,
-    string? CountryCode = null)
+    string? CountryCode = null,
+    string? OverseasTier = null)
 {
     /// <summary>
     /// The account placing it, or <see langword="null"/> for a guest.

@@ -2812,6 +2812,16 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.Property<byte?>("EstimatedDaysMinOverride")
                         .HasColumnType("tinyint");
 
+                    b.Property<byte?>("ExpressDaysMaxOverride")
+                        .HasColumnType("tinyint");
+
+                    b.Property<byte?>("ExpressDaysMinOverride")
+                        .HasColumnType("tinyint");
+
+                    b.Property<decimal?>("ExpressFeeOverride")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
                     b.Property<bool>("IsShippingEnabled")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
@@ -2868,6 +2878,10 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_Countries_DaysOverride", "([EstimatedDaysMinOverride] IS NULL AND [EstimatedDaysMaxOverride] IS NULL) OR ([EstimatedDaysMinOverride] IS NOT NULL AND [EstimatedDaysMaxOverride] IS NOT NULL AND [EstimatedDaysMinOverride] <= [EstimatedDaysMaxOverride])");
 
                             t.HasCheckConstraint("CK_Countries_DeliveryFeeOverride", "[DeliveryFeeOverride] IS NULL OR [DeliveryFeeOverride] >= 0");
+
+                            t.HasCheckConstraint("CK_Countries_ExpressDaysOverride", "([ExpressDaysMinOverride] IS NULL AND [ExpressDaysMaxOverride] IS NULL) OR ([ExpressDaysMinOverride] IS NOT NULL AND [ExpressDaysMaxOverride] IS NOT NULL AND [ExpressDaysMinOverride] <= [ExpressDaysMaxOverride])");
+
+                            t.HasCheckConstraint("CK_Countries_ExpressFeeOverride", "[ExpressFeeOverride] IS NULL OR [ExpressFeeOverride] >= 0");
 
                             t.HasCheckConstraint("CK_Countries_Region", "([Code] = 'LK' AND [RegionCode] IS NULL) OR ([Code] <> 'LK' AND [RegionCode] IS NOT NULL)");
 
@@ -3234,6 +3248,20 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.Property<byte>("EstimatedDaysMin")
                         .HasColumnType("tinyint");
 
+                    b.Property<byte>("ExpressDaysMax")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint")
+                        .HasDefaultValue((byte)7);
+
+                    b.Property<byte>("ExpressDaysMin")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint")
+                        .HasDefaultValue((byte)3);
+
+                    b.Property<decimal?>("ExpressFee")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
                     b.Property<decimal?>("Fee")
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
@@ -3274,6 +3302,10 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.ToTable("DeliveryRegions", "sales", t =>
                         {
                             t.HasCheckConstraint("CK_DeliveryRegions_EstimatedDays", "[EstimatedDaysMin] <= [EstimatedDaysMax]");
+
+                            t.HasCheckConstraint("CK_DeliveryRegions_ExpressDays", "[ExpressDaysMin] <= [ExpressDaysMax]");
+
+                            t.HasCheckConstraint("CK_DeliveryRegions_ExpressFee", "[ExpressFee] IS NULL OR [ExpressFee] >= 0");
 
                             t.HasCheckConstraint("CK_DeliveryRegions_Fee", "[Fee] IS NULL OR [Fee] >= 0");
                         });

@@ -47,6 +47,14 @@ public sealed class DeliveryRegion : IAuditable
 
     public byte EstimatedDaysMax { get; set; }
 
+    /// <summary>LKR express fee. Null = express not offered for this region. CK ≥ 0.</summary>
+    public decimal? ExpressFee { get; set; }
+
+    /// <summary>CK <c>Min ≤ Max</c>. Defaults seeded at 3–7 working days.</summary>
+    public byte ExpressDaysMin { get; set; } = 3;
+
+    public byte ExpressDaysMax { get; set; } = 7;
+
     /// <summary>Off switches off every country in the region at once.</summary>
     public bool IsEnabled { get; set; } = true;
 
