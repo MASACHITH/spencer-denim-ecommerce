@@ -31,7 +31,7 @@ export const ACCESS_SECTIONS: readonly GuideSection[] = [
       { kind: 'heading', text: 'The password rule' },
       {
         kind: 'text',
-        text: 'A password must have **at least 10 characters, including an upper-case letter, a lower-case letter, a number and a symbol.** The same rule applies to staff and to customers. There is no password expiry, and the system does not keep a history of old passwords.',
+        text: 'A password must have **at least 10 characters**, and must mix a capital letter, a small letter, a digit and a symbol. The sign-in screens print the exact rule beside the box, and it is the same for staff and for customers. There is no password expiry, and the system does not keep a history of old passwords.',
       },
       {
         kind: 'steps',
