@@ -1,4 +1,4 @@
-import { Page, expect, test } from '@playwright/test';
+import { BrowserContext, Page, expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
 import { contentPagesApiURL, contentPagesURL } from '../playwright.config';
@@ -1018,6 +1018,88 @@ test.describe('the Shipping and Returns pages and the product page links (#33)',
 });
 
 /**
+ * Sends the `/api` calls of **every tab** of a browser context to the stub. `useStubApi` routes one page; a link that
+ * opens a new tab needs the new tab to find the same stub, and a route on the context is what both tabs share.
+ */
+async function useStubApiInContext(context: BrowserContext): Promise<void> {
+  await context.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url());
+    const response = await route.fetch({ url: `${contentPagesApiURL}${url.pathname}${url.search}` });
+    await route.fulfill({ response });
+  });
+}
+
+/**
+ * Adds one Indigo/S to the bag from a product page, the way a shopper does. The hydration gate is the one
+ * `checkout.e2e.ts` documents at length: Add to Bag is server-rendered enabled before its handler exists, so the
+ * `localStorage` entry that the page writes last is what proves the page is alive.
+ */
+async function addOneToBag(page: Page, index: number): Promise<void> {
+  const slug = `test-product-${index}`;
+  await page.goto(`/product/${slug}?colour=1&size=10`);
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem('sd.recently-viewed') ?? ''))
+    .toContain(slug);
+
+  const add = page.locator('[data-testid="add-to-bag"]');
+  await expect(add).toBeEnabled();
+  await add.click();
+  await expect(page.locator('sd-mini-bag [role="dialog"] .mini-bag__line')).toHaveCount(1);
+}
+
+/** Opens `/checkout` and waits for the page's own read of the checkout, so nothing typed is overwritten by it. */
+async function openCheckoutPage(page: Page): Promise<void> {
+  const read = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/checkout' && response.request().method() === 'GET',
+  );
+
+  await page.goto('/checkout');
+  await read;
+  await expect(page.locator('.checkout__line')).toHaveCount(1);
+  await expect(page.locator('#co-firstName')).toBeVisible();
+}
+
+/**
+ * Presses each consent link of a page that holds a half-typed form and proves, in a real browser, what the shopper
+ * needs: the link opens a **new tab** showing the page, and the original tab is still on the same address with
+ * every value still in its field. `values` maps a field selector to what was typed into it.
+ */
+async function followConsentLinks(
+  page: Page,
+  context: BrowserContext,
+  scope: string,
+  values: Readonly<Record<string, string>>,
+): Promise<void> {
+  const startedAt = page.url();
+
+  for (const { href, title } of [
+    { href: '/terms', title: 'Terms and conditions' },
+    { href: '/privacy', title: 'Privacy policy' },
+  ]) {
+    const link = page.locator(`${scope} a[href="${href}"]`);
+
+    await expect(link).toHaveAttribute('target', '_blank');
+    await expect(link).toHaveAttribute('rel', /noopener/);
+    await expect(link).toHaveAccessibleName(/opens in a new tab/);
+
+    const [popup] = await Promise.all([context.waitForEvent('page'), link.click()]);
+    await popup.waitForLoadState('domcontentloaded');
+
+    await expect(popup).toHaveURL(new RegExp(`${href}$`));
+    await expect(popup.getByRole('heading', { level: 1, name: title })).toBeVisible();
+
+    // The tab the shopper was typing in is where they left it, with everything they typed.
+    expect(page.url()).toBe(startedAt);
+    for (const [selector, value] of Object.entries(values)) {
+      await expect(page.locator(selector), `${selector} after following ${href}`).toHaveValue(value);
+    }
+
+    await popup.close();
+  }
+}
+
+/**
  * Issue #252: the About us, Privacy policy and Terms and conditions pages, drawn with the words the shop ships.
  *
  * The state is `store`, which serves `support/store-pages.json` - a file `StorePagesCopyTests` keeps equal to
@@ -1034,7 +1116,7 @@ test.describe('the Shipping and Returns pages and the product page links (#33)',
 test.describe('the About, Privacy and Terms pages (#252)', () => {
   const PAGES = [
     { slug: 'about', title: 'About us', section: 'Delivery and returns' },
-    { slug: 'privacy', title: 'Privacy policy', section: 'What we collect and why' },
+    { slug: 'privacy', title: 'Privacy policy', section: 'Who receives your data' },
     { slug: 'terms', title: 'Terms and conditions', section: 'Placing an order' },
   ] as const;
 
@@ -1160,5 +1242,57 @@ test.describe('the About, Privacy and Terms pages (#252)', () => {
     await expect(main).toContainText('PayPal is available for every order');
     await expect(main).toContainText('For a delivery within Sri Lanka we may also offer payment by bank transfer');
     await expect(main).not.toContainText(/cash on delivery/i);
+  });
+  test('checkout: the terms and privacy links open new tabs, and the half-typed form survives', async ({
+    page,
+    context,
+  }) => {
+    await useStubApiInContext(context);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await addOneToBag(page, 2);
+    await openCheckoutPage(page);
+
+    await page.locator('#co-firstName').fill('Nimali');
+    await page.locator('#co-lastName').fill('Perera');
+    await page.locator('#co-email').fill('nimali@example.com');
+    await page.locator('#co-line1').fill('14 Galle Road');
+    await page.locator('#co-city').fill('Kollupitiya');
+
+    await followConsentLinks(page, context, '.checkout__fineprint', {
+      '#co-firstName': 'Nimali',
+      '#co-lastName': 'Perera',
+      '#co-email': 'nimali@example.com',
+      '#co-line1': '14 Galle Road',
+      '#co-city': 'Kollupitiya',
+    });
+
+    // And the sentences read as the shop means them, in the same capitals, with the new-tab hint in the link name.
+    const fineprint = (await page.locator('.checkout__fineprint').innerText()).replace(/\s+/g, ' ');
+    expect(fineprint).toContain('By placing this order you agree to our terms and conditions');
+    expect(fineprint).toContain('How we use your details is explained in our privacy policy');
+  });
+
+  test('register: the terms and privacy links open new tabs, and the half-typed form survives', async ({
+    page,
+    context,
+  }) => {
+    await useStubApiInContext(context);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/account/register');
+    await expect(page.locator('[data-testid="register-consent"] a').first()).toBeVisible();
+
+    // Hydrated first (the gate account.e2e.ts uses): text typed before the handlers exist is not in the page's state.
+    await page.waitForFunction(() => !!document.querySelector('sd-root')?.hasAttribute('ng-version'));
+    await page.locator('[data-testid="register-first-name"]').fill('Nimal');
+    await page.locator('[data-testid="register-email"]').fill('nimal@example.invalid');
+
+    await followConsentLinks(page, context, '[data-testid="register-consent"]', {
+      '[data-testid="register-first-name"]': 'Nimal',
+      '[data-testid="register-email"]': 'nimal@example.invalid',
+    });
+
+    const consent = (await page.locator('[data-testid="register-consent"]').innerText()).replace(/\s+/g, ' ');
+    expect(consent).toContain('By creating an account you agree to our terms and conditions');
+    expect(consent).toContain('How we use your details is explained in our privacy policy');
   });
 });
