@@ -341,6 +341,7 @@ interface Access {
           <a class="adm-link" routerLink="/audit-log">Audit log</a>
           <a class="adm-link" routerLink="/users">Staff users</a>
           <a class="adm-link" routerLink="/roles">Roles</a>
+          <a class="adm-link" routerLink="/guide" data-testid="dashboard-guide-link">User guide</a>
         </div>
         <div class="adm-actions">
           <button class="adm-btn" type="button" data-testid="dashboard-logout" [attr.aria-disabled]="loggingOut() ? 'true' : null" (click)="logout()">

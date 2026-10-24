@@ -338,5 +338,14 @@ export const routes: Routes = [
     canActivate: [adminSessionGuard],
     loadComponent: () => import('./pages/roles/roles-list-page').then((m) => m.RolesListPage),
   },
+  {
+    // OPS-04 (#199): the admin user guide. The guard asks only for a session, and the page asks for no
+    // permission: it is documentation, and a role that cannot use a screen should still be able to read
+    // what the screen is for. Deep links such as /guide#photos-and-video scroll to their section.
+    path: 'guide',
+    title: `User guide — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/guide/guide-page').then((m) => m.GuidePage),
+  },
   { path: '**', redirectTo: '' },
 ];
