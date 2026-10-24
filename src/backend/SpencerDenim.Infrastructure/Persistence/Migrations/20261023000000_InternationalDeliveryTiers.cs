@@ -51,7 +51,7 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                 name: "CK_DeliveryRegions_ExpressDays",
                 schema: "sales",
                 table: "DeliveryRegions",
-                sql: "[ExpressDaysMin] <= [ExpressDaysMax]");
+                sql: "[ExpressDaysMin] >= 1 AND [ExpressDaysMax] <= 90 AND [ExpressDaysMin] <= [ExpressDaysMax]");
 
             migrationBuilder.AddColumn<decimal>(
                 name: "ExpressFeeOverride",

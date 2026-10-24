@@ -264,5 +264,20 @@ public sealed class OverseasDeliveryRateTests
             Assert.Equal(0, quote.EstimatedDaysMin);
             Assert.Equal(0, quote.EstimatedDaysMax);
         }
+
+        [Fact]
+        public void A_zero_express_fee_is_valid_free_express_delivery()
+        {
+            var quote = OverseasDeliveryRate.ResolveExpress(Open with { RegionExpressFee = 0m });
+            Assert.True(quote.IsAvailable);
+            Assert.Equal(0m, quote.Fee);
+        }
+
+        [Fact]
+        public void A_negative_express_fee_is_treated_as_not_priced()
+        {
+            var quote = OverseasDeliveryRate.ResolveExpress(Open with { CountryExpressFee = -1m });
+            Assert.Equal(OverseasRefusal.ExpressNotPriced, quote.Refusal);
+        }
     }
 }

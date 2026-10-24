@@ -1856,7 +1856,7 @@ export class CheckoutPage {
 
     this.chosenDeliveryMethodId.set(null);
     this.chosenPickupLocationId.set(null);
-    this.chosenOverseasTier.set(null);
+    this.autoSelectTier(this.destination.find(code) ?? null);
     this.clearError('countryCode');
     this.clearError('districtId');
     this.clearError('address.region');
@@ -1967,6 +1967,25 @@ export class CheckoutPage {
     // Drop the delivery method selection so the server re-prices it for the new tier.
     this.chosenDeliveryMethodId.set(null);
     this.read();
+  }
+
+  /**
+   * Resets the overseas tier signal when the country changes, auto-selecting Express when the country
+   * has Express configured but Standard is not (express-only country).
+   *
+   * Without this, an express-only country would leave `chosenOverseasTier` as null (= Standard
+   * default), the GET would ask for Standard, the server would resolve at Standard → `NotPriced` →
+   * no delivery option available, and the shopper could not order even though Express IS configured.
+   */
+  private autoSelectTier(c: DeliveryCountry | null): void {
+    if (c === null || c.isDomestic) {
+      this.chosenOverseasTier.set(null);
+      return;
+    }
+    const hasStandard = c.fee !== null;
+    const hasExpress = c.expressFee !== null;
+    // Auto-select Express when only Express is configured (no tier picker shown for a single tier)
+    this.chosenOverseasTier.set(!hasStandard && hasExpress ? 'Express' : null);
   }
 
   /** Working-days sentence for a tier's estimate panel, or null when the estimate is absent. */

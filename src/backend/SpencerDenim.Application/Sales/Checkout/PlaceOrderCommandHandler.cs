@@ -183,11 +183,13 @@ public sealed class PlaceOrderCommandHandler(
         {
             // No row, or a row that says this method is not offered in this zone. Doc 08 §6 step 10 has no
             // fee to give, so the order is refused rather than priced with an invented one.
+            // Overseas orders have no district, so use destination-appropriate wording.
+            var rateMissMessage = destination.District is null
+                ? "This delivery option is not available for that destination. Choose another."
+                : "This delivery option is not available for that district. Choose another.";
             return PlaceOrderResult.Invalid(
             [
-                new ValidationError(
-                    "deliveryMethodId",
-                    "This delivery option is not available for that district. Choose another."),
+                new ValidationError("deliveryMethodId", rateMissMessage),
             ]);
         }
 
