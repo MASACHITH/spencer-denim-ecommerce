@@ -460,7 +460,9 @@ public sealed class PlaceOrderCommandHandlerTests
             Task.FromResult<CheckoutDeliveryMethod?>(null);
 
         private static CheckoutCountry SriLanka { get; } =
-            new("LK", "Sri Lanka", true, false, false, new OverseasQuote(OverseasRefusal.None, 0m, 0, 0));
+            new("LK", "Sri Lanka", true, false, false,
+                StandardQuote: new OverseasQuote(OverseasRefusal.None, 0m, 0, 0),
+                ExpressQuote: new OverseasQuote(OverseasRefusal.ExpressNotPriced, 0m, 0, 0));
 
         /// <summary>
         /// No code matches. These tests are about the idempotency race and none of them sends a promo

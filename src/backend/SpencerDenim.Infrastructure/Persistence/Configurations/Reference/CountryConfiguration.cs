@@ -48,6 +48,16 @@ internal sealed class CountryConfiguration : IEntityTypeConfiguration<Country>
                 "([EstimatedDaysMinOverride] IS NULL AND [EstimatedDaysMaxOverride] IS NULL) "
                 + "OR ([EstimatedDaysMinOverride] IS NOT NULL AND [EstimatedDaysMaxOverride] IS NOT NULL "
                 + "AND [EstimatedDaysMinOverride] <= [EstimatedDaysMaxOverride])");
+
+            table.HasCheckConstraint(
+                "CK_Countries_ExpressFeeOverride",
+                "[ExpressFeeOverride] IS NULL OR [ExpressFeeOverride] >= 0");
+
+            table.HasCheckConstraint(
+                "CK_Countries_ExpressDaysOverride",
+                "([ExpressDaysMinOverride] IS NULL AND [ExpressDaysMaxOverride] IS NULL) "
+                + "OR ([ExpressDaysMinOverride] IS NOT NULL AND [ExpressDaysMaxOverride] IS NOT NULL "
+                + "AND [ExpressDaysMinOverride] <= [ExpressDaysMaxOverride])");
         });
 
         builder.HasKey(country => country.Code).HasName("PK_Countries");
@@ -67,6 +77,9 @@ internal sealed class CountryConfiguration : IEntityTypeConfiguration<Country>
         builder.Property(country => country.DeliveryFeeOverride);
         builder.Property(country => country.EstimatedDaysMinOverride).HasColumnType("tinyint");
         builder.Property(country => country.EstimatedDaysMaxOverride).HasColumnType("tinyint");
+        builder.Property(country => country.ExpressFeeOverride);
+        builder.Property(country => country.ExpressDaysMinOverride).HasColumnType("tinyint");
+        builder.Property(country => country.ExpressDaysMaxOverride).HasColumnType("tinyint");
         builder.Property(country => country.SortOrder).HasDefaultValue((short)0).IsRequired();
 
         builder.ApplyAuditColumns();

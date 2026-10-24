@@ -48,6 +48,10 @@ public sealed class AdminOverseasDeliveryEndpointTests(SqlServerDatabaseFixture 
         var gb = screen.Countries.Single(country => country.Code == "GB");
         Assert.Equal((DeliveryRegion.Europe, true, europe.Fee), (gb.RegionCode, gb.IsAvailable, gb.EffectiveFee));
         Assert.Equal("None", gb.Refusal);
+        // No express fee seeded: express is not priced for any region, so every country is ExpressNotPriced.
+        Assert.Null(europe.ExpressFee);
+        Assert.Null(gb.EffectiveExpressFee);
+        Assert.Equal("ExpressNotPriced", gb.ExpressRefusal);
 
         var aq = screen.Countries.Single(country => country.Code == "AQ");
         Assert.False(aq.IsAvailable);
@@ -242,6 +246,46 @@ public sealed class AdminOverseasDeliveryEndpointTests(SqlServerDatabaseFixture 
     }
 
     [Fact]
+    public async Task An_express_fee_on_a_region_is_saved_and_charged_at_express_checkout()
+    {
+        using var editor = await EditorAsync();
+        await RememberRegionAsync(DeliveryRegion.Asia);
+        var region = await RegionAsync(editor, DeliveryRegion.Asia);
+
+        // Save a standard and express fee together.
+        using var response = await editor.PutAsJsonAsync(
+            $"{Url}/regions/{DeliveryRegion.Asia}",
+            new
+            {
+                fee = 8_000m,
+                estimatedDaysMin = 5,
+                estimatedDaysMax = 10,
+                expressFee = 14_000m,
+                expressDaysMin = 2,
+                expressDaysMax = 4,
+                isEnabled = true,
+                rowVersion = region.RowVersion,
+            },
+            Json,
+            Token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var screen = await response.Content.ReadFromJsonAsync<OverseasDeliveryAdminDto>(Json, Token);
+        var saved = screen!.Regions.Single(row => row.Code == DeliveryRegion.Asia);
+        Assert.Equal((14_000m, (byte)2, (byte)4), (saved.ExpressFee!.Value, saved.ExpressDaysMin, saved.ExpressDaysMax));
+
+        // Standard checkout still prices at the standard fee.
+        var standard = await QuoteOptionAsync("SG");
+        Assert.Equal(8_000m, standard.Fee);
+
+        // Express checkout prices at the express fee.
+        var express = await QuoteOptionForTierAsync("SG", "Express");
+        Assert.Equal(14_000m, express.Fee);
+        Assert.Equal((byte?)2, express.EstimatedDaysMin);
+        Assert.Equal((byte?)4, express.EstimatedDaysMax);
+    }
+
+    [Fact]
     public async Task A_write_without_the_antiforgery_header_is_refused()
     {
         using var editor = await EditorAsync();
@@ -281,6 +325,16 @@ public sealed class AdminOverseasDeliveryEndpointTests(SqlServerDatabaseFixture 
     private async Task<DeliveryOptionDto> QuoteOptionAsync(string countryCode) =>
         Assert.Single((await QuoteAsync(countryCode)).DeliveryOptions);
 
+    private async Task<DeliveryOptionDto> QuoteOptionForTierAsync(string countryCode, string tier)
+    {
+        var variantId = await CheckoutVariantIdAsync();
+        await SetStockAsync(variantId, 10);
+        var (_, _, api) = await NewBagAsync(variantId);
+        var (_, session) = await api.GetAsync(null, await DeliveryMethodIdAsync(DeliveryMethod.InternationalCode), Token, countryCode: countryCode, overseasTier: tier);
+
+        return Assert.Single(session!.DeliveryOptions);
+    }
+
     private async Task<List<AuditLog>> AuditAsync(string entityType, string entityId)
     {
         using var scope = CreateScope();
@@ -303,7 +357,10 @@ public sealed class AdminOverseasDeliveryEndpointTests(SqlServerDatabaseFixture 
                 .SetProperty(region => region.Fee, original.Fee)
                 .SetProperty(region => region.EstimatedDaysMin, original.EstimatedDaysMin)
                 .SetProperty(region => region.EstimatedDaysMax, original.EstimatedDaysMax)
-                .SetProperty(region => region.IsEnabled, original.IsEnabled),
+                .SetProperty(region => region.IsEnabled, original.IsEnabled)
+                .SetProperty(region => region.ExpressFee, original.ExpressFee)
+                .SetProperty(region => region.ExpressDaysMin, original.ExpressDaysMin)
+                .SetProperty(region => region.ExpressDaysMax, original.ExpressDaysMax),
             CancellationToken.None));
     }
 
@@ -319,7 +376,10 @@ public sealed class AdminOverseasDeliveryEndpointTests(SqlServerDatabaseFixture 
                 .SetProperty(country => country.IsShippingEnabled, original.IsShippingEnabled)
                 .SetProperty(country => country.DeliveryFeeOverride, original.DeliveryFeeOverride)
                 .SetProperty(country => country.EstimatedDaysMinOverride, original.EstimatedDaysMinOverride)
-                .SetProperty(country => country.EstimatedDaysMaxOverride, original.EstimatedDaysMaxOverride),
+                .SetProperty(country => country.EstimatedDaysMaxOverride, original.EstimatedDaysMaxOverride)
+                .SetProperty(country => country.ExpressFeeOverride, original.ExpressFeeOverride)
+                .SetProperty(country => country.ExpressDaysMinOverride, original.ExpressDaysMinOverride)
+                .SetProperty(country => country.ExpressDaysMaxOverride, original.ExpressDaysMaxOverride),
             CancellationToken.None));
     }
 

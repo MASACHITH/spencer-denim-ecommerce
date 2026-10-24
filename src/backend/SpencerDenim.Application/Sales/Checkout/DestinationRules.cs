@@ -31,7 +31,9 @@ public static class DestinationRules
     /// delivery. Its overseas quote is meaningless: delivery there is priced by district.
     /// </summary>
     public static CheckoutCountry SriLanka { get; } =
-        new(Country.SriLankaCode, "Sri Lanka", true, false, false, new OverseasQuote(OverseasRefusal.None, 0m, 0, 0));
+        new(Country.SriLankaCode, "Sri Lanka", true, false, false,
+            StandardQuote: new OverseasQuote(OverseasRefusal.None, 0m, 0, 0),
+            ExpressQuote: new OverseasQuote(OverseasRefusal.ExpressNotPriced, 0m, 0, 0));
 
     /// <summary>
     /// The country a request names, upper-cased: Sri Lanka when it names none — every client before overseas

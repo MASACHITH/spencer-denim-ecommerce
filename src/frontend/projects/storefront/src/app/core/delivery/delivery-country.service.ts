@@ -20,10 +20,18 @@ export interface DeliveryCountry {
   readonly isAvailable: boolean;
   readonly postalCodeRequired: boolean;
   readonly regionRequired: boolean;
-  /** The overseas fee in LKR; null for Sri Lanka and for a country that is not available. */
+  /** Standard delivery fee in LKR; null for Sri Lanka and for a country without standard delivery. */
   readonly fee: number | null;
   readonly estimatedDaysMin: number | null;
   readonly estimatedDaysMax: number | null;
+  /** Explicit standard fee (same as `fee`); null when not available. */
+  readonly standardFee: number | null;
+  readonly standardEstimatedDaysMin: number | null;
+  readonly standardEstimatedDaysMax: number | null;
+  /** Express delivery fee in LKR; null when express is not configured for this country. */
+  readonly expressFee: number | null;
+  readonly expressEstimatedDaysMin: number | null;
+  readonly expressEstimatedDaysMax: number | null;
 }
 
 /** What a shopper is told about delivery to one overseas country. */
@@ -67,6 +75,12 @@ export const SRI_LANKA_ONLY: readonly DeliveryCountry[] = [
     fee: null,
     estimatedDaysMin: null,
     estimatedDaysMax: null,
+    standardFee: null,
+    standardEstimatedDaysMin: null,
+    standardEstimatedDaysMax: null,
+    expressFee: null,
+    expressEstimatedDaysMin: null,
+    expressEstimatedDaysMax: null,
   },
 ];
 

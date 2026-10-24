@@ -132,7 +132,8 @@ internal static class CheckoutEndpoints
         [FromQuery] int? districtId = null,
         [FromQuery] int? deliveryMethodId = null,
         [FromQuery] string? promoCode = null,
-        [FromQuery] string? countryCode = null)
+        [FromQuery] string? countryCode = null,
+        [FromQuery] string? overseasTier = null)
     {
         var view = await handler.HandleAsync(
             new GetCheckoutQuery(
@@ -140,7 +141,8 @@ internal static class CheckoutEndpoints
                 districtId,
                 deliveryMethodId,
                 promoCode,
-                countryCode),
+                countryCode,
+                overseasTier),
             cancellationToken);
 
         CartCookie.Apply(httpContext.Response, view.Cookie, view.GuestToken, clock);
@@ -189,7 +191,10 @@ internal static class CheckoutEndpoints
             request?.PromoCode,
 
             // Owner decision 2026-10-21. Omitted means Sri Lanka, as every client before overseas delivery sent.
-            request?.CountryCode)
+            request?.CountryCode,
+
+            // Owner decision 2026-10-23. "Standard" or "Express"; omitted treats as standard.
+            request?.OverseasTier)
         {
             // **The one field that decides whether this order is in My account** (ACC-02). It was
             // never set before W3-01's tester pass, so every order placed while signed in was stored as
@@ -508,6 +513,9 @@ internal static class CheckoutEndpoints
 /// keeps the district and the domestic delivery methods; any other country has no district and is sent by
 /// International delivery at the country's fee.
 /// </param>
+/// <param name="OverseasTier">
+/// <c>"Standard"</c> or <c>"Express"</c> (owner decision 2026-10-23). Omitted or null is treated as standard.
+/// </param>
 public sealed record PlaceOrderRequest(
     Guid CheckoutKey,
     string? FirstName,
@@ -522,7 +530,8 @@ public sealed record PlaceOrderRequest(
     decimal? ExpectedGrandTotal,
     string? CustomerNote,
     string? PromoCode,
-    string? CountryCode = null);
+    string? CountryCode = null,
+    string? OverseasTier = null);
 
 /// <summary>
 /// The bank reference a customer quotes for their transfer (PAY-01, doc 11 P7 step 3).

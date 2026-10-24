@@ -46,6 +46,7 @@ export class CheckoutApi {
     deliveryMethodId: number | null,
     promoCode: string | null = null,
     countryCode: string | null = null,
+    overseasTier: string | null = null,
   ): Observable<CheckoutSessionDto> {
     let params = new HttpParams();
 
@@ -65,6 +66,12 @@ export class CheckoutApi {
 
     if (promoCode !== null && promoCode.trim() !== '') {
       params = params.set('promoCode', promoCode.trim());
+    }
+
+    // Owner decision 2026-10-23: Standard and Express tiers. Sent only when a tier is chosen so that
+    // existing Sri Lankan quotes and single-tier overseas quotes are unaffected.
+    if (overseasTier !== null) {
+      params = params.set('overseasTier', overseasTier);
     }
 
     return this.http.get<CheckoutSessionDto>(CheckoutApi.url, { params });

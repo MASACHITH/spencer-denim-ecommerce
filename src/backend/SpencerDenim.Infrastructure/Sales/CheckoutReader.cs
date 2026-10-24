@@ -215,16 +215,22 @@ internal sealed class CheckoutReader(
                 country.DeliveryFeeOverride,
                 country.EstimatedDaysMinOverride,
                 country.EstimatedDaysMaxOverride,
+                country.ExpressFeeOverride,
+                country.ExpressDaysMinOverride,
+                country.ExpressDaysMaxOverride,
                 country.Region != null && country.Region.IsEnabled,
                 country.Region != null ? country.Region.Fee : null,
                 country.Region != null ? country.Region.EstimatedDaysMin : (byte)0,
-                country.Region != null ? country.Region.EstimatedDaysMax : (byte)0));
+                country.Region != null ? country.Region.EstimatedDaysMax : (byte)0,
+                country.Region != null ? country.Region.ExpressFee : null,
+                country.Region != null ? country.Region.ExpressDaysMin : (byte)3,
+                country.Region != null ? country.Region.ExpressDaysMax : (byte)7));
 
     private static CheckoutCountry ToCountry(CountryRow row, bool internationalEnabled)
     {
         var domestic = string.Equals(row.Code, Country.SriLankaCode, StringComparison.OrdinalIgnoreCase);
 
-        var quote = domestic
+        var standardQuote = domestic
             ? new OverseasQuote(OverseasRefusal.None, 0m, 0, 0)
             : OverseasDeliveryRate.Resolve(new OverseasRateInputs(
                 internationalEnabled,
@@ -237,7 +243,20 @@ internal sealed class CheckoutReader(
                 row.RegionDaysMin,
                 row.RegionDaysMax));
 
-        return new CheckoutCountry(row.Code, row.Name, domestic, row.PostalCodeRequired, row.RegionRequired, quote);
+        var expressQuote = domestic
+            ? new OverseasQuote(OverseasRefusal.None, 0m, 0, 0)
+            : OverseasDeliveryRate.ResolveExpress(new OverseasExpressInputs(
+                internationalEnabled,
+                row.IsShippingEnabled,
+                row.ExpressFeeOverride,
+                row.ExpressDaysMinOverride,
+                row.ExpressDaysMaxOverride,
+                row.RegionEnabled,
+                row.RegionExpressFee,
+                row.RegionExpressDaysMin,
+                row.RegionExpressDaysMax));
+
+        return new CheckoutCountry(row.Code, row.Name, domestic, row.PostalCodeRequired, row.RegionRequired, standardQuote, expressQuote);
     }
 
     private sealed record CountryRow(
@@ -250,10 +269,16 @@ internal sealed class CheckoutReader(
         decimal? FeeOverride,
         byte? DaysMinOverride,
         byte? DaysMaxOverride,
+        decimal? ExpressFeeOverride,
+        byte? ExpressDaysMinOverride,
+        byte? ExpressDaysMaxOverride,
         bool RegionEnabled,
         decimal? RegionFee,
         byte RegionDaysMin,
-        byte RegionDaysMax);
+        byte RegionDaysMax,
+        decimal? RegionExpressFee,
+        byte RegionExpressDaysMin,
+        byte RegionExpressDaysMax);
 
     public async Task<IReadOnlyList<CheckoutPickupLocation>> ActivePickupLocationsAsync(
         CancellationToken cancellationToken)

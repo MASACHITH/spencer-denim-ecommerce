@@ -27,6 +27,12 @@ const COUNTRIES: readonly DeliveryCountry[] = [
     fee: null,
     estimatedDaysMin: null,
     estimatedDaysMax: null,
+    standardFee: null,
+    standardEstimatedDaysMin: null,
+    standardEstimatedDaysMax: null,
+    expressFee: null,
+    expressEstimatedDaysMin: null,
+    expressEstimatedDaysMax: null,
   },
   {
     code: 'GB',
@@ -38,6 +44,12 @@ const COUNTRIES: readonly DeliveryCountry[] = [
     fee: 9500,
     estimatedDaysMin: 7,
     estimatedDaysMax: 14,
+    standardFee: 9500,
+    standardEstimatedDaysMin: 7,
+    standardEstimatedDaysMax: 14,
+    expressFee: null,
+    expressEstimatedDaysMin: null,
+    expressEstimatedDaysMax: null,
   },
 ];
 

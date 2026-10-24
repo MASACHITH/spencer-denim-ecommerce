@@ -13,12 +13,13 @@ namespace SpencerDenim.UnitTests.Application.Sales;
 public sealed class DestinationRulesTests
 {
     private static readonly OverseasQuote Served = new(OverseasRefusal.None, 9_500m, 7, 14);
+    private static readonly OverseasQuote NoExpress = new(OverseasRefusal.ExpressNotPriced, 0m, 0, 0);
 
-    private static CheckoutCountry Gb => new("GB", "United Kingdom", false, PostalCodeRequired: true, RegionRequired: false, Served);
+    private static CheckoutCountry Gb => new("GB", "United Kingdom", false, PostalCodeRequired: true, RegionRequired: false, Served, NoExpress);
 
-    private static CheckoutCountry Us => new("US", "United States", false, PostalCodeRequired: true, RegionRequired: true, Served);
+    private static CheckoutCountry Us => new("US", "United States", false, PostalCodeRequired: true, RegionRequired: true, Served, NoExpress);
 
-    private static CheckoutCountry Ae => new("AE", "United Arab Emirates", false, PostalCodeRequired: false, RegionRequired: false, Served);
+    private static CheckoutCountry Ae => new("AE", "United Arab Emirates", false, PostalCodeRequired: false, RegionRequired: false, Served, NoExpress);
 
     private static CheckoutDeliveryMethod Method(string code, bool requiresAddress = true) =>
         new(1, code, code, null, requiresAddress, null);

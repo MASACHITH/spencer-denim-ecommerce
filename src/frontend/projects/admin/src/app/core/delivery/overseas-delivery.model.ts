@@ -18,10 +18,14 @@ export interface OverseasDeliveryScreen {
 export interface DeliveryRegionRow {
   readonly code: string;
   readonly name: string;
-  /** LKR. Null means "not priced": its countries cannot be ordered to unless they set their own fee. */
+  /** Standard LKR fee. Null means "not priced": its countries cannot be ordered to unless they set their own fee. */
   readonly fee: number | null;
   readonly estimatedDaysMin: number;
   readonly estimatedDaysMax: number;
+  /** Express LKR fee. Null means express is not offered for this region. */
+  readonly expressFee: number | null;
+  readonly expressDaysMin: number;
+  readonly expressDaysMax: number;
   readonly isEnabled: boolean;
   readonly countryCount: number;
   readonly rowVersion: string;
@@ -33,26 +37,35 @@ export type OverseasRefusal =
   | 'MethodDisabled'
   | 'CountryDisabled'
   | 'RegionDisabled'
-  | 'NotPriced';
+  | 'NotPriced'
+  | 'ExpressNotPriced';
 
 export interface CountryDeliveryRow {
   readonly code: string;
   readonly name: string;
   readonly regionCode: string;
   readonly isShippingEnabled: boolean;
-  /** The country's own fee, or null to use its region's. */
+  /** The country's own standard fee, or null to use its region's. */
   readonly deliveryFeeOverride: number | null;
-  /** The country's own estimate (both or neither), or null to use its region's. */
+  /** The country's own standard estimate (both or neither), or null to use its region's. */
   readonly estimatedDaysMinOverride: number | null;
   readonly estimatedDaysMaxOverride: number | null;
+  /** The country's own express fee, or null to use its region's (or none if region has none). */
+  readonly expressFeeOverride: number | null;
+  readonly expressDaysMinOverride: number | null;
+  readonly expressDaysMaxOverride: number | null;
   readonly postalCodeRequired: boolean;
   readonly regionRequired: boolean;
-  /** What a shopper is actually offered once the region and the switches are applied. */
+  /** True when standard delivery is available for this country. */
   readonly isAvailable: boolean;
   readonly effectiveFee: number | null;
   readonly effectiveDaysMin: number | null;
   readonly effectiveDaysMax: number | null;
+  readonly effectiveExpressFee: number | null;
+  readonly effectiveExpressDaysMin: number | null;
+  readonly effectiveExpressDaysMax: number | null;
   readonly refusal: OverseasRefusal | string;
+  readonly expressRefusal: OverseasRefusal | string;
   readonly rowVersion: string;
 }
 
@@ -61,6 +74,9 @@ export interface DeliveryRegionUpdate {
   readonly fee: number | null;
   readonly estimatedDaysMin: number | null;
   readonly estimatedDaysMax: number | null;
+  readonly expressFee: number | null;
+  readonly expressDaysMin: number | null;
+  readonly expressDaysMax: number | null;
   readonly isEnabled: boolean;
   readonly rowVersion: string;
 }
@@ -71,6 +87,9 @@ export interface CountryDeliveryUpdate {
   readonly deliveryFeeOverride: number | null;
   readonly estimatedDaysMinOverride: number | null;
   readonly estimatedDaysMaxOverride: number | null;
+  readonly expressFeeOverride: number | null;
+  readonly expressDaysMinOverride: number | null;
+  readonly expressDaysMaxOverride: number | null;
   readonly rowVersion: string;
 }
 
@@ -100,7 +119,9 @@ export function refusalText(refusal: string): string {
     case 'RegionDisabled':
       return 'Its region is switched off';
     case 'NotPriced':
-      return 'No fee set for it or its region';
+      return 'No standard fee set for it or its region';
+    case 'ExpressNotPriced':
+      return 'No express fee set for it or its region';
     default:
       return 'Not available';
   }

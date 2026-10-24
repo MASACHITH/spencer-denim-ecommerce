@@ -158,7 +158,7 @@ test.describe('the Overseas delivery screen', () => {
 
     await page.locator('[data-testid="region-fee-OCEANIA"]').fill('');
     await page.locator('[data-testid="region-save-OCEANIA"]').click();
-    await expect(page.locator('[data-testid="country-effective-AU"]')).toContainText('No fee set');
+    await expect(page.locator('[data-testid="country-effective-AU"]')).toContainText('No standard fee set');
 
     await page.locator('[data-testid="country-edit-AU"]').click();
     await page.locator('[data-testid="country-fee-AU"]').fill('14000');

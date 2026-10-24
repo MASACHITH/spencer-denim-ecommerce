@@ -67,6 +67,14 @@ public sealed class Country : IAuditable
 
     public byte? EstimatedDaysMaxOverride { get; set; }
 
+    /// <summary>LKR express fee override. When set, replaces the region's express fee for this country only. CK ≥ 0.</summary>
+    public decimal? ExpressFeeOverride { get; set; }
+
+    /// <summary>When set (with <see cref="ExpressDaysMaxOverride"/>), replaces the region's express estimate.</summary>
+    public byte? ExpressDaysMinOverride { get; set; }
+
+    public byte? ExpressDaysMaxOverride { get; set; }
+
     public short SortOrder { get; set; }
 
     public bool IsDomestic => string.Equals(Code, SriLankaCode, StringComparison.Ordinal);

@@ -17,8 +17,9 @@ namespace SpencerDenim.UnitTests.Application.Sales;
 public sealed class OverseasCheckoutRulesTests
 {
     private static readonly OverseasQuote Served = new(OverseasRefusal.None, 9_500m, 7, 14);
+    private static readonly OverseasQuote ExpressNotPriced = new(OverseasRefusal.ExpressNotPriced, 0m, 0, 0);
 
-    private static CheckoutCountry Gb => new("GB", "United Kingdom", false, true, false, Served);
+    private static CheckoutCountry Gb => new("GB", "United Kingdom", false, true, false, Served, ExpressNotPriced);
 
     private static PlaceOrderCommand SriLankan => new(
         CartLookup.ForGuest(null),
@@ -122,7 +123,7 @@ public sealed class OverseasCheckoutRulesTests
     [Fact]
     public void An_unserved_overseas_country_is_named_as_such_not_as_no_delivery_method()
     {
-        var refused = new CheckoutCountry("AQ", "Antarctica", false, false, false, new OverseasQuote(OverseasRefusal.CountryDisabled, 0m, 0, 0));
+        var refused = new CheckoutCountry("AQ", "Antarctica", false, false, false, new OverseasQuote(OverseasRefusal.CountryDisabled, 0m, 0, 0), ExpressNotPriced);
 
         var blockers = GetCheckoutQueryHandler.Blockers([], null, [], [], refused);
 
@@ -133,7 +134,7 @@ public sealed class OverseasCheckoutRulesTests
     [Fact]
     public void A_served_overseas_country_with_its_option_is_not_blocked_for_delivery()
     {
-        var option = new CheckoutDeliveryMethod(9, DeliveryMethod.InternationalCode, "International delivery", null, true, Gb.OverseasRate);
+        var option = new CheckoutDeliveryMethod(9, DeliveryMethod.InternationalCode, "International delivery", null, true, Gb.OverseasRateFor(null));
 
         var blockers = GetCheckoutQueryHandler.Blockers([], null, [option], [], Gb);
 
@@ -163,7 +164,7 @@ public sealed class OverseasCheckoutRulesTests
         var gb = GetDeliveryCountriesQueryHandler.ToDto(Gb);
         var lk = GetDeliveryCountriesQueryHandler.ToDto(DestinationRules.SriLanka);
         var aq = GetDeliveryCountriesQueryHandler.ToDto(
-            new CheckoutCountry("AQ", "Antarctica", false, false, false, new OverseasQuote(OverseasRefusal.CountryDisabled, 0m, 0, 0)));
+            new CheckoutCountry("AQ", "Antarctica", false, false, false, new OverseasQuote(OverseasRefusal.CountryDisabled, 0m, 0, 0), ExpressNotPriced));
 
         Assert.Equal((true, 9_500m, (byte?)7, (byte?)14), (gb.IsAvailable, gb.Fee!.Value, gb.EstimatedDaysMin, gb.EstimatedDaysMax));
         Assert.True(lk.IsAvailable);

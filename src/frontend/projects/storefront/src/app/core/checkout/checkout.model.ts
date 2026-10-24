@@ -439,6 +439,11 @@ export interface PlaceOrderRequest {
   readonly promoCode: string | null;
   /** ISO 3166-1 alpha-2 of the destination; `LK` keeps the district flow. */
   readonly countryCode: string;
+  /**
+   * The overseas delivery tier the shopper chose: `'Standard'` or `'Express'`, or null for Sri Lanka
+   * and for a country that has only one tier (the server uses the only available one).
+   */
+  readonly overseasTier: string | null;
 }
 
 /** A checkout page with nothing in it, so the page renders a form rather than nothing at all. */

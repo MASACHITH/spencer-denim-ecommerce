@@ -33,6 +33,9 @@ internal sealed class OverseasDeliveryAdminStore(AppDbContext dbContext) : IOver
                 region.Fee,
                 region.EstimatedDaysMin,
                 region.EstimatedDaysMax,
+                region.ExpressFee,
+                region.ExpressDaysMin,
+                region.ExpressDaysMax,
                 region.IsEnabled,
                 region.RowVersion,
                 Countries = dbContext.Countries.Count(country => country.RegionCode == region.Code),
@@ -52,6 +55,9 @@ internal sealed class OverseasDeliveryAdminStore(AppDbContext dbContext) : IOver
                 country.DeliveryFeeOverride,
                 country.EstimatedDaysMinOverride,
                 country.EstimatedDaysMaxOverride,
+                country.ExpressFeeOverride,
+                country.ExpressDaysMinOverride,
+                country.ExpressDaysMaxOverride,
                 country.PostalCodeRequired,
                 country.RegionRequired,
                 country.RowVersion,
@@ -71,6 +77,9 @@ internal sealed class OverseasDeliveryAdminStore(AppDbContext dbContext) : IOver
                     region.Fee,
                     region.EstimatedDaysMin,
                     region.EstimatedDaysMax,
+                    region.ExpressFee,
+                    region.ExpressDaysMin,
+                    region.ExpressDaysMax,
                     region.IsEnabled,
                     region.Countries,
                     Convert.ToBase64String(region.RowVersion ?? [])))
@@ -81,7 +90,7 @@ internal sealed class OverseasDeliveryAdminStore(AppDbContext dbContext) : IOver
                 {
                     byCode.TryGetValue(country.RegionCode, out var region);
 
-                    // The same function checkout prices with, so the screen shows exactly what a shopper pays.
+                    // The same functions checkout prices with, so the screen shows exactly what a shopper pays.
                     var quote = OverseasDeliveryRate.Resolve(new OverseasRateInputs(
                         methodEnabled,
                         country.IsShippingEnabled,
@@ -93,6 +102,17 @@ internal sealed class OverseasDeliveryAdminStore(AppDbContext dbContext) : IOver
                         region?.EstimatedDaysMin ?? 0,
                         region?.EstimatedDaysMax ?? 0));
 
+                    var expressQuote = OverseasDeliveryRate.ResolveExpress(new OverseasExpressInputs(
+                        methodEnabled,
+                        country.IsShippingEnabled,
+                        country.ExpressFeeOverride,
+                        country.ExpressDaysMinOverride,
+                        country.ExpressDaysMaxOverride,
+                        region?.IsEnabled ?? false,
+                        region?.ExpressFee,
+                        region?.ExpressDaysMin ?? 3,
+                        region?.ExpressDaysMax ?? 7));
+
                     return new CountryDeliveryAdminDto(
                         country.Code,
                         country.Name,
@@ -101,13 +121,20 @@ internal sealed class OverseasDeliveryAdminStore(AppDbContext dbContext) : IOver
                         country.DeliveryFeeOverride,
                         country.EstimatedDaysMinOverride,
                         country.EstimatedDaysMaxOverride,
+                        country.ExpressFeeOverride,
+                        country.ExpressDaysMinOverride,
+                        country.ExpressDaysMaxOverride,
                         country.PostalCodeRequired,
                         country.RegionRequired,
                         quote.IsAvailable,
                         quote.IsAvailable ? quote.Fee : null,
                         quote.IsAvailable ? quote.EstimatedDaysMin : null,
                         quote.IsAvailable ? quote.EstimatedDaysMax : null,
+                        expressQuote.IsAvailable ? expressQuote.Fee : null,
+                        expressQuote.IsAvailable ? expressQuote.EstimatedDaysMin : null,
+                        expressQuote.IsAvailable ? expressQuote.EstimatedDaysMax : null,
                         quote.Refusal.ToString(),
+                        expressQuote.Refusal.ToString(),
                         Convert.ToBase64String(country.RowVersion ?? []));
                 })
                 .ToList()

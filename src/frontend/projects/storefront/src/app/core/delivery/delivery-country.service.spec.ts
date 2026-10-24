@@ -61,7 +61,7 @@ describe('DeliveryCountryService (GLB-06, owner decision 2026-10-21)', () => {
     expect(service.countries()).toEqual(SRI_LANKA_ONLY);
     http.expectOne(DELIVERY_COUNTRIES_URL).flush(TEST_COUNTRIES);
 
-    expect(service.countries().map((country) => country.code)).toEqual(['LK', 'GB', 'US', 'AE', 'AQ']);
+    expect(service.countries().map((country) => country.code)).toEqual(['LK', 'GB', 'US', 'AE', 'AQ', 'JP', 'CA']);
     expect(service.selected().code).toBe('LK');
     expect(service.isOverseas()).toBe(false);
     expect(service.chosen()).toBeNull();

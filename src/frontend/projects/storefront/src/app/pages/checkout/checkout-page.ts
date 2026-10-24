@@ -42,6 +42,7 @@ import {
   DeliveryCountry,
   DeliveryCountryService,
   SRI_LANKA_CODE,
+  workingDays,
 } from '../../core/delivery/delivery-country.service';
 import { DeliveryDistrictService } from '../../core/delivery/delivery-district.service';
 import { RobotsMeta } from '../../core/platform/robots-meta';
@@ -478,6 +479,54 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
                         No delivery option is available for that district.
                       }
                     </p>
+                  }
+
+                  <!-- Owner decision 2026-10-23: Standard / Express tier picker, shown only when the
+                       destination country has both tiers configured. A country with one tier needs no
+                       choice. "Standard" is visually checked when overseasTier() is null (the default)
+                       or 'Standard'. -->
+                  @if (hasBothTiers()) {
+                    <fieldset class="checkout__group checkout__group--nested">
+                      <legend class="checkout__legend checkout__legend--sub">Delivery speed</legend>
+                      <label class="checkout__choice" [class.is-unavailable]="false">
+                        <input
+                          class="checkout__radio"
+                          type="radio"
+                          name="overseasTier"
+                          value="Standard"
+                          [checked]="overseasTier() !== 'Express'"
+                          (change)="chooseTier('Standard')"
+                        />
+                        <span class="checkout__choice-body">
+                          <span class="checkout__choice-head">
+                            <span class="checkout__choice-name">Standard</span>
+                            <span class="checkout__choice-fee">{{ money(country()!.fee!) }}</span>
+                          </span>
+                          @if (tierDays(country()!.estimatedDaysMin, country()!.estimatedDaysMax); as days) {
+                            <span class="checkout__choice-meta">Estimated {{ days }}</span>
+                          }
+                        </span>
+                      </label>
+                      <label class="checkout__choice" [class.is-unavailable]="false">
+                        <input
+                          class="checkout__radio"
+                          type="radio"
+                          name="overseasTier"
+                          value="Express"
+                          [checked]="overseasTier() === 'Express'"
+                          (change)="chooseTier('Express')"
+                        />
+                        <span class="checkout__choice-body">
+                          <span class="checkout__choice-head">
+                            <span class="checkout__choice-name">Express</span>
+                            <span class="checkout__choice-fee">{{ money(country()!.expressFee!) }}</span>
+                          </span>
+                          @if (tierDays(country()!.expressEstimatedDaysMin, country()!.expressEstimatedDaysMax); as days) {
+                            <span class="checkout__choice-meta">Estimated {{ days }}</span>
+                          }
+                        </span>
+                      </label>
+                    </fieldset>
                   }
 
                   @for (option of deliveryOptions(); track option.id; let first = $first) {
@@ -1372,6 +1421,14 @@ export class CheckoutPage {
    */
   private readonly chosenPromoCode = signal<string | null>(null);
 
+  /**
+   * The delivery tier the overseas shopper has chosen: `'Standard'`, `'Express'`, or null.
+   *
+   * Null means Standard (the server default). Set only when the country has both tiers and the shopper
+   * actively picks Express; the signal is cleared whenever the country changes.
+   */
+  private readonly chosenOverseasTier = signal<string | null>(null);
+
   /** What is in the promo box. */
   protected readonly promoDraft = signal('');
 
@@ -1500,6 +1557,18 @@ export class CheckoutPage {
   protected readonly blockers = computed(() => this.current().blockers);
   protected readonly deliveryOptions = computed(() => this.current().deliveryOptions);
   protected readonly pickupLocations = computed(() => this.current().pickupLocations);
+
+  /** The chosen overseas tier (exposed for the template). */
+  protected readonly overseasTier = this.chosenOverseasTier.asReadonly();
+
+  /**
+   * True when the destination country has both a standard fee and an express fee, so the shopper must
+   * choose a tier before the delivery option is priced.
+   */
+  protected readonly hasBothTiers = computed(() => {
+    const c = this.country();
+    return this.isOverseas() && c !== null && c.fee !== null && c.expressFee !== null;
+  });
 
   protected readonly isEmpty = computed(() => this.current().lines.length === 0);
 
@@ -1787,6 +1856,7 @@ export class CheckoutPage {
 
     this.chosenDeliveryMethodId.set(null);
     this.chosenPickupLocationId.set(null);
+    this.autoSelectTier(this.destination.find(code) ?? null);
     this.clearError('countryCode');
     this.clearError('districtId');
     this.clearError('address.region');
@@ -1881,6 +1951,52 @@ export class CheckoutPage {
     this.localErrors.set(this.missingFields());
   }
 
+  /**
+   * The shopper chose Standard or Express delivery (owner decision 2026-10-23).
+   *
+   * Re-reads the checkout so the priced method updates to the selected tier's fee before the total is
+   * shown. Does nothing when the tier is already the chosen one.
+   */
+  protected chooseTier(tier: string): void {
+    // Normalize before comparing: the signal holds null for Standard and 'Express' for Express.
+    // Without this, clicking Standard when the signal is null (its default) compares null === 'Standard'
+    // → false, which triggers a spurious set(null) + read().
+    const normalized = tier === 'Standard' ? null : tier;
+    if (this.chosenOverseasTier() === normalized) {
+      return;
+    }
+
+    this.chosenOverseasTier.set(normalized);
+
+    // Drop the delivery method selection so the server re-prices it for the new tier.
+    this.chosenDeliveryMethodId.set(null);
+    this.read();
+  }
+
+  /**
+   * Resets the overseas tier signal when the country changes, auto-selecting Express when the country
+   * has Express configured but Standard is not (express-only country).
+   *
+   * Without this, an express-only country would leave `chosenOverseasTier` as null (= Standard
+   * default), the GET would ask for Standard, the server would resolve at Standard → `NotPriced` →
+   * no delivery option available, and the shopper could not order even though Express IS configured.
+   */
+  private autoSelectTier(c: DeliveryCountry | null): void {
+    if (c === null || c.isDomestic) {
+      this.chosenOverseasTier.set(null);
+      return;
+    }
+    const hasStandard = c.fee !== null;
+    const hasExpress = c.expressFee !== null;
+    // Auto-select Express when only Express is configured (no tier picker shown for a single tier)
+    this.chosenOverseasTier.set(!hasStandard && hasExpress ? 'Express' : null);
+  }
+
+  /** Working-days sentence for a tier's estimate panel, or null when the estimate is absent. */
+  protected tierDays(min: number | null, max: number | null): string | null {
+    return workingDays(min, max);
+  }
+
   protected choosePaymentMethod(code: string): void {
     this.chosenPaymentMethodCode.set(code);
     this.clearError('paymentMethodCode');
@@ -1926,6 +2042,9 @@ export class CheckoutPage {
         // sending a field the shopper never chose. An overseas address has no district at all.
         districtId: option?.requiresAddress && !this.isOverseas() ? this.chosenDistrictId() : null,
         countryCode: this.chosenCountryCode(),
+        // Owner decision 2026-10-23: Standard / Express tiers. Null for Sri Lanka and for countries with
+        // only one tier (the server uses whatever is available).
+        overseasTier: this.isOverseas() ? this.chosenOverseasTier() : null,
         pickupLocationId: option?.requiresAddress ? null : this.chosenPickupLocationId(),
         address: option?.requiresAddress
           ? {
@@ -2217,6 +2336,7 @@ export class CheckoutPage {
         this.chosenDeliveryMethodId(),
         this.chosenPromoCode(),
         this.chosenCountryCode(),
+        this.isOverseas() ? this.chosenOverseasTier() : null,
       )
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
@@ -2370,6 +2490,39 @@ export class CheckoutPage {
     if (overseas && session.selectedDeliveryMethodId === null && only?.isAvailable) {
       this.chosenDeliveryMethodId.set(only.id);
       this.read();
+    }
+
+    // Recovery for express-only countries on initial load (#239 Fix 1).
+    //
+    // When the page first loads with a pre-stored express-only country (e.g. JP, which has
+    // `expressFee` set but `fee` null), `chosenOverseasTier` is null (= Standard) because
+    // `autoSelectTier` is only wired into `chooseCountry()`. The first read() therefore asks for
+    // Standard, the server answers with IsAvailable = false, and neither the `only` block above
+    // (condition: `only?.isAvailable`) nor any other path corrects it — leaving the shopper with
+    // "No delivery option available".
+    //
+    // This block detects that situation and triggers a self-correcting retry:
+    //  1. We are overseas, no method was selected, and no option came back available.
+    //  2. `autoSelectTier(c)` sets `chosenOverseasTier` to 'Express' for an express-only country.
+    //  3. If the tier actually changed (null → 'Express'), a second read() goes out with the right tier.
+    //
+    // Infinite-loop guard: on the second pass the Express option is available
+    // (`only?.isAvailable === true`), so `selectedDeliveryMethodId` will be non-null and this block
+    // will not be entered again.
+    if (overseas && session.selectedDeliveryMethodId === null) {
+      const hasAvailable = session.deliveryOptions.some((m) => m.isAvailable);
+      if (!hasAvailable) {
+        const c = this.country();
+        if (c !== null && !c.isDomestic) {
+          const tierBefore = this.chosenOverseasTier();
+          this.autoSelectTier(c);
+          if (this.chosenOverseasTier() !== tierBefore) {
+            // Tier changed (null → 'Express') — retry with the correct tier.
+            this.read();
+            return;
+          }
+        }
+      }
     }
 
     this.applyPromoEcho(session);

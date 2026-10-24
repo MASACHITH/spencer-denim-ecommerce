@@ -30,6 +30,9 @@ interface RegionDraft {
   readonly fee: string;
   readonly min: string;
   readonly max: string;
+  readonly expressFee: string;
+  readonly expressMin: string;
+  readonly expressMax: string;
   readonly enabled: boolean;
 }
 
@@ -38,6 +41,9 @@ interface CountryDraft {
   readonly fee: string;
   readonly min: string;
   readonly max: string;
+  readonly expressFee: string;
+  readonly expressMin: string;
+  readonly expressMax: string;
   readonly enabled: boolean;
 }
 
@@ -136,7 +142,7 @@ interface CountryDraft {
                 @let draft = regionDraft(region);
                 <form class="adm-fields" (submit)="saveRegion($event, region)">
                   <label class="adm-field">
-                    <span class="adm-label">Fee (Rs.)</span>
+                    <span class="adm-label">Standard fee (Rs.)</span>
                     <input
                       class="adm-input"
                       type="text"
@@ -152,7 +158,7 @@ interface CountryDraft {
                     }
                   </label>
                   <fieldset class="adm-field od-days">
-                    <legend class="adm-label">Estimated days</legend>
+                    <legend class="adm-label">Standard estimated days</legend>
                     <span class="od-days__boxes">
                       <input
                         class="adm-input"
@@ -180,6 +186,53 @@ interface CountryDraft {
                     </span>
                     @if (regionError(region.code, 'estimatedDays'); as message) {
                       <span class="adm-field-error" role="alert" [attr.data-testid]="'region-error-days-' + region.code">{{ message }}</span>
+                    }
+                  </fieldset>
+                  <label class="adm-field">
+                    <span class="adm-label">Express fee (Rs. — blank = not offered)</span>
+                    <input
+                      class="adm-input"
+                      type="text"
+                      inputmode="decimal"
+                      autocomplete="off"
+                      [value]="draft.expressFee"
+                      [attr.aria-invalid]="regionError(region.code, 'expressFee') ? 'true' : null"
+                      [attr.data-testid]="'region-express-fee-' + region.code"
+                      (input)="editRegion(region, 'expressFee', $event)"
+                    />
+                    @if (regionError(region.code, 'expressFee'); as message) {
+                      <span class="adm-field-error" role="alert" [attr.data-testid]="'region-error-express-fee-' + region.code">{{ message }}</span>
+                    }
+                  </label>
+                  <fieldset class="adm-field od-days">
+                    <legend class="adm-label">Express estimated days</legend>
+                    <span class="od-days__boxes">
+                      <input
+                        class="adm-input"
+                        type="text"
+                        inputmode="numeric"
+                        autocomplete="off"
+                        aria-label="Express fewest days"
+                        [value]="draft.expressMin"
+                        [attr.aria-invalid]="regionError(region.code, 'expressDays') ? 'true' : null"
+                        [attr.data-testid]="'region-express-min-' + region.code"
+                        (input)="editRegion(region, 'expressMin', $event)"
+                      />
+                      <span aria-hidden="true">to</span>
+                      <input
+                        class="adm-input"
+                        type="text"
+                        inputmode="numeric"
+                        autocomplete="off"
+                        aria-label="Express most days"
+                        [value]="draft.expressMax"
+                        [attr.aria-invalid]="regionError(region.code, 'expressDays') ? 'true' : null"
+                        [attr.data-testid]="'region-express-max-' + region.code"
+                        (input)="editRegion(region, 'expressMax', $event)"
+                      />
+                    </span>
+                    @if (regionError(region.code, 'expressDays'); as message) {
+                      <span class="adm-field-error" role="alert" [attr.data-testid]="'region-error-express-days-' + region.code">{{ message }}</span>
                     }
                   </fieldset>
                   <span class="od-check">
@@ -268,7 +321,7 @@ interface CountryDraft {
                       <label [for]="'country-enabled-' + country.code">Deliver to {{ country.name }}</label>
                     </span>
                     <label class="adm-field">
-                      <span class="adm-label">Own fee (Rs.) — blank uses the region's</span>
+                      <span class="adm-label">Standard fee (Rs.) — blank uses the region's</span>
                       <input
                         class="adm-input"
                         type="text"
@@ -284,7 +337,7 @@ interface CountryDraft {
                       }
                     </label>
                     <fieldset class="adm-field od-days">
-                      <legend class="adm-label">Own estimated days — blank uses the region's</legend>
+                      <legend class="adm-label">Standard estimated days — blank uses the region's</legend>
                       <span class="od-days__boxes">
                         <input
                           class="adm-input"
@@ -312,6 +365,53 @@ interface CountryDraft {
                       </span>
                       @if (countryError(country.code, 'estimatedDaysOverride'); as message) {
                         <span class="adm-field-error" role="alert" [attr.data-testid]="'country-error-days-' + country.code">{{ message }}</span>
+                      }
+                    </fieldset>
+                    <label class="adm-field">
+                      <span class="adm-label">Express fee (Rs.) — blank uses the region's (or not offered)</span>
+                      <input
+                        class="adm-input"
+                        type="text"
+                        inputmode="decimal"
+                        autocomplete="off"
+                        [value]="draft.expressFee"
+                        [attr.aria-invalid]="countryError(country.code, 'expressFeeOverride') ? 'true' : null"
+                        [attr.data-testid]="'country-express-fee-' + country.code"
+                        (input)="editCountry(country, 'expressFee', $event)"
+                      />
+                      @if (countryError(country.code, 'expressFeeOverride'); as message) {
+                        <span class="adm-field-error" role="alert" [attr.data-testid]="'country-error-express-fee-' + country.code">{{ message }}</span>
+                      }
+                    </label>
+                    <fieldset class="adm-field od-days">
+                      <legend class="adm-label">Express estimated days — blank uses the region's</legend>
+                      <span class="od-days__boxes">
+                        <input
+                          class="adm-input"
+                          type="text"
+                          inputmode="numeric"
+                          autocomplete="off"
+                          aria-label="Express fewest days"
+                          [value]="draft.expressMin"
+                          [attr.aria-invalid]="countryError(country.code, 'expressDaysOverride') ? 'true' : null"
+                          [attr.data-testid]="'country-express-min-' + country.code"
+                          (input)="editCountry(country, 'expressMin', $event)"
+                        />
+                        <span aria-hidden="true">to</span>
+                        <input
+                          class="adm-input"
+                          type="text"
+                          inputmode="numeric"
+                          autocomplete="off"
+                          aria-label="Express most days"
+                          [value]="draft.expressMax"
+                          [attr.aria-invalid]="countryError(country.code, 'expressDaysOverride') ? 'true' : null"
+                          [attr.data-testid]="'country-express-max-' + country.code"
+                          (input)="editCountry(country, 'expressMax', $event)"
+                        />
+                      </span>
+                      @if (countryError(country.code, 'expressDaysOverride'); as message) {
+                        <span class="adm-field-error" role="alert" [attr.data-testid]="'country-error-express-days-' + country.code">{{ message }}</span>
                       }
                     </fieldset>
                     <div class="adm-actions">
@@ -446,6 +546,9 @@ export class OverseasDeliveryPage {
         fee: region.fee === null ? '' : String(region.fee),
         min: String(region.estimatedDaysMin),
         max: String(region.estimatedDaysMax),
+        expressFee: region.expressFee === null ? '' : String(region.expressFee),
+        expressMin: String(region.expressDaysMin),
+        expressMax: String(region.expressDaysMax),
         enabled: region.isEnabled,
       }
     );
@@ -457,12 +560,15 @@ export class OverseasDeliveryPage {
         fee: country.deliveryFeeOverride === null ? '' : String(country.deliveryFeeOverride),
         min: country.estimatedDaysMinOverride === null ? '' : String(country.estimatedDaysMinOverride),
         max: country.estimatedDaysMaxOverride === null ? '' : String(country.estimatedDaysMaxOverride),
+        expressFee: country.expressFeeOverride === null ? '' : String(country.expressFeeOverride),
+        expressMin: country.expressDaysMinOverride === null ? '' : String(country.expressDaysMinOverride),
+        expressMax: country.expressDaysMaxOverride === null ? '' : String(country.expressDaysMaxOverride),
         enabled: country.isShippingEnabled,
       }
     );
   }
 
-  protected editRegion(region: DeliveryRegionRow, field: 'fee' | 'min' | 'max', event: Event): void {
+  protected editRegion(region: DeliveryRegionRow, field: 'fee' | 'min' | 'max' | 'expressFee' | 'expressMin' | 'expressMax', event: Event): void {
     const draft = { ...this.regionDraft(region), [field]: this.text(event) };
     this.regionDrafts.update((all) => ({ ...all, [region.code]: draft }));
   }
@@ -472,7 +578,7 @@ export class OverseasDeliveryPage {
     this.regionDrafts.update((all) => ({ ...all, [region.code]: { ...this.regionDraft(region), enabled } }));
   }
 
-  protected editCountry(country: CountryDeliveryRow, field: 'fee' | 'min' | 'max', event: Event): void {
+  protected editCountry(country: CountryDeliveryRow, field: 'fee' | 'min' | 'max' | 'expressFee' | 'expressMin' | 'expressMax', event: Event): void {
     const draft = { ...this.countryDraft(country), [field]: this.text(event) };
     this.countryDrafts.update((all) => ({ ...all, [country.code]: draft }));
   }
@@ -539,12 +645,22 @@ export class OverseasDeliveryPage {
     const errors: Record<string, string> = {};
     const fee = feeProblem(draft.fee, true);
     const days = daysProblem(draft.min, draft.max, false);
+    const expressFee = feeProblem(draft.expressFee, true);
+    const expressDays = daysProblem(draft.expressMin, draft.expressMax, draft.expressFee.trim() === '');
     if (fee) {
       errors['fee'] = fee;
     }
 
     if (days) {
       errors['estimatedDays'] = days;
+    }
+
+    if (expressFee) {
+      errors['expressFee'] = expressFee;
+    }
+
+    if (expressDays) {
+      errors['expressDays'] = expressDays;
     }
 
     if (Object.keys(errors).length > 0) {
@@ -561,6 +677,9 @@ export class OverseasDeliveryPage {
         fee: numberOrNull(draft.fee),
         estimatedDaysMin: numberOrNull(draft.min),
         estimatedDaysMax: numberOrNull(draft.max),
+        expressFee: numberOrNull(draft.expressFee),
+        expressDaysMin: numberOrNull(draft.expressMin),
+        expressDaysMax: numberOrNull(draft.expressMax),
         isEnabled: draft.enabled,
         rowVersion: region.rowVersion,
       })
@@ -585,12 +704,22 @@ export class OverseasDeliveryPage {
     const errors: Record<string, string> = {};
     const fee = feeProblem(draft.fee, true);
     const days = daysProblem(draft.min, draft.max, true);
+    const expressFee = feeProblem(draft.expressFee, true);
+    const expressDays = daysProblem(draft.expressMin, draft.expressMax, true);
     if (fee) {
       errors['deliveryFeeOverride'] = fee;
     }
 
     if (days) {
       errors['estimatedDaysOverride'] = days;
+    }
+
+    if (expressFee) {
+      errors['expressFeeOverride'] = expressFee;
+    }
+
+    if (expressDays) {
+      errors['expressDaysOverride'] = expressDays;
     }
 
     if (Object.keys(errors).length > 0) {
@@ -608,6 +737,9 @@ export class OverseasDeliveryPage {
         deliveryFeeOverride: numberOrNull(draft.fee),
         estimatedDaysMinOverride: numberOrNull(draft.min),
         estimatedDaysMaxOverride: numberOrNull(draft.max),
+        expressFeeOverride: numberOrNull(draft.expressFee),
+        expressDaysMinOverride: numberOrNull(draft.expressMin),
+        expressDaysMaxOverride: numberOrNull(draft.expressMax),
         rowVersion: country.rowVersion,
       })
       .subscribe({
