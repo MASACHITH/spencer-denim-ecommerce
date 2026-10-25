@@ -917,6 +917,28 @@ describe('CurrencyRatesPanel (issue #248)', () => {
       expect(scrollIntoView).not.toHaveBeenCalled();
     });
 
+    /**
+     * Round 2, survivor P7. The code does not scroll on input today, but nothing pinned it: a `reveal()` run on every
+     * keystroke would drag the page back to the alert each time the admin typed, away from the box they are typing in.
+     */
+    it('does not scroll to the alert again for every character typed while it is on screen', async () => {
+      await render(group());
+      await failWith(500, { title: 'x' }, 'Server Error');
+
+      expect(element.querySelector('[data-testid="currency-error"]')).not.toBeNull();
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+      let typed = '';
+      for (const character of '399123456789') {
+        typed += character;
+        await type('gbp', typed);
+      }
+
+      expect(typed.length).toBe(12);
+      expect(element.querySelector('[data-testid="currency-error"]')).not.toBeNull();
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    });
+
     it('leaves the focus where it was when a save fails: it never moves it to the message', async () => {
       await render(group());
 
@@ -931,6 +953,88 @@ describe('CurrencyRatesPanel (issue #248)', () => {
 
       expect(element.querySelector('[data-testid="currency-error"]')).not.toBeNull();
       expect(document.activeElement).toBe(saveButton());
+    });
+  });
+
+  describe('after "Load the latest rates" (round 2)', () => {
+    const LOADED = 'The latest rates are loaded. What you typed is kept.';
+
+    function saveButton(): HTMLButtonElement {
+      return element.querySelector('[data-testid="save-currency"]') as HTMLButtonElement;
+    }
+
+    /** A save refused with a conflict, and a keyboard user standing on the button that offers the latest rates. */
+    async function conflictWithFocusOnReload(): Promise<HTMLButtonElement> {
+      await render(group());
+      await type('gbp', '399.5');
+      press();
+      answerToken();
+      controller.expectOne(AdminSettingsApi.currencyRatesUrl).flush(
+        { detail: 'Somebody else changed the currency rates while you were editing them.', code: 'stale_row_version' },
+        { status: 409, statusText: 'Conflict' },
+      );
+      await settle();
+
+      const button = element.querySelector('[data-testid="currency-reload"]') as HTMLButtonElement;
+      button.focus();
+      expect(document.activeElement).toBe(button);
+
+      return button;
+    }
+
+    it('keeps keyboard focus on Save when the button that had it goes, instead of dropping it to the page', async () => {
+      const button = await conflictWithFocusOnReload();
+
+      button.click();
+      await settle();
+
+      expect(element.querySelector('[data-testid="currency-reload"]')).toBeNull();
+      expect(document.activeElement).toBe(saveButton());
+      expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it('announces that the latest rates are loaded once the page has handed the panel the new group, and not before', async () => {
+      const button = await conflictWithFocusOnReload();
+
+      button.click();
+      await settle();
+      expect(text('currency-announcement')).toBe('');
+
+      await reread(group({ usd: { value: '321', daysAgo: 0 } }, 'cur-rv-2'));
+
+      expect(text('currency-announcement')).toBe(LOADED);
+      expect(text('currency-saved')).toBe(LOADED);
+      expect(box('usd').value).toBe('321');
+      expect(box('gbp').value).toBe('399.5');
+      expect(document.activeElement).toBe(saveButton());
+    });
+
+    it('says nothing of the kind for an ordinary re-read', async () => {
+      await render(group());
+
+      await reread(group({ usd: { value: '321', daysAgo: 0 } }, 'cur-rv-2'));
+
+      expect(text('currency-announcement')).toBe('');
+      expect(element.querySelector('[data-testid="currency-saved"]')).toBeNull();
+    });
+
+    it('does not announce it later for an unrelated re-read when the reload itself never brought a group', async () => {
+      const button = await conflictWithFocusOnReload();
+
+      button.click();
+      await settle();
+
+      // The page's fetch failed, so no group came. The admin goes on: types, saves, and the page re-reads after that.
+      await type('gbp', '400');
+      press();
+      answerToken();
+      controller
+        .expectOne(AdminSettingsApi.currencyRatesUrl)
+        .flush(null, { status: 204, statusText: 'No Content' });
+      await settle();
+      await reread(group({ gbp: { value: '400', daysAgo: 0 } }, 'cur-rv-3'));
+
+      expect(text('currency-announcement')).toBe('Rates saved.');
     });
   });
 

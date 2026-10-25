@@ -99,6 +99,28 @@ no longer takes the screen down: it is unreadable, shown empty, not counted.
 **Survivors killed:** M13 (a stamp ahead of the clock), M25 (the page's `(reload)` binding, now a unit test in
 `settings-page.spec.ts`), M30 (the date read in UTC: a stamp at 19:16 UTC reads as the next day in Colombo).
 
+## Tester round 2: passed, two small things
+
+The second pass confirmed every fix (210 of 210 in-view cases across 7 viewports, 3 Save positions and 10 outcomes) and
+left two small things, both done:
+
+- **Keyboard focus after "Load the latest rates".** The button disappears with the alert, and a focused element that is
+  removed leaves focus on the page (the tester saw `BODY`), so a keyboard user lost their place. Focus now moves to Save
+  (the next thing they want) the moment the button is pressed, and when the page has handed the panel the group it
+  re-read, "The latest rates are loaded. What you typed is kept." is announced and shown. It is announced only for a
+  reload the panel asked for: an ordinary re-read after a save says nothing of the kind, and a reload whose fetch never
+  produced a group does not make a later, unrelated re-read announce it. Tested in the unit spec and in the browser
+  (`document.activeElement` is Save, not `BODY`, by mouse and by keyboard).
+- **Survivor P7: typing must not scroll to an alert.** The code did not, but nothing pinned it. A unit test types twelve
+  characters with an alert on screen and counts `scrollIntoView` calls (one, from the alert itself); a browser test, in a
+  window short enough that the box is on screen and the alert is not (both asserted before typing), checks `scrollY` is
+  unchanged after twelve characters. Both go red when `reveal()` is made to run on every input.
+
+**Left alone on purpose: survivor P6, the `scroll-margin` CSS.** The tester's run showed that removing it is not caught.
+It only keeps the scrolled-to message off the window edge: it is cosmetic, and no test is written to pin it. (In my own
+run, before the margin existed, the strict in-window check failed by a fraction of a pixel at two sizes, so it can be
+caught there, but that depends on the exact pixel and I do not rely on it.)
+
 ## Not done, and why
 
 - **Known gap: a rate cannot be re-confirmed.** A rate's age moves only when its number changes, so an admin who

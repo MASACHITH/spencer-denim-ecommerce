@@ -307,6 +307,9 @@ export class CurrencyRatesPanel {
   /** The boxes the admin has edited and not saved. A re-read leaves these alone. */
   private readonly dirty = new Set<CurrencyField>();
 
+  /** "Load the latest rates" was pressed and the page has not yet handed this panel the group it fetched. */
+  private reloadPending = false;
+
   protected readonly rows = computed<readonly CurrencyRow[]>(() => {
     const group = this.group();
     const typed = this.form();
@@ -384,6 +387,13 @@ export class CurrencyRatesPanel {
       untracked(() => {
         this.nowMs.set(Date.now());
 
+        // The group this panel asked for after a conflict has arrived: say so, since the button that was pressed is
+        // gone and nothing else on the screen changed where a keyboard or screen-reader user is looking.
+        if (this.reloadPending) {
+          this.reloadPending = false;
+          this.say('The latest rates are loaded. What you typed is kept.');
+        }
+
         this.form.update((current) => {
           const next = { ...current };
 
@@ -440,6 +450,7 @@ export class CurrencyRatesPanel {
       return;
     }
 
+    this.reloadPending = false;
     this.problem.set(null);
     this.notice.set(null);
 
@@ -498,9 +509,17 @@ export class CurrencyRatesPanel {
     });
   }
 
-  /** "Load the latest rates" after a conflict: the alert has done its job, and the page brings the new token. */
+  /**
+   * "Load the latest rates" after a conflict: the alert has done its job, and the page brings the new token.
+   *
+   * **Focus goes to Save first.** The button that was pressed disappears with the alert, and a focused element that is
+   * removed leaves keyboard focus on the page, so a keyboard user would lose their place. Save is the next thing they
+   * will want. The arrival of the new group is announced (see the constructor).
+   */
   protected loadLatest(): void {
+    this.reloadPending = true;
     this.problem.set(null);
+    this.saveButton()?.nativeElement.focus();
     this.reload.emit();
   }
 

@@ -47,7 +47,11 @@ const SELECTORS = {
   saved: '[data-testid="currency-saved"]',
   offered: '[data-testid="currency-offered"]',
   alert: '[data-testid="currency-error"]',
+  announcement: '[data-testid="currency-announcement"]',
 } as const;
+
+/** What the panel says, to a screen reader and on the screen, when the latest rates have arrived after a conflict. */
+const LATEST_LOADED = 'The latest rates are loaded. What you typed is kept.';
 
 const field = (page: Page, code: string) => page.locator(`[data-testid="currency-field-${code}"]`);
 const error = (page: Page, code: string) => page.locator(`[data-testid="currency-error-${code}"]`);
@@ -299,6 +303,11 @@ test.describe('two people edit the rates at once', () => {
     await expect(page.locator(SELECTORS.alert)).toHaveCount(0);
     await expect(page.locator('[data-testid="currency-reload"]')).toHaveCount(0);
 
+    // Round 2: the button that was pressed is gone, and focus must not drop to the page with it.
+    await expect(page.locator(SELECTORS.save)).toBeFocused();
+    expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
+    await expect(page.locator(SELECTORS.announcement)).toHaveText(LATEST_LOADED);
+
     // The latest rates arrive; the typing the admin had not saved is kept, not thrown away.
     await expect(field(page, 'usd')).toHaveValue('321');
     await expect(field(page, 'gbp')).toHaveValue('399');
@@ -492,6 +501,86 @@ test.describe('the outcome of Save is in the window (tester round, major 1)', ()
     expect(geometry.belowLastBox).toBeGreaterThan(0);
     expect(geometry.gapBelowSave).toBeGreaterThanOrEqual(0);
     expect(geometry.gapBelowSave).toBeLessThan(48);
+  });
+});
+
+test.describe('keyboard focus and typing after an outcome (round 2)', () => {
+  const refuse = (page: Page, status: number, body: object) =>
+    page.route('**/api/admin/settings/currency-rates', (route) =>
+      route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }),
+    );
+
+  test('a keyboard user who presses Load the latest rates keeps their place: focus is on Save, and it is announced', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await ownState(page, 'currency-keyboard-reload');
+    await reopen(page);
+    await refuse(page, 409, { detail: table.messages.staleRowVersion, code: 'stale_row_version' });
+
+    await enter(page, 'gbp', '399.5');
+    await page.locator(SELECTORS.save).click();
+
+    const reload = page.locator('[data-testid="currency-reload"]');
+    await expect(reload).toBeVisible();
+    await reload.focus();
+    await expect(reload).toBeFocused();
+
+    // The refusal was only for this one save; the page's re-read and the next save are the real stub's.
+    await page.unroute('**/api/admin/settings/currency-rates');
+    await page.keyboard.press('Enter');
+
+    await expect(reload).toHaveCount(0);
+    await expect(page.locator(SELECTORS.save)).toBeFocused();
+    expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
+    await expect(page.locator(SELECTORS.announcement)).toHaveText(LATEST_LOADED);
+    await expect(field(page, 'gbp')).toHaveValue('399.5');
+
+    // And Enter on Save, where focus is, is the next step.
+    await page.keyboard.press('Enter');
+    await expect(page.locator(SELECTORS.saved)).toHaveText('Rates saved.');
+  });
+
+  /**
+   * Survivor P7. With an alert on screen and the page scrolled somewhere else, typing must not drag the page back to the
+   * alert on every keystroke. The window is short so that the box being typed in is on screen and the alert is not;
+   * both are checked before typing, or the test would prove nothing.
+   */
+  test('typing twelve characters with an alert on screen does not scroll the page', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 480 });
+    await ownState(page, 'currency-typing-with-alert');
+    await reopen(page);
+    await refuse(page, 500, { title: 'Server error' });
+
+    await enter(page, 'gbp', '399.5');
+    await page.locator(SELECTORS.save).click();
+    await expect(page.locator(SELECTORS.alert)).toBeVisible();
+
+    // Let the smooth scroll to the alert finish, then put the box at the top of the window.
+    await page.waitForTimeout(1200);
+    await field(page, 'gbp').evaluate((box) => box.scrollIntoView({ block: 'start', behavior: 'instant' }));
+    await field(page, 'gbp').focus();
+
+    const where = async (selector: string) =>
+      page.evaluate((target) => {
+        const box = document.querySelector(target)!.getBoundingClientRect();
+        return { top: box.top, bottom: box.bottom, window: window.innerHeight };
+      }, selector);
+
+    const box = await where('[data-testid="currency-field-gbp"]');
+    const alert = await where(SELECTORS.alert);
+    expect(box.top, 'the box being typed in is on screen').toBeGreaterThanOrEqual(0);
+    expect(box.bottom, 'the box being typed in is on screen').toBeLessThanOrEqual(box.window);
+    expect(alert.top, 'the alert is off screen').toBeGreaterThan(alert.window);
+
+    const before = await page.evaluate(() => window.scrollY);
+
+    await field(page, 'gbp').pressSequentially('123456789012', { delay: 25 });
+    await page.waitForTimeout(1000);
+
+    expect(await page.evaluate(() => window.scrollY)).toBe(before);
+    await expect(field(page, 'gbp')).toHaveValue('399.5123456789012');
+    expect((await where(SELECTORS.alert)).top, 'the alert is still off screen').toBeGreaterThan(alert.window);
   });
 });
 
