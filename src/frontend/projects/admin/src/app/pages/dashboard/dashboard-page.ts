@@ -47,9 +47,9 @@ interface Access {
  * **What is on it, and what deliberately is not.** KPIs against the previous period, the twelve-month trend,
  * sales by department, top categories and products, order status, payment methods, buyers by delivery
  * district, recent orders, low stock, and — for a role with `Traffic.View` — traffic sources (ADM-06) with the
- * conversion rate (W4-03), which needed the `analytics` tables and so arrived after the rest. The alert
- * banners are the shell's (`AlertBanner`, W4-02a), above this page as above every admin page — the
- * dashboard does not render a second one.
+ * conversion rate (W4-03), which needed the `analytics` tables and so arrived after the rest. The alerts
+ * are the shell's (the bell in the header, `AlertBell`, W4-02a), on this page as on every admin page — the
+ * dashboard does not render a second copy.
  *
  * **Laid out as the client demo's dashboard** (#186): the Today banner and the alert strip, the KPI cards, then
  * Revenue &amp; Orders beside Sales by department, three small doughnuts (order status, traffic sources, payment
@@ -341,6 +341,7 @@ interface Access {
           <a class="adm-link" routerLink="/audit-log">Audit log</a>
           <a class="adm-link" routerLink="/users">Staff users</a>
           <a class="adm-link" routerLink="/roles">Roles</a>
+          <a class="adm-link" routerLink="/guide" data-testid="dashboard-guide-link">User guide</a>
         </div>
         <div class="adm-actions">
           <button class="adm-btn" type="button" data-testid="dashboard-logout" [attr.aria-disabled]="loggingOut() ? 'true' : null" (click)="logout()">

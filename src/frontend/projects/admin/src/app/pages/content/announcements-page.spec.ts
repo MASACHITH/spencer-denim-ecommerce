@@ -122,7 +122,10 @@ describe('AnnouncementsPage (#192, GLB-03)', () => {
 
     q<HTMLButtonElement>(fixture, 'ann-edit-1')!.click();
     fixture.detectChanges();
+    TestBed.tick();
     expect(q<HTMLInputElement>(fixture, 'ann-message')?.value).toBe('Free delivery over Rs. 10,000');
+    // Edit sits on a row far below the form; without this the press looked like it did nothing.
+    expect(document.activeElement).toBe(q<HTMLInputElement>(fixture, 'ann-message'));
 
     q<HTMLButtonElement>(fixture, 'ann-save')!.click();
     grantToken();

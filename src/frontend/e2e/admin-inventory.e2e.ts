@@ -318,6 +318,10 @@ test.describe('the stub is no more permissive than the API', () => {
 
 test.describe('layout and accessibility', () => {
   test('no sideways scroll, 44 px controls on screen, with each panel open, at every width', async ({ page }) => {
+    // Eight widths by five panels by four measurements: about 30 s on a quiet machine, which is the default
+    // timeout, so it failed one run in six for no reason but load. Nothing in it waits for anything slow.
+    test.setTimeout(120_000);
+
     await open(page);
     await expect(row(page, 1)).toBeVisible();
 

@@ -1,5 +1,6 @@
 using SpencerDenim.Application.Admin.CurrentUser;
 using SpencerDenim.Application.Admin.Users;
+using SpencerDenim.Application.Admin.Users.Abstractions;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Domain.Identity;
 
@@ -13,10 +14,10 @@ public sealed class SetStaffUserActiveCommandHandlerTests
         public DateTimeOffset UtcNow => new(2026, 9, 30, 9, 0, 0, TimeSpan.Zero);
     }
 
-    private static SetStaffUserActiveCommandHandler CreateHandler(FakeStaffUserRoleManagementStore store, EffectivePermissions actorPermissions, RecordingAuditLogWriter audit)
+    private static SetStaffUserActiveCommandHandler CreateHandler(FakeStaffUserRoleManagementStore store, EffectivePermissions actorPermissions, RecordingAuditLogWriter audit, IProtectedStaffAccounts? protectedAccounts = null)
     {
         store.AuditWriter = audit;
-        return new(store, new StubEffectivePermissionsProvider(actorPermissions), new StubAdminUserLookup(new AdminUserSummary(1, "actor@example.com", "Actor", null, true, false, "actor-stamp")), new FixedClock());
+        return new(store, new StubEffectivePermissionsProvider(actorPermissions), new StubAdminUserLookup(new AdminUserSummary(1, "actor@example.com", "Actor", null, true, false, "actor-stamp")), protectedAccounts ?? new StubProtectedStaffAccounts(), new FixedClock());
     }
 
     private static RoleGrantSnapshot Role(int id, bool grantsAll, params string[] permissions) => new(id, $"role-{id}", grantsAll, permissions.ToHashSet());
@@ -127,6 +128,78 @@ public sealed class SetStaffUserActiveCommandHandlerTests
 
         Assert.IsType<SetStaffUserActiveResult.LastSuperAdminGuardTriggered>(result);
         Assert.Empty(audit.Entries);
+    }
+
+    private static StaffUserSnapshot ProtectedTarget(bool isActive) =>
+        new(2, "vendor@example.com", "Vendor", "Support", isActive, "stamp-0", [Role(99, grantsAll: true)]);
+
+    private static readonly StubProtectedStaffAccounts VendorIsProtected = new("Vendor@Example.com");
+
+    [Fact]
+    public async Task A_protected_account_cannot_be_deactivated_even_by_a_Super_Admin()
+    {
+        var store = new FakeStaffUserRoleManagementStore();
+        store.Users[2] = ProtectedTarget(isActive: true);
+        var audit = new RecordingAuditLogWriter();
+        var handler = CreateHandler(store, new EffectivePermissions(true, []), audit, VendorIsProtected);
+
+        var result = await handler.HandleAsync(new SetStaffUserActiveCommand(1, 2, false, null, null), TestContext.Current.CancellationToken);
+
+        Assert.IsType<SetStaffUserActiveResult.ProtectedAccount>(result);
+        Assert.Null(store.SetActiveCall);
+        Assert.Empty(audit.Entries);
+    }
+
+    [Fact]
+    public async Task A_protected_account_is_refused_whatever_state_it_is_in()
+    {
+        var store = new FakeStaffUserRoleManagementStore();
+        store.Users[2] = ProtectedTarget(isActive: false);
+        var handler = CreateHandler(store, new EffectivePermissions(true, []), new RecordingAuditLogWriter(), VendorIsProtected);
+
+        var result = await handler.HandleAsync(new SetStaffUserActiveCommand(1, 2, false, null, null), TestContext.Current.CancellationToken);
+
+        Assert.IsType<SetStaffUserActiveResult.ProtectedAccount>(result);
+    }
+
+    [Fact]
+    public async Task A_protected_account_can_still_be_reactivated()
+    {
+        var store = new FakeStaffUserRoleManagementStore();
+        store.Users[2] = ProtectedTarget(isActive: false);
+        var handler = CreateHandler(store, new EffectivePermissions(true, []), new RecordingAuditLogWriter(), VendorIsProtected);
+
+        var result = await handler.HandleAsync(new SetStaffUserActiveCommand(1, 2, true, null, null), TestContext.Current.CancellationToken);
+
+        var success = Assert.IsType<SetStaffUserActiveResult.Success>(result);
+        Assert.True(success.IsActive);
+        Assert.Equal((2, true), store.SetActiveCall);
+    }
+
+    [Fact]
+    public async Task An_actor_who_may_not_manage_the_protected_account_gets_the_ordinary_refusal_and_learns_nothing_about_it()
+    {
+        var store = new FakeStaffUserRoleManagementStore();
+        store.Users[2] = ProtectedTarget(isActive: true);
+        var handler = CreateHandler(store, new EffectivePermissions(false, [Permissions.Users.Manage]), new RecordingAuditLogWriter(), VendorIsProtected);
+
+        var result = await handler.HandleAsync(new SetStaffUserActiveCommand(1, 2, false, null, null), TestContext.Current.CancellationToken);
+
+        var forbidden = Assert.IsType<SetStaffUserActiveResult.Forbidden>(result);
+        Assert.Equal(RbacDenialReason.NotSubsetOfActorPermissions, forbidden.Reason);
+    }
+
+    [Fact]
+    public async Task Naming_one_protected_account_changes_nothing_for_the_others()
+    {
+        var store = new FakeStaffUserRoleManagementStore();
+        store.Users[2] = Target(2, true, Role(30, grantsAll: false, Permissions.Orders.View));
+        var handler = CreateHandler(store, new EffectivePermissions(true, []), new RecordingAuditLogWriter(), VendorIsProtected);
+
+        var result = await handler.HandleAsync(new SetStaffUserActiveCommand(1, 2, false, null, null), TestContext.Current.CancellationToken);
+
+        Assert.IsType<SetStaffUserActiveResult.Success>(result);
+        Assert.Equal((2, false), store.SetActiveCall);
     }
 
     [Fact]

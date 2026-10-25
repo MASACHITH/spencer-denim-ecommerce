@@ -21,6 +21,9 @@ public sealed partial class DeliveryReturnsSeedDataTests
         { "PdpReturnsInfoHtml", ContentSettingDefinitions.ReturnsInfoSeed },
         { "shipping", PolicyPageContent.ShippingBody },
         { "returns", PolicyPageContent.ReturnsBody },
+        { "about", PolicyPageContent.AboutBody },
+        { "privacy", PolicyPageContent.PrivacyBody },
+        { "terms", PolicyPageContent.TermsBody },
     };
 
     [Theory]
@@ -53,8 +56,15 @@ public sealed partial class DeliveryReturnsSeedDataTests
     public void Seeded_copy_states_the_owners_terms_and_no_retired_ones(string name, string html)
     {
         // PayPal-only (owner decision 2026-10-21): no copy promises a bank-transfer refund or bank-transfer payment,
-        // and none says cash on delivery is offered.
-        Assert.DoesNotContain("by bank transfer", html, StringComparison.OrdinalIgnoreCase);
+        // and none says cash on delivery is offered. The one exception is the Terms and conditions page: the owner
+        // decided on 2026-10-24 (issue #253) that bank transfer may be offered for deliveries within Sri Lanka only,
+        // and the Terms say exactly that. StorePagesCopyTests pins that wording, so a Terms page that offered bank
+        // transfer for overseas orders would still fail.
+        if (name != "terms")
+        {
+            Assert.DoesNotContain("by bank transfer", html, StringComparison.OrdinalIgnoreCase);
+        }
+
         Assert.DoesNotContain("island-wide only", html, StringComparison.OrdinalIgnoreCase);
         // The one marker allowed: where the Shipping page draws its live fee list.
         Assert.DoesNotContain("{{", html.Replace(PolicyPageContent.DeliveryFeesMarker, string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
@@ -132,12 +142,31 @@ public sealed partial class DeliveryReturnsSeedDataTests
     }
 
     [Fact]
-    public void Only_the_shipping_and_returns_pages_are_seeded_with_copy()
+    public void Only_the_five_policy_pages_are_seeded_with_copy_and_each_has_a_version_it_was_introduced_in()
     {
         Assert.Equal(
-            [ContentPageKeys.Returns, ContentPageKeys.Shipping],
+            [
+                ContentPageKeys.About,
+                ContentPageKeys.Privacy,
+                ContentPageKeys.Returns,
+                ContentPageKeys.Shipping,
+                ContentPageKeys.Terms,
+            ],
             PolicyPageContent.Bodies.Keys.Order(StringComparer.Ordinal));
         Assert.All(PolicyPageContent.Bodies.Values, body => Assert.InRange(body.Length, 1, ContentPage.BodyHtmlMaxLength));
+
+        // Every page has a first-offered version, none is later than the build's, and the version-1 pages stay
+        // version 1: a bump must never re-offer a page an admin may have emptied since.
+        Assert.Equal(
+            PolicyPageContent.Bodies.Keys.Order(StringComparer.Ordinal),
+            PolicyPageContent.IntroducedIn.Keys.Order(StringComparer.Ordinal));
+        Assert.All(PolicyPageContent.IntroducedIn.Values, version => Assert.InRange(version, 1, PolicyPageContent.SeedVersion));
+        Assert.Equal(1, PolicyPageContent.IntroducedIn[ContentPageKeys.Shipping]);
+        Assert.Equal(1, PolicyPageContent.IntroducedIn[ContentPageKeys.Returns]);
+        Assert.Equal(2, PolicyPageContent.IntroducedIn[ContentPageKeys.About]);
+        Assert.Equal(2, PolicyPageContent.IntroducedIn[ContentPageKeys.Privacy]);
+        Assert.Equal(2, PolicyPageContent.IntroducedIn[ContentPageKeys.Terms]);
+        Assert.Equal(PolicyPageContent.SeedVersion, PolicyPageContent.IntroducedIn.Values.Max());
     }
 
     [Fact]

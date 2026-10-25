@@ -47,6 +47,23 @@ public sealed class AdminSecurityOptions
     public int TwoFactorRecoveryCodeCount { get; set; } = 10;
 
     /// <summary>
+    /// Staff accounts that can never be deactivated, as email addresses separated by commas, semicolons or
+    /// spaces (<c>AdminSecurity__ProtectedStaffEmails</c>; on a server, <c>SD_PROTECTED_STAFF_EMAILS</c> in
+    /// <c>app.env</c>). Empty by default: nothing is protected until a server names an account. The address is
+    /// configuration, never a literal in code (doc 03: configuration comes from the environment). See
+    /// <see cref="SpencerDenim.Application.Admin.Users.Abstractions.IProtectedStaffAccounts"/>.
+    /// </summary>
+    public string ProtectedStaffEmails { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Staff accounts that only a protected account may deactivate, reactivate or rename, in the same format
+    /// (<c>AdminSecurity__GuardedStaffEmails</c>; on a server, <c>SD_GUARDED_STAFF_EMAILS</c> in <c>app.env</c>).
+    /// Empty by default. Requires <see cref="ProtectedStaffEmails"/>: with nobody protected, nobody could ever
+    /// change a guarded account, so the server refuses to start rather than lock it.
+    /// </summary>
+    public string GuardedStaffEmails { get; set; } = string.Empty;
+
+    /// <summary>
     /// Whether the admin auth cookie and the antiforgery cookie require HTTPS
     /// (<see cref="Microsoft.AspNetCore.Http.CookieSecurePolicy.Always"/> vs <c>SameAsRequest</c>).
     /// True (secure-by-default) everywhere: doc 03 §4's deployment topology always terminates TLS at Caddy, and

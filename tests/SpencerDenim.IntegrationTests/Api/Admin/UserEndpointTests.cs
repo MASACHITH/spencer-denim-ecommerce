@@ -53,6 +53,159 @@ public sealed class UserEndpointTests(SqlServerDatabaseFixture sqlServer)
         await AssertAuditActionWrittenAsync(factory, actorEmail, AuditActions.PermissionChange);
     }
 
+    /// <summary>
+    /// A protected account (<c>AdminSecurity:ProtectedStaffEmails</c>) end to end: the API refuses to deactivate it
+    /// with a 409 the screen can read, the list and the detail say it is protected (so the screen offers no
+    /// button), it can still be reactivated, and an ordinary colleague with the same role is unaffected. The
+    /// configured address is typed in capitals and the account was created in lower case, because the match must
+    /// ignore case. The actor is not a Super Admin only so the test needs no two-factor set-up; the rule does not
+    /// look at roles, and the Super Admin path is covered by the handler's own tests.
+    /// </summary>
+    [Fact]
+    public async Task A_protected_account_cannot_be_deactivated_through_the_api_and_the_screen_is_told_so()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        var protectedEmail = UniqueEmail("protected-vendor");
+        await using var factory = new ApiFactory(
+            sqlServer.ConnectionString,
+            additionalConfiguration: new Dictionary<string, string?> { ["AdminSecurity:ProtectedStaffEmails"] = protectedEmail.ToUpperInvariant() });
+
+        var narrowRoleId = await CreateRoleAsync(factory, UniqueName("narrow-protected"), [Permissions.Orders.View]);
+        var actorRoleId = await CreateRoleAsync(factory, UniqueName("manager-protected"), [Permissions.Orders.View, Permissions.Users.View, Permissions.Users.Manage]);
+        var (actorEmail, actorPassword) = UniqueCredentials("actor-protected");
+        await CreateStaffUserWithRolesAsync(factory, actorEmail, actorPassword, [actorRoleId]);
+        var protectedId = await CreateStaffUserWithRolesAsync(factory, protectedEmail, "Target-Pass-1!", [narrowRoleId]);
+        var ordinaryEmail = UniqueEmail("ordinary-colleague");
+        var ordinaryId = await CreateStaffUserWithRolesAsync(factory, ordinaryEmail, "Target-Pass-1!", [narrowRoleId]);
+
+        using var client = CreateClient(factory);
+        await LoginAsync(client, actorEmail, actorPassword);
+        var token = await GetAntiforgeryTokenAsync(client);
+
+        var protectedDetail = await client.GetFromJsonAsync<JsonElement>($"{UsersUrl}/{protectedId}", TestContext.Current.CancellationToken);
+        var ordinaryDetail = await client.GetFromJsonAsync<JsonElement>($"{UsersUrl}/{ordinaryId}", TestContext.Current.CancellationToken);
+        Assert.True(protectedDetail.GetProperty("isProtected").GetBoolean());
+        Assert.False(ordinaryDetail.GetProperty("isProtected").GetBoolean());
+
+        var list = await client.GetFromJsonAsync<JsonElement>($"{UsersUrl}?search={Uri.EscapeDataString("protected-vendor")}", TestContext.Current.CancellationToken);
+        var listed = list.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("id").GetInt32() == protectedId);
+        Assert.True(listed.GetProperty("isProtected").GetBoolean());
+
+        using var refused = await PostAsync(client, $"{UsersUrl}/{protectedId}/deactivate", token);
+
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        var body = await refused.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("protected_account", body.GetProperty("error").GetString());
+        Assert.Equal("This account is protected and can never be deactivated.", body.GetProperty("detail").GetString());
+        Assert.True(await IsActiveAsync(factory, protectedId));
+
+        using var control = await PostAsync(client, $"{UsersUrl}/{ordinaryId}/deactivate", token);
+        Assert.Equal(HttpStatusCode.OK, control.StatusCode);
+        Assert.False(await IsActiveAsync(factory, ordinaryId));
+
+        // Only a deactivation is refused: if the account was already inactive (deactivated before it was
+        // protected, or by hand), it can be brought back.
+        await SetActiveDirectlyAsync(factory, protectedId, isActive: false);
+        using var reactivated = await PostAsync(client, $"{UsersUrl}/{protectedId}/reactivate", token);
+        Assert.Equal(HttpStatusCode.OK, reactivated.StatusCode);
+        Assert.True(await IsActiveAsync(factory, protectedId));
+    }
+
+    /// <summary>
+    /// A guarded account (the client's own login) can be switched off and on only by a protected account. The actors
+    /// here are not Super Admins only so the test needs no two-factor set-up; the rule does not look at roles, and
+    /// the Super Admin path is covered by the handlers' own tests. The guarded address is typed in capitals and the
+    /// account was created in lower case, because the match must ignore case.
+    /// </summary>
+    [Fact]
+    public async Task A_guarded_account_can_be_deactivated_and_reactivated_only_by_a_protected_account()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        var ownerEmail = UniqueEmail("owner-protected");
+        var guardedEmail = UniqueEmail("client-guarded");
+        await using var factory = new ApiFactory(
+            sqlServer.ConnectionString,
+            additionalConfiguration: new Dictionary<string, string?>
+            {
+                ["AdminSecurity:ProtectedStaffEmails"] = ownerEmail,
+                ["AdminSecurity:GuardedStaffEmails"] = guardedEmail.ToUpperInvariant(),
+            });
+
+        var narrowRoleId = await CreateRoleAsync(factory, UniqueName("narrow-guarded"), [Permissions.Orders.View]);
+        var managerRoleId = await CreateRoleAsync(factory, UniqueName("manager-guarded"), [Permissions.Orders.View, Permissions.Users.View, Permissions.Users.Manage]);
+        var (colleagueEmail, colleaguePassword) = UniqueCredentials("colleague-guarded");
+        await CreateStaffUserWithRolesAsync(factory, colleagueEmail, colleaguePassword, [managerRoleId]);
+        await CreateStaffUserWithRolesAsync(factory, ownerEmail, "Owner-Pass-1!", [managerRoleId]);
+        var guardedId = await CreateStaffUserWithRolesAsync(factory, guardedEmail, "Target-Pass-1!", [narrowRoleId]);
+        var ordinaryId = await CreateStaffUserWithRolesAsync(factory, UniqueEmail("ordinary-guarded"), "Target-Pass-1!", [narrowRoleId]);
+
+        // An ordinary colleague: told the account is locked, refused both ways, and the ordinary account is unaffected.
+        using (var colleague = CreateClient(factory))
+        {
+            await LoginAsync(colleague, colleagueEmail, colleaguePassword);
+            var token = await GetAntiforgeryTokenAsync(colleague);
+
+            var detail = await colleague.GetFromJsonAsync<JsonElement>($"{UsersUrl}/{guardedId}", TestContext.Current.CancellationToken);
+            var ordinaryDetail = await colleague.GetFromJsonAsync<JsonElement>($"{UsersUrl}/{ordinaryId}", TestContext.Current.CancellationToken);
+            Assert.True(detail.GetProperty("lockedForViewer").GetBoolean());
+            Assert.False(ordinaryDetail.GetProperty("lockedForViewer").GetBoolean());
+
+            var list = await colleague.GetFromJsonAsync<JsonElement>($"{UsersUrl}?search={Uri.EscapeDataString("client-guarded")}", TestContext.Current.CancellationToken);
+            Assert.True(list.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("id").GetInt32() == guardedId).GetProperty("lockedForViewer").GetBoolean());
+
+            using var refused = await PostAsync(colleague, $"{UsersUrl}/{guardedId}/deactivate", token);
+            Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+            var body = await refused.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+            Assert.Equal("guarded_account", body.GetProperty("error").GetString());
+            Assert.Equal("Only the technical owner's account can activate or deactivate this account.", body.GetProperty("detail").GetString());
+            Assert.True(await IsActiveAsync(factory, guardedId));
+
+            await SetActiveDirectlyAsync(factory, guardedId, isActive: false);
+            using var refusedBack = await PostAsync(colleague, $"{UsersUrl}/{guardedId}/reactivate", token);
+            Assert.Equal(HttpStatusCode.Forbidden, refusedBack.StatusCode);
+            Assert.False(await IsActiveAsync(factory, guardedId));
+
+            using var control = await PostAsync(colleague, $"{UsersUrl}/{ordinaryId}/deactivate", token);
+            Assert.Equal(HttpStatusCode.OK, control.StatusCode);
+        }
+
+        // The protected account: sees the account unlocked, and can switch it off and on.
+        using (var owner = CreateClient(factory))
+        {
+            await LoginAsync(owner, ownerEmail, "Owner-Pass-1!");
+            var token = await GetAntiforgeryTokenAsync(owner);
+
+            var detail = await owner.GetFromJsonAsync<JsonElement>($"{UsersUrl}/{guardedId}", TestContext.Current.CancellationToken);
+            Assert.False(detail.GetProperty("lockedForViewer").GetBoolean());
+
+            using var reactivated = await PostAsync(owner, $"{UsersUrl}/{guardedId}/reactivate", token);
+            Assert.Equal(HttpStatusCode.OK, reactivated.StatusCode);
+            Assert.True(await IsActiveAsync(factory, guardedId));
+
+            using var deactivated = await PostAsync(owner, $"{UsersUrl}/{guardedId}/deactivate", token);
+            Assert.Equal(HttpStatusCode.OK, deactivated.StatusCode);
+            Assert.False(await IsActiveAsync(factory, guardedId));
+        }
+    }
+
+    private static async Task<bool> IsActiveAsync(ApiFactory factory, int userId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await dbContext.Users.AsNoTracking().Where(u => u.Id == userId).Select(u => u.IsActive).SingleAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static async Task SetActiveDirectlyAsync(ApiFactory factory, int userId, bool isActive)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await dbContext.Users.Where(u => u.Id == userId).ExecuteUpdateAsync(setters => setters.SetProperty(u => u.IsActive, isActive), TestContext.Current.CancellationToken);
+    }
+
     [Fact]
     public async Task UsersManage_actor_cannot_assign_a_role_that_grants_a_permission_they_do_not_hold()
     {

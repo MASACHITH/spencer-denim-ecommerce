@@ -159,6 +159,18 @@ describe('InventoryPage (ADM-12)', () => {
     expect(byTestId('inventory-counts')!.textContent).toContain('7 in stock');
   });
 
+  /** UAT feedback (2026-10-24): the row buttons and the status were all the same white box. */
+  it('colours the status and the row buttons by what they mean', async () => {
+    configure();
+    await open(['Inventory.View', 'Inventory.Edit']);
+
+    expect(byTestId('status-11')!.classList).toContain('inv__in');
+    expect(byTestId('status-12')!.classList).toContain('inv__out');
+    expect(byTestId('change-11')!.classList).toContain('inv__act--stock');
+    expect(byTestId('set-threshold-11')!.classList).toContain('inv__act--threshold');
+    expect(byTestId('history-11')!.classList).toContain('inv__act--history');
+  });
+
   it('offers a viewer the history but no change, threshold or selection', async () => {
     configure();
     await open(['Inventory.View']);

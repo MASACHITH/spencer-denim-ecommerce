@@ -127,13 +127,14 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
             <dd>
               @if (dispatch.trackingUrl) {
                 <a
-                  class="adm-link"
+                  class="adm-link adm-link--external"
                   [href]="dispatch.trackingUrl"
                   target="_blank"
                   rel="noopener noreferrer"
                   data-testid="tracking-link"
                 >
-                  {{ dispatch.trackingNumber }}
+                  {{ dispatch.trackingNumber }}<span aria-hidden="true">&nbsp;&#8599;</span
+                  ><span class="sr-only"> (opens the courier's tracking page in a new tab)</span>
                 </a>
               } @else {
                 {{ dispatch.trackingNumber }}

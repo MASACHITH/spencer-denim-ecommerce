@@ -11,6 +11,7 @@ import { DOCUMENT } from '@angular/common';
 import { forkJoin, of } from 'rxjs';
 import { catchError } from 'rxjs/operators';
 
+import { focusEditForm } from '../../core/shell/focus-edit-form';
 import { AdminCampaignApi } from '../../core/marketing/admin-campaign-api';
 import {
   AdminSaleCampaign,
@@ -952,6 +953,7 @@ export class SaleCampaignsPage {
     this.bannerGone.set(campaign.banner === null && campaign.bannerUnavailable);
     this.fieldErrors.set({});
     this.announce(`Editing ${campaign.name}.`);
+    focusEditForm(this.document, this.injector, 'campaign-name');
   }
 
   /**

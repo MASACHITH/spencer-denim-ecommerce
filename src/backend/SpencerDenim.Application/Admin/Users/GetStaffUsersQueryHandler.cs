@@ -13,7 +13,11 @@ namespace SpencerDenim.Application.Admin.Users;
 /// never a subset of anyone else's permissions, so they are protected, and a protected target is
 /// indistinguishable from one that does not exist.
 /// </summary>
-public sealed class GetStaffUsersQueryHandler(IStaffUserDirectoryReader reader, IEffectivePermissionsProvider permissionsProvider)
+public sealed class GetStaffUsersQueryHandler(
+    IStaffUserDirectoryReader reader,
+    IEffectivePermissionsProvider permissionsProvider,
+    IAdminUserLookup viewerLookup,
+    IProtectedStaffAccounts protectedAccounts)
     : IQueryHandler<GetStaffUsersQuery, PagedResult<StaffUserSummaryDto>>
 {
     public async Task<PagedResult<StaffUserSummaryDto>> HandleAsync(GetStaffUsersQuery query, CancellationToken cancellationToken)
@@ -21,6 +25,15 @@ public sealed class GetStaffUsersQueryHandler(IStaffUserDirectoryReader reader, 
         ArgumentNullException.ThrowIfNull(query);
 
         var viewer = await permissionsProvider.GetEffectivePermissionsAsync(query.ActorUserId, cancellationToken);
-        return await reader.ListAsync(query, includeGrantsAllHolders: viewer.GrantsAllPermissions, cancellationToken);
+        var page = await reader.ListAsync(query, includeGrantsAllHolders: viewer.GrantsAllPermissions, cancellationToken);
+
+        // Only a protected account may change a guarded one, so for everybody else a guarded row is locked.
+        var viewerSummary = await viewerLookup.FindByIdAsync(query.ActorUserId, cancellationToken);
+        if (protectedAccounts.IsProtected(viewerSummary?.Email))
+        {
+            return page;
+        }
+
+        return page with { Items = [.. page.Items.Select(row => row with { LockedForViewer = protectedAccounts.IsGuarded(row.Email) })] };
     }
 }

@@ -26,6 +26,7 @@ public sealed class AdminCustomerShapeTests
     [Theory]
     [InlineData(typeof(AdminCustomerListPage), "AdminCustomerListPage")]
     [InlineData(typeof(AdminDistrictOption), "AdminDistrictOption")]
+    [InlineData(typeof(AdminCountryOption), "AdminCountryOption")]
     [InlineData(typeof(AdminCustomerListRow), "AdminCustomerListRow")]
     [InlineData(typeof(AdminCustomerDetailDto), "AdminCustomerDetail")]
     [InlineData(typeof(AdminCustomerAddressDto), "AdminCustomerAddress")]

@@ -148,6 +148,28 @@ describe('toCatalogFailure', () => {
     expect(failure.message).toContain('50 MB');
   });
 
+  /** The web server in front of the API refuses an over-size upload itself, with an HTML page and no detail. */
+  it('says the file is too large when a 413 comes from the web server with no detail', () => {
+    const failure = toCatalogFailure(response(413, '<html>413 Request Entity Too Large</html>'));
+
+    expect(failure.kind).toBe('unprocessable');
+    expect(failure.message).toContain('larger than the server accepts');
+  });
+
+  it('puts the status number in the message of a server fault, so it can be reported', () => {
+    for (const status of [500, 502, 503]) {
+      const failure = toCatalogFailure(response(status, null));
+
+      expect(failure.kind).toBe('unknown');
+      expect(failure.message).toContain(`error ${status}`);
+      expect(failure.message).toContain('Something went wrong');
+    }
+  });
+
+  it('keeps the plain wording for a client-side refusal it has no special case for', () => {
+    expect(toCatalogFailure(response(429, null)).message).toBe('Something went wrong. Please try again in a moment.');
+  });
+
   it('still says something sayable when a 422 carries no detail', () => {
     const failure = toCatalogFailure(response(422, null));
 

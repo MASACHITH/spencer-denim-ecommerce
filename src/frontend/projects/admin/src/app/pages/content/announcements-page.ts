@@ -20,6 +20,8 @@ import {
   AdminAnnouncement,
   liveLabel,
 } from '../../core/content/admin-site-content.model';
+import { focusEditForm } from '../../core/shell/focus-edit-form';
+
 import { blankToNull, toIntegerOrNull, toLocalInput } from './home-section-editor';
 
 /**
@@ -379,6 +381,7 @@ export class AnnouncementsPage {
     this.endsAt.set(toLocalInput(row.endsAt));
     this.fieldErrors.set({});
     this.said.set('Editing the message.');
+    focusEditForm(this.document, this.injector, 'ann-message');
   }
 
   /** Saves the form. Every key is sent; blanks are null. The server's checks are the ones that count. */

@@ -232,6 +232,21 @@ describe('SiteFooter (GLB-07)', () => {
   });
 
   /**
+   * Issue #252 review: the sign-up wording must not promise a self-service unsubscribe the shop does not have. The
+   * subscriber's `UnsubscribeToken` is generated and used nowhere, no endpoint sets `UnsubscribedAtUtc` and no link
+   * exists, so the line says to ask through the Contact page, which staff act on by hand. When the unsubscribe feature
+   * ships, this test is the one to change with the wording.
+   */
+  it('does not promise an unsubscribe link: it says to ask through the Contact page', () => {
+    const text = (element.querySelector('.newsletter')?.textContent ?? element.textContent ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    expect(text).toContain('You can ask us to stop at any time through the Contact page.');
+    expect(text).not.toMatch(/unsubscribe/i);
+  });
+
+  /**
    * ADM-22 part 2 (W2-11): the client's own contact details, from `ops.Settings`.
    *
    * There is no placeholder behind them any more. See the three tests below for the state this

@@ -169,6 +169,7 @@ export interface CatalogFailure {
 }
 
 const GENERIC = 'Something went wrong. Please try again in a moment.';
+const TOO_LARGE = 'That file is larger than the server accepts. Choose a smaller one, or reduce its size, and try again.';
 
 /** Classifies a failed call to `/api/admin/catalog`. */
 export function toCatalogFailure(error: unknown): CatalogFailure {
@@ -219,14 +220,33 @@ export function toCatalogFailure(error: unknown): CatalogFailure {
   // read "Something went wrong" and gave no hint the file needed re-encoding. **413** is the same story
   // for a file over the ceiling. The server's own words are better than anything this function could
   // invent, so they are passed straight through.
+  //
+  // A 413 does not always come from the API: the web server in front of it refuses an over-size upload on its
+  // own, with an HTML page and no `detail`. That used to read "Something went wrong", which on the product form
+  // looked like a dead "Choose file" button (UAT feedback), so the bare 413 now says what it is.
   if (error.status === 422 || error.status === 413) {
-    return { kind: 'unprocessable', message: detail ?? GENERIC, code };
+    return {
+      kind: 'unprocessable',
+      message: detail ?? (error.status === 413 ? TOO_LARGE : GENERIC),
+      code,
+    };
   }
 
   if (error.status === 0) {
     return {
       kind: 'offline',
       message: 'We could not reach the server. Check your connection and try again.',
+    };
+  }
+
+  // A fault on the server (500, 502, 503, 504). The status number goes into the sentence so that whoever reads
+  // it out to the developers can say which one it was: "something went wrong" alone gave them nothing to start
+  // from.
+  if (error.status >= 500) {
+    return {
+      kind: 'unknown',
+      message: `Something went wrong on the server (error ${error.status}). Please try again in a moment, and tell the developers if it keeps happening.`,
+      code,
     };
   }
 

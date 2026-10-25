@@ -1,6 +1,6 @@
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable, map } from 'rxjs';
+import { Observable, catchError, from, map, switchMap, throwError } from 'rxjs';
 
 import { AdminAuthApi } from '../auth/admin-auth-api';
 import {
@@ -104,7 +104,56 @@ export class ReportingApi {
           blob: response.body ?? new Blob([]),
           fileName: fileNameFrom(response.headers.get('Content-Disposition'), fallback),
         })),
+        catchError((error: unknown) => withReadableBody(error)),
       );
+  }
+}
+
+/**
+ * A request made with `responseType: 'blob'` also gets its **error** body as a Blob, so the server's explanation
+ * (`{ "detail": "…", "code": "…" }`) arrived as an unreadable object and every failed export read as the generic
+ * "Something went wrong" — or, for a 403, a bare "You do not have permission". Reading the Blob back into JSON
+ * lets the screen show the sentence the server wrote. Anything that is not JSON becomes a body-less error.
+ */
+function withReadableBody(error: unknown): Observable<never> {
+  if (!(error instanceof HttpErrorResponse) || !(error.error instanceof Blob)) {
+    return throwError(() => error);
+  }
+
+  return from(readText(error.error)).pipe(
+    switchMap((text) =>
+      throwError(
+        () =>
+          new HttpErrorResponse({
+            error: parseJson(text),
+            headers: error.headers,
+            status: error.status,
+            statusText: error.statusText,
+            url: error.url ?? undefined,
+          }),
+      ),
+    ),
+  );
+}
+
+function readText(blob: Blob): Promise<string> {
+  if (typeof blob.text === 'function') {
+    return blob.text();
+  }
+
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+    reader.onerror = () => resolve('');
+    reader.readAsText(blob);
+  });
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
 }
 

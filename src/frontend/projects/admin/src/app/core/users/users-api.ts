@@ -186,6 +186,14 @@ export function toStaffUserActionFailure(error: unknown): StaffUserActionFailure
     return { kind: 'conflict', message: 'Another account already uses this email address.', reason: body.error };
   }
 
+  if (error.status === 409 && body?.error === 'protected_account') {
+    return {
+      kind: 'conflict',
+      message: body.detail ?? 'This account is protected and can never be deactivated.',
+      reason: body.error,
+    };
+  }
+
   if (error.status === 409 && body?.error === 'last_super_admin_guard') {
     return {
       kind: 'conflict',
