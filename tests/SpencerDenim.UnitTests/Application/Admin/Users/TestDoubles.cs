@@ -40,6 +40,24 @@ internal sealed class StubAdminUserLookup(AdminUserSummary? summary) : IAdminUse
     public Task<AdminUserSummary?> FindByIdAsync(int userId, CancellationToken cancellationToken) => Task.FromResult(summary);
 }
 
+/// <summary>Protected (and, through <see cref="Guarding"/>, guarded) accounts named by the test; the real one reads server configuration.</summary>
+internal sealed class StubProtectedStaffAccounts(params string[] emails) : IProtectedStaffAccounts
+{
+    private readonly HashSet<string> protectedEmails = new(emails, StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> guardedEmails = new(StringComparer.OrdinalIgnoreCase);
+
+    public bool IsProtected(string? email) => email is not null && protectedEmails.Contains(email);
+
+    public bool IsGuarded(string? email) => email is not null && guardedEmails.Contains(email);
+
+    /// <summary>Names guarded accounts as well; returns this so a test can write it in one expression.</summary>
+    public StubProtectedStaffAccounts Guarding(params string[] emails)
+    {
+        guardedEmails.UnionWith(emails);
+        return this;
+    }
+}
+
 /// <summary>
 /// An in-memory stand-in for <see cref="IStaffUserRoleManagementStore"/>. Snapshots and roles are seeded by the
 /// test; the last-Super-Admin guard is modelled with an explicit switch rather than the real

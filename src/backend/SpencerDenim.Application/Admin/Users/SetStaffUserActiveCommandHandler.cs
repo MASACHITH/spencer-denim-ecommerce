@@ -20,6 +20,7 @@ public sealed class SetStaffUserActiveCommandHandler(
     IStaffUserRoleManagementStore store,
     IEffectivePermissionsProvider permissionsProvider,
     IAdminUserLookup actorLookup,
+    IProtectedStaffAccounts protectedAccounts,
     IClock clock) : ICommandHandler<SetStaffUserActiveCommand, SetStaffUserActiveResult>
 {
     public async Task<SetStaffUserActiveResult> HandleAsync(SetStaffUserActiveCommand command, CancellationToken cancellationToken)
@@ -70,6 +71,22 @@ public sealed class SetStaffUserActiveCommandHandler(
             return new SetStaffUserActiveResult.Forbidden(reason, RbacDenialClassifier.Message(reason));
         }
 
+        // After the permission checks, so a caller who may not manage this user learns nothing about it. Before the
+        // no-op below: asking to deactivate a protected account is refused whatever state it is in.
+        if (!command.Active && protectedAccounts.IsProtected(target.Email))
+        {
+            return new SetStaffUserActiveResult.ProtectedAccount();
+        }
+
+        // A guarded account (the client's own Super Admin) can be switched off or on only by a protected account.
+        // Both directions: a client who could reactivate themselves after the technical owner deactivated them would
+        // make the deactivation meaningless, and one who could deactivate another guarded account would defeat it.
+        var actorSummary = await actorLookup.FindByIdAsync(command.ActorUserId, cancellationToken);
+        if (protectedAccounts.IsGuarded(target.Email) && !protectedAccounts.IsProtected(actorSummary?.Email))
+        {
+            return new SetStaffUserActiveResult.GuardedAccount();
+        }
+
         if (target.IsActive == command.Active)
         {
             // Already in the requested state: idempotent no-op, no audit row (nothing changed).
@@ -80,7 +97,6 @@ public sealed class SetStaffUserActiveCommandHandler(
         // together, and a refused write leaves no row.
         // A factory, not a row: EnableRetryOnFailure re-runs the store's transaction on a transient failure and
         // each attempt needs its own AuditLog instance (tester round 3, Major 1).
-        var actorSummary = await actorLookup.FindByIdAsync(command.ActorUserId, cancellationToken);
         AuditLog Audit() => BuildAuditRow(command, actorSummary?.Email);
 
         var writeResult = await store.SetActiveAsync(

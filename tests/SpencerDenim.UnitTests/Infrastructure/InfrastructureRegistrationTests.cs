@@ -4,7 +4,9 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Abstractions.Time;
+using SpencerDenim.Application.Admin.Users.Abstractions;
 using SpencerDenim.Infrastructure;
+using SpencerDenim.Infrastructure.Identity;
 using SpencerDenim.Infrastructure.Persistence;
 
 namespace SpencerDenim.UnitTests.Infrastructure;
@@ -50,6 +52,110 @@ public sealed class InfrastructureRegistrationTests
         var exception = Assert.Throws<OptionsValidationException>(() => provider.GetRequiredService<IOptions<DatabaseOptions>>().Value);
 
         Assert.Contains("ConnectionStrings__Database", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_mistyped_protected_staff_address_stops_the_server_because_it_would_leave_the_account_unprotected()
+    {
+        using var provider = BuildProvider(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Database"] = "Server=example;Database=SpencerDenim;",
+            ["AdminSecurity:ProtectedStaffEmails"] = "support@example.com, typo-without-an-at-sign",
+        });
+
+        var exception = Assert.Throws<OptionsValidationException>(() => provider.GetRequiredService<IOptions<AdminSecurityOptions>>().Value);
+
+        Assert.Contains("ProtectedStaffEmails", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_protected_staff_list_is_read_from_the_AdminSecurity_setting_the_server_environment_file_fills()
+    {
+        using var provider = BuildProvider(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Database"] = "Server=example;Database=SpencerDenim;",
+            ["AdminSecurity:ProtectedStaffEmails"] = "Support@Example.com",
+        });
+
+        var accounts = provider.GetRequiredService<IProtectedStaffAccounts>();
+
+        Assert.True(accounts.IsProtected("support@example.com"));
+        Assert.False(accounts.IsProtected("someone-else@example.com"));
+    }
+
+    [Fact]
+    public void A_mistyped_guarded_staff_address_stops_the_server_because_it_would_leave_the_account_unguarded()
+    {
+        using var provider = BuildProvider(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Database"] = "Server=example;Database=SpencerDenim;",
+            ["AdminSecurity:ProtectedStaffEmails"] = "owner@example.com",
+            ["AdminSecurity:GuardedStaffEmails"] = "client-without-an-at-sign",
+        });
+
+        var exception = Assert.Throws<OptionsValidationException>(() => provider.GetRequiredService<IOptions<AdminSecurityOptions>>().Value);
+
+        Assert.Contains("GuardedStaffEmails", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_guarded_account_with_no_protected_account_stops_the_server_because_nobody_could_ever_change_it()
+    {
+        using var provider = BuildProvider(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Database"] = "Server=example;Database=SpencerDenim;",
+            ["AdminSecurity:GuardedStaffEmails"] = "client@example.com",
+        });
+
+        var exception = Assert.Throws<OptionsValidationException>(() => provider.GetRequiredService<IOptions<AdminSecurityOptions>>().Value);
+
+        Assert.Contains("ProtectedStaffEmails", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>The check reads the addresses, not the raw text: separators alone name nobody (tester, #255).</summary>
+    [Theory]
+    [InlineData(",")]
+    [InlineData(";")]
+    [InlineData(" , ; ")]
+    public void A_protected_list_of_only_separators_names_nobody_so_a_guarded_account_still_stops_the_server(string separatorsOnly)
+    {
+        using var provider = BuildProvider(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Database"] = "Server=example;Database=SpencerDenim;",
+            ["AdminSecurity:ProtectedStaffEmails"] = separatorsOnly,
+            ["AdminSecurity:GuardedStaffEmails"] = "client@example.com",
+        });
+
+        var exception = Assert.Throws<OptionsValidationException>(() => provider.GetRequiredService<IOptions<AdminSecurityOptions>>().Value);
+
+        Assert.Contains("ProtectedStaffEmails", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_guarded_staff_list_is_read_from_the_AdminSecurity_setting_the_server_environment_file_fills()
+    {
+        using var provider = BuildProvider(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Database"] = "Server=example;Database=SpencerDenim;",
+            ["AdminSecurity:ProtectedStaffEmails"] = "owner@example.com",
+            ["AdminSecurity:GuardedStaffEmails"] = "Client@Example.com",
+        });
+
+        var accounts = provider.GetRequiredService<IProtectedStaffAccounts>();
+
+        Assert.True(accounts.IsGuarded("client@example.com"));
+        Assert.False(accounts.IsGuarded("owner@example.com"));
+    }
+
+    [Fact]
+    public void Nobody_is_protected_when_the_server_names_no_account()
+    {
+        using var provider = BuildProvider(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Database"] = "Server=example;Database=SpencerDenim;",
+        });
+
+        Assert.False(provider.GetRequiredService<IProtectedStaffAccounts>().IsProtected("support@example.com"));
     }
 
     [Fact]

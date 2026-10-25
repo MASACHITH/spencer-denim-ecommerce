@@ -13,6 +13,7 @@ using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Admin.Account;
 using SpencerDenim.Application.Admin.Authentication;
 using SpencerDenim.Application.Admin.CurrentUser;
+using SpencerDenim.Application.Admin.Users.Abstractions;
 using SpencerDenim.Domain.Identity;
 using SpencerDenim.Infrastructure.Identity.Authorization;
 using SpencerDenim.Infrastructure.Identity.Seeding;
@@ -45,7 +46,18 @@ public static class IdentityRegistration
             .Validate(o => o.TwoFactorPendingSignInMinutes > 0, "AdminSecurity:TwoFactorPendingSignInMinutes must be greater than zero.")
             .Validate(o => !string.IsNullOrWhiteSpace(o.TwoFactorIssuer) && !o.TwoFactorIssuer.Contains(':', StringComparison.Ordinal), "AdminSecurity:TwoFactorIssuer is required and must not contain ':'.")
             .Validate(o => o.TwoFactorRecoveryCodeCount is >= 5 and <= 20, "AdminSecurity:TwoFactorRecoveryCodeCount must be between 5 and 20.")
+            .Validate(
+                o => ConfiguredProtectedStaffAccounts.AllEntriesLookLikeEmails(o.ProtectedStaffEmails),
+                "AdminSecurity:ProtectedStaffEmails must be email addresses separated by commas, semicolons or spaces. A mistyped address would leave the account unprotected, so the server refuses to start.")
+            .Validate(
+                o => ConfiguredProtectedStaffAccounts.AllEntriesLookLikeEmails(o.GuardedStaffEmails),
+                "AdminSecurity:GuardedStaffEmails must be email addresses separated by commas, semicolons or spaces. A mistyped address would leave the account unguarded, so the server refuses to start.")
+            .Validate(
+                o => ConfiguredProtectedStaffAccounts.Parse(o.GuardedStaffEmails).Count == 0 || ConfiguredProtectedStaffAccounts.Parse(o.ProtectedStaffEmails).Count > 0,
+                "AdminSecurity:GuardedStaffEmails needs AdminSecurity:ProtectedStaffEmails as well: only a protected account may change a guarded one, so with none named the guarded account could never be deactivated or reactivated.")
             .ValidateOnStart();
+
+        services.AddSingleton<IProtectedStaffAccounts, ConfiguredProtectedStaffAccounts>();
 
         services.AddOptions<SeedAdminOptions>()
             .Configure<IConfiguration>((options, configuration) =>
