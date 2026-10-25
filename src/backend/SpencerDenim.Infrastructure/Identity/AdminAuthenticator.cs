@@ -79,12 +79,20 @@ public sealed class AdminAuthenticator(
             // between rounds of code guesses; the count is reset once the code is accepted.
             if (await userManager.GetTwoFactorEnabledAsync(user))
             {
-                // Issue #145: null means another request got to the account's pending sign-in first. The password
-                // was right, so this is not a failed login; it is the reply a stale pending sign-in gets.
+                // Null means the pending sign-in was not opened (see OpenPendingSignInAsync): another request got to
+                // it first (issue #145), or the account was closed, had its security stamp changed, or was locked
+                // since the password was checked (issue #250). The password was right, so this is not a failed
+                // login. A lockout is answered as the lockout it is, which is what the next attempt would get; any
+                // other cause is the reply a stale pending sign-in gets.
                 var pendingSignInId = await OpenPendingSignInAsync(user, securityStamp);
-                return pendingSignInId is null
-                    ? AdminAuthenticationOutcome.TwoFactorSessionExpired(user.Id, user.Email)
-                    : AdminAuthenticationOutcome.TwoFactorRequired(user.Id, user.Email ?? email, securityStamp, pendingSignInId);
+                if (pendingSignInId is not null)
+                {
+                    return AdminAuthenticationOutcome.TwoFactorRequired(user.Id, user.Email ?? email, securityStamp, pendingSignInId);
+                }
+
+                return await FindLockoutOfActiveAccountAsync(user) is { } lockedUntil
+                    ? AdminAuthenticationOutcome.LockedOut(user.Id, user.Email ?? email, lockedUntil, wasNewlyLockedOut: false)
+                    : AdminAuthenticationOutcome.TwoFactorSessionExpired(user.Id, user.Email);
             }
 
             return await SucceedAsync(user, securityStamp);
@@ -194,23 +202,31 @@ public sealed class AdminAuthenticator(
     /// to be Identity's <c>SetAuthenticationTokenAsync</c>, which saves the token and then the whole user row the request
     /// loaded before it spent its time on the password hash: an administrator's deactivation, or the owner's password
     /// change, made inside that window was undone by the save (issue #250). Now the statement names the security stamp
-    /// the password was verified against and requires <c>IsActive = 1</c> in its own <c>WHERE</c>, so an account that was
-    /// closed, or whose password changed, since the request loaded it gets no pending sign-in at all, and nothing but the
-    /// token row is ever written.
+    /// the password was verified against and requires, in its own <c>WHERE</c>, that the account is still active and not
+    /// locked (the lockout test is <c>StaffAccountLockout</c>'s: <c>LockoutEnabled</c> and a <c>LockoutEnd</c> that has
+    /// not passed, against <c>DateTimeOffset.UtcNow</c>). An account that was closed, locked, or whose password changed,
+    /// since the request loaded it gets no pending sign-in at all, and nothing but the token row is ever written. Both
+    /// branches below (replace the row there is, insert the first one) carry the same condition.
     /// </para>
     /// <para>
     /// Returns <see langword="null"/> when the write did not happen, and the caller must not hand out a pending cookie:
-    /// the row it would name is not this request's. Three reasons, all "too late", all answered as a pending sign-in that
-    /// has expired (issue #145): another request deleted the row this one meant to replace (a second step completing the
-    /// sign-in); two password steps on an account with no pending sign-in both inserted it and the second hit the primary
-    /// key; or the account is no longer what the password was checked against. In the first two the winner holds the
-    /// live pending sign-in, which is the rule above, and the loser is simply too late.
+    /// the row it would name is not this request's. Four reasons, all "too late": another request deleted the row this
+    /// one meant to replace (a second step completing the sign-in, issue #145); two password steps on an account with no
+    /// pending sign-in both inserted it and the second hit the primary key (#145); the account is no longer what the
+    /// password was checked against (closed, or the security stamp changed, #250); or a lockout landed since (#250). In
+    /// the first two the winner holds the live pending sign-in, which is the rule above, and the loser is simply too
+    /// late. The caller answers a lockout as locked and the rest as a pending sign-in that has expired.
     /// </para>
     /// <para>
     /// Whether to replace or to insert is decided by one read just before the write, as Identity's own store decided it,
     /// so a row that existed when this request got here and is gone when it writes is a lost race and not a new
-    /// sign-in. Any other failure is still a bug and still throws. The unique-violation filter is not specific to the
-    /// token's key; it fails closed (a 401, never a session).
+    /// sign-in. Any other failure is still a bug and still throws (a non-unique SQL error is a 500, not a 401). The
+    /// unique-violation filter is not specific to the token's key; it fails closed (a 401, never a session).
+    /// </para>
+    /// <para>
+    /// Side effect of leaving the user row alone, intended: opening a pending sign-in no longer moves the user's
+    /// <c>ConcurrencyStamp</c>, stamps <c>UpdatedAtUtc</c> or overwrites <c>UpdatedByUserId</c> (with null, for an
+    /// anonymous request). Nothing reads <c>ConcurrencyStamp</c>; it is not a concurrency token.
     /// </para>
     /// </summary>
     private async Task<string?> OpenPendingSignInAsync(AppUser user, string securityStamp)
@@ -225,6 +241,10 @@ public sealed class AdminAuthenticator(
                 && t.LoginProvider == AdminTokenNames.LoginProvider
                 && t.Name == AdminTokenNames.PendingTwoFactorSignIn);
 
+        // Identity's own clock for lockout, as StaffAccountLockout reads it, so this write and every other look at the
+        // lockout agree on "now".
+        var lockoutClock = DateTimeOffset.UtcNow;
+
         int written;
         try
         {
@@ -237,14 +257,16 @@ public sealed class AdminAuthenticator(
                        AND [LoginProvider] = {AdminTokenNames.LoginProvider}
                        AND [Name] = {AdminTokenNames.PendingTwoFactorSignIn}
                        AND EXISTS (SELECT 1 FROM [identity].[Users]
-                                    WHERE [Id] = {user.Id} AND [IsActive] = 1 AND [SecurityStamp] = {securityStamp})
+                                    WHERE [Id] = {user.Id} AND [IsActive] = 1 AND [SecurityStamp] = {securityStamp}
+                                      AND ([LockoutEnabled] = 0 OR [LockoutEnd] IS NULL OR [LockoutEnd] < {lockoutClock}))
                     """)
                 : await dbContext.Database.ExecuteSqlAsync(
                     $"""
                     INSERT INTO [identity].[UserTokens] ([UserId], [LoginProvider], [Name], [Value])
                     SELECT {user.Id}, {AdminTokenNames.LoginProvider}, {AdminTokenNames.PendingTwoFactorSignIn}, {value}
                      WHERE EXISTS (SELECT 1 FROM [identity].[Users]
-                                    WHERE [Id] = {user.Id} AND [IsActive] = 1 AND [SecurityStamp] = {securityStamp})
+                                    WHERE [Id] = {user.Id} AND [IsActive] = 1 AND [SecurityStamp] = {securityStamp}
+                                      AND ([LockoutEnabled] = 0 OR [LockoutEnd] IS NULL OR [LockoutEnd] < {lockoutClock}))
                     """);
         }
         catch (Exception exception) when (SqlUniqueViolation.Matches(exception))
@@ -358,13 +380,20 @@ public sealed class AdminAuthenticator(
     /// <para>
     /// <b>The recording is the last look at the account before a session is issued, so it is conditional</b> (issue #250).
     /// The password or the code was checked against the account as the request loaded it, which can be several hundred
-    /// milliseconds ago; an administrator may have deactivated it, or the owner changed the password, since. One
-    /// statement sets <c>LastLoginAtUtc</c> and nothing else, and only where the account is still active with the security
-    /// stamp the check was made against. If it matches no row the account is no longer what the sign-in was decided on:
-    /// no session, and the answer is the one the same moment's next attempt would get (invalid credentials for the
-    /// password-only path, an expired sign-in for the second step), so it tells a caller nothing new. It used to be
-    /// <c>UserManager.UpdateAsync</c>, which wrote every column the request had loaded and so put a deactivated account
-    /// back to active and a changed password back to the old hash and stamp.
+    /// milliseconds ago; an administrator may have deactivated it, the owner changed the password, or a burst of wrong
+    /// passwords locked it, since. One statement records the sign-in (<c>LastLoginAtUtc</c>, with the two audit columns a
+    /// statement outside <c>SaveChanges</c> has to set itself) and writes nothing else, and only where the account is
+    /// still active, still has the security stamp the check was made against, and is not locked. If it matches no row
+    /// the account is no longer what the sign-in was decided on: no session. A lockout is answered as the lockout it is
+    /// (the same locked answer the endpoint gives everywhere else, never a new status); any other cause is answered as
+    /// the same moment's next attempt would be (invalid credentials for the password-only path, an expired sign-in for
+    /// the second step), so it tells a caller nothing new. It used to be <c>UserManager.UpdateAsync</c>, which wrote
+    /// every column the request had loaded and so put a deactivated account back to active and a changed password back
+    /// to the old hash and stamp.
+    /// </para>
+    /// <para>
+    /// Side effect of not saving the user row, intended: a sign-in no longer moves the user's <c>ConcurrencyStamp</c>.
+    /// Nothing reads it; it is not a concurrency token.
     /// </para>
     /// </summary>
     private async Task<AdminAuthenticationOutcome> SucceedAsync(
@@ -376,6 +405,12 @@ public sealed class AdminAuthenticator(
     {
         if (!await RecordSignInAsync(user.Id, securityStamp))
         {
+            if (await FindLockoutOfActiveAccountAsync(user) is { } lockedUntil)
+            {
+                return AdminAuthenticationOutcome.LockedOut(
+                    user.Id, user.Email ?? string.Empty, lockedUntil, wasNewlyLockedOut: false, usedRecoveryCode);
+            }
+
             return twoFactorEnabled
                 ? AdminAuthenticationOutcome.TwoFactorSessionExpired(user.Id, user.Email)
                 : AdminAuthenticationOutcome.InvalidCredentials(user.Id, user.Email);
@@ -398,14 +433,17 @@ public sealed class AdminAuthenticator(
 
     /// <summary>
     /// Records a completed sign-in and answers whether the account was still what it was decided on: active, with the
-    /// security stamp the password or the code was checked against. <c>UpdatedAtUtc</c> and <c>UpdatedByUserId</c> are
+    /// security stamp the password or the code was checked against, and not locked (the lockout test of
+    /// <see cref="StaffAccountLockout"/>, against Identity's clock). <c>UpdatedAtUtc</c> and <c>UpdatedByUserId</c> are
     /// set here because a statement that goes around <c>SaveChanges</c> does not pass the audit-column interceptor
-    /// (<see cref="StaffAccountLockout"/> does the same for its statements).
+    /// (<see cref="StaffAccountLockout"/> does the same for its statements); for an anonymous sign-in request
+    /// <c>UpdatedByUserId</c> is null, exactly what the interceptor stamped when this was a <c>SaveChanges</c>.
     /// </summary>
     private async Task<bool> RecordSignInAsync(int userId, string securityStamp)
     {
         var now = clock.UtcNow.UtcDateTime;
         var updatedBy = auditColumns.ResolveCurrentUserId();
+        var lockoutClock = DateTimeOffset.UtcNow;
 
         var written = await dbContext.Database.ExecuteSqlAsync(
             $"""
@@ -414,9 +452,26 @@ public sealed class AdminAuthenticator(
                    [UpdatedAtUtc] = {now},
                    [UpdatedByUserId] = {updatedBy}
              WHERE [Id] = {userId} AND [IsActive] = 1 AND [SecurityStamp] = {securityStamp}
+               AND ([LockoutEnabled] = 0 OR [LockoutEnd] IS NULL OR [LockoutEnd] < {lockoutClock})
             """);
 
         return written == 1;
+    }
+
+    /// <summary>
+    /// The end of the lockout that stopped a conditional sign-in write, as the database has it now, or null when the
+    /// refusal was for another reason. A closed account is never answered as locked: an inactive account is told the
+    /// same thing as an unknown one (doc 08 §3.1 DB10), whatever else is true of its row.
+    /// </summary>
+    private async Task<DateTimeOffset?> FindLockoutOfActiveAccountAsync(AppUser user)
+    {
+        if (await lockout.FindActiveLockoutAsync(user) is not { } lockoutEnd)
+        {
+            return null;
+        }
+
+        var stillActive = await dbContext.Users.AsNoTracking().AnyAsync(u => u.Id == user.Id && u.IsActive);
+        return stillActive ? lockoutEnd : null;
     }
 
     /// <summary>

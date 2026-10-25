@@ -17,7 +17,8 @@ namespace SpencerDenim.IntegrationTests.Infrastructure;
 /// <para>
 /// It matches on the statement's shape, so it works on both sides of the fix: before it, the write is Entity
 /// Framework's <c>UPDATE</c> listing every column of the row, <c>LastLoginAtUtc</c> among them; after it, the write is
-/// the conditional statement that sets that column alone. Locking statements (<c>AccessFailedCount</c> and
+/// the conditional statement that sets <c>LastLoginAtUtc</c> and the two audit columns and nothing else. Locking
+/// statements (<c>AccessFailedCount</c> and
 /// <c>LockoutEnd</c>) do not mention <c>LastLoginAtUtc</c> and are never held. Usage: <see cref="Arm"/>, send the sign-in,
 /// <c>await</c> <see cref="WaitUntilHeldAsync"/>, make the change, <see cref="Release"/>.
 /// </para>
