@@ -9,6 +9,7 @@ import { routes } from '../../app.routes';
 import { HomePageDto, HomeSectionDto, HomeSectionItemDto, HomeSectionType } from '../../core/content/content.model';
 import { HOME_SECTION_TYPES } from '../../core/content/home-sections';
 import { ProductCardDto } from '../../core/catalog/catalog.model';
+import { flushContentPages } from '../../core/content/content-pages.testing';
 
 function item(overrides: Partial<HomeSectionItemDto> = {}): HomeSectionItemDto {
   return {
@@ -106,7 +107,11 @@ describe('HomePage', () => {
     });
   });
 
-  afterEach(() => TestBed.inject(HttpTestingController).verify());
+  afterEach(() => {
+    // The newsletter section asks for the published-page index (issue #252), as the footer does on every page.
+    flushContentPages(TestBed.inject(HttpTestingController));
+    TestBed.inject(HttpTestingController).verify();
+  });
 
   /**
    * The department tree the page's fallback links are drawn from (GLB-05). It is the shell's feed,
@@ -691,6 +696,41 @@ describe('HomePage', () => {
 
       expect(form.getAttribute('method')).toBe('dialog');
       expect(form.hasAttribute('action')).toBe(false);
+    });
+
+    /**
+     * Issue #252 answered the TODO(GLB-10) that stood in the component: the privacy policy is linked from the consent
+     * wording once it is published, and the wording is the sentence it always was until then.
+     */
+    it('links the privacy policy from the consent wording once it is published, by its own address', async () => {
+      await openNewsletter();
+      flushContentPages(http, [{ slug: 'privacy-policy', title: 'Privacy policy', systemKey: 'privacy' }]);
+      harness.detectChanges();
+
+      const hint = root().querySelector<HTMLElement>('.signup__hint')!;
+
+      expect(hint.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+        'We use your address for Colombo Wardrobe emails only, and record your IP address as proof of consent. ' +
+          'You can ask us to stop at any time through the Contact page. Read our privacy policy.',
+      );
+      expect(hint.querySelector('a')?.getAttribute('href')).toBe('/privacy-policy');
+      // Leaving the homepage loses nothing, so this link keeps the same tab and says nothing about a new one.
+      expect(hint.querySelector('a')?.hasAttribute('target')).toBe(false);
+      expect(hint.querySelector('.sr-only')).toBeNull();
+    });
+
+    it('says the same consent wording with no link while the privacy policy is unpublished', async () => {
+      await openNewsletter();
+      flushContentPages(http, []);
+      harness.detectChanges();
+
+      const hint = root().querySelector<HTMLElement>('.signup__hint')!;
+
+      expect(hint.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+        'We use your address for Colombo Wardrobe emails only, and record your IP address as proof of consent. ' +
+          'You can ask us to stop at any time through the Contact page.',
+      );
+      expect(hint.querySelector('a')).toBeNull();
     });
 
     it('posts the address and shows the sentence the server sent back', async () => {

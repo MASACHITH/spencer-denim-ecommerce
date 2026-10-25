@@ -47,6 +47,7 @@ import {
 import { DeliveryDistrictService } from '../../core/delivery/delivery-district.service';
 import { RobotsMeta } from '../../core/platform/robots-meta';
 import { ServerHandover } from '../../core/platform/server-handover';
+import { LegalLinks } from '../../ui/legal-links/legal-links';
 
 /** Where the server leaves the checkout it rendered, for the browser that hydrates the page. */
 const HANDOVER_KEY = 'checkout';
@@ -208,7 +209,7 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
  */
 @Component({
   selector: 'sd-checkout-page',
-  imports: [RouterLink],
+  imports: [RouterLink, LegalLinks],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="container checkout">
@@ -1092,8 +1093,21 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
             <!-- No email is promised here. See the email field's own comment: nothing in the repository
                  can send one yet (W3-06), and the success page's "keep this page's address" is the truth
                  this sentence now matches. -->
+            <!-- Issue #252: the terms and the privacy policy are linked here once the shop has published them. The
+                 sentence it replaces said "terms and conditions" with nothing to read, and still does while the
+                 page is unpublished (termsFallback), so nothing is promised that did not exist before. They open in a
+                 NEW TAB (newTab): this form lives in component state with no draft and no route guard, so a link that
+                 navigated away would throw away everything the shopper had typed. -->
             <p class="checkout__muted checkout__fineprint">
-              By placing this order you agree to our terms and conditions. The next page shows your order
+              <sd-legal-links
+                termsLead="By placing this order you agree to our"
+                privacyLead="How we use your details is explained in our"
+                [terms]="true"
+                [privacy]="true"
+                [termsFallback]="true"
+                [newTab]="true"
+              />
+              The next page shows your order
               number and its link &mdash; keep that address, because it is how you come back to your order.
             </p>
           </aside>

@@ -2646,6 +2646,13 @@ let contentPagesStatus = 0;
 /** What the Contact form has posted, for the honeypot assertion. */
 const contactSubmissions = [];
 
+/**
+ * The About us, Privacy policy and Terms and conditions copy the shop ships (issue #252), read from the file a unit
+ * test (`StorePagesCopyTests`) keeps equal to `PolicyPageContent`, so these pages are drawn with the real words and
+ * the real structure - headings, lists, long sentences - rather than a stand-in that drifts.
+ */
+const STORE_PAGES = JSON.parse(readFileSync(new URL('./store-pages.json', import.meta.url), 'utf8'));
+
 /** The six system pages as the API lists them once a client has published all of them. */
 const PUBLISHED_CONTENT_PAGES = [
   { slug: 'about', title: 'About us', systemKey: 'about', updatedAtUtc: '2026-10-02T09:30:00Z' },
@@ -2750,13 +2757,20 @@ const CONTENT_PAGE_BODIES = {
     seoTitle: null,
     seoDescription: null,
   },
-  privacy: { bodyHtml: '<p>Placeholder for the PDPA review.</p>', seoTitle: null, seoDescription: null },
-  terms: { bodyHtml: '<p>Placeholder.</p>', seoTitle: null, seoDescription: null },
+  privacy: { bodyHtml: STORE_PAGES.privacy, seoTitle: null, seoDescription: null },
+  terms: { bodyHtml: STORE_PAGES.terms, seoTitle: null, seoDescription: null },
 };
+
+/**
+ * What `about` is served with when the content-pages state is `store`: the shipped About copy (issue #252) instead of
+ * the fixture above, which exists to carry every element the sanitiser allows and a table wider than 320 px for the
+ * tests that need those. The two are kept apart so neither test has to give up what it was written to measure.
+ */
+const STORE_ABOUT = { bodyHtml: STORE_PAGES.about, seoTitle: null, seoDescription: null };
 
 /** The published-page list for the state the switch has set. */
 function contentPages() {
-  if (contentPagesState === 'all') {
+  if (contentPagesState === 'all' || contentPagesState === 'store') {
     return PUBLISHED_CONTENT_PAGES;
   }
 
@@ -4417,7 +4431,9 @@ const server = createServer((request, response) => {
       return;
     }
 
-    response.end(JSON.stringify({ ...page, ...CONTENT_PAGE_BODIES[page.slug] }));
+    const body = contentPagesState === 'store' && page.slug === 'about' ? STORE_ABOUT : CONTENT_PAGE_BODIES[page.slug];
+
+    response.end(JSON.stringify({ ...page, ...body }));
     return;
   }
 
