@@ -281,6 +281,81 @@ public sealed class AppUserStoreChangedColumnsTests(SqlServerDatabaseFixture sql
         Assert.NotNull(after.UpdatedAtUtc);
     }
 
+    /// <summary>
+    /// A changed email address has to reach <c>NormalizedEmail</c> (and <c>NormalizedUserName</c>, which mirrors it), the
+    /// columns every lookup by address goes through. Saving only the typed address and leaving the normalised one behind
+    /// would make the new address impossible to sign in with while the old one kept working, and nothing else in the
+    /// store tests would notice: the changed-columns-only save has to write the normalised columns because
+    /// <c>UserManager</c> changed them, not because someone listed them.
+    /// </summary>
+    [Fact]
+    public async Task Changing_the_email_writes_the_normalised_email_and_user_name_so_the_new_address_is_found()
+    {
+        await using var factory = await StartAsync();
+        var userId = await CreateUserAsync(factory);
+        var newEmail = $"moved-{Guid.NewGuid():N}@example.com";
+        string oldEmail;
+
+        await using (var request = factory.Services.CreateAsyncScope())
+        {
+            var userManager = request.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+            var user = await userManager.FindByIdAsync(userId.ToString(CultureInfo.InvariantCulture));
+            oldEmail = user!.Email!;
+
+            var setEmail = await userManager.SetEmailAsync(user, newEmail);
+            Assert.True(setEmail.Succeeded, string.Join("; ", setEmail.Errors.Select(e => e.Description)));
+            var setUserName = await userManager.SetUserNameAsync(user, newEmail);
+            Assert.True(setUserName.Succeeded, string.Join("; ", setUserName.Errors.Select(e => e.Description)));
+        }
+
+        await using var lookup = factory.Services.CreateAsyncScope();
+        var finder = lookup.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+
+        var persisted = await ReadAsync(factory, userId);
+        Assert.Equal(newEmail, persisted.Email);
+        Assert.True(
+            string.Equals(persisted.NormalizedEmail, finder.NormalizeEmail(newEmail), StringComparison.Ordinal),
+            $"NormalizedEmail was not written with the new address. It is '{persisted.NormalizedEmail}'.");
+        Assert.True(
+            string.Equals(persisted.NormalizedUserName, finder.NormalizeName(newEmail), StringComparison.Ordinal),
+            $"NormalizedUserName was not written with the new address. It is '{persisted.NormalizedUserName}'.");
+
+        Assert.Equal(userId, (await finder.FindByEmailAsync(newEmail))?.Id);
+        Assert.Equal(userId, (await finder.FindByNameAsync(newEmail))?.Id);
+        Assert.Null(await finder.FindByEmailAsync(oldEmail));
+    }
+
+    /// <summary>
+    /// The store finds what changed even when the caller has switched automatic change detection off (the way a bulk
+    /// operation does), and gives the setting back afterwards. The columns the audit interceptor sets just before the
+    /// write are written too: the interceptor assigns the properties, and only change detection notices an assignment, so
+    /// the save runs with detection on.
+    /// </summary>
+    [Fact]
+    public async Task A_save_with_automatic_change_detection_switched_off_still_writes_what_changed_and_stamps_the_audit_columns()
+    {
+        await using var factory = await StartAsync();
+        var userId = await CreateUserAsync(factory);
+        var before = await ReadAsync(factory, userId);
+
+        await using var request = factory.Services.CreateAsyncScope();
+        var userManager = request.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        var dbContext = request.ServiceProvider.GetRequiredService<AppDbContext>();
+        var user = await userManager.FindByIdAsync(userId.ToString(CultureInfo.InvariantCulture));
+
+        dbContext.ChangeTracker.AutoDetectChangesEnabled = false;
+        user!.FirstName = "Edited";
+        var result = await userManager.UpdateAsync(user);
+        Assert.True(result.Succeeded, string.Join("; ", result.Errors.Select(e => e.Description)));
+
+        Assert.False(dbContext.ChangeTracker.AutoDetectChangesEnabled, "The store must give the caller's setting back.");
+
+        var persisted = await ReadAsync(factory, userId);
+        Assert.Equal("Edited", persisted.FirstName);
+        Assert.NotEqual(before.ConcurrencyStamp, persisted.ConcurrencyStamp);
+        Assert.NotNull(persisted.UpdatedAtUtc);
+    }
+
     private const string Password = "Correct-Horse-Battery-1!";
 
     private async Task<ApiFactory> StartAsync(DbCommandInterceptor? interceptor = null)
