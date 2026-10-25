@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { DOCUMENT, NgTemplateOutlet } from '@angular/common';
+import { ChangeDetectionStrategy, Component, Injector, afterNextRender, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { forkJoin, of } from 'rxjs';
@@ -8,6 +9,9 @@ import { AdminAuthApi } from '../../core/auth/admin-auth-api';
 import { STAFF_PASSWORD_RULE } from '../../core/auth/password-rule';
 import { StaffUserActionFailure, UsersApi, toStaffUserActionFailure } from '../../core/users/users-api';
 import { RoleSummary, StaffUserDetail } from '../../core/users/users.model';
+
+/** The profile fields that have their own error line in the form. */
+const NAMED_PROFILE_FIELDS = ['email', 'firstName', 'initialPassword', 'roleIds'];
 
 interface RoleOption {
   readonly role: RoleSummary;
@@ -28,9 +32,27 @@ interface RoleOption {
  */
 @Component({
   selector: 'sda-user-form-page',
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, NgTemplateOutlet],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
+    <!-- The role boxes, drawn in the new-user form and in the Roles section of an existing one. -->
+    <ng-template #roleChoices>
+      @for (option of roleOptions(); track option.role.id) {
+        <label class="user-form__role" [class.user-form__role--disabled]="option.disabled">
+          <input
+            type="checkbox"
+            [checked]="selectedRoleIds().has(option.role.id)"
+            [disabled]="option.disabled"
+            (change)="toggleRole(option.role.id)"
+          />
+          {{ option.role.name }}
+          @if (option.role.grantsAllPermissions) {
+            <span class="user-form__role-badge">Super Admin</span>
+          }
+        </label>
+      }
+    </ng-template>
+
     <section class="user-form">
       <h1 class="user-form__title">{{ isEditMode() ? 'Edit staff user' : 'New staff user' }}</h1>
 
@@ -55,10 +77,14 @@ interface RoleOption {
               required
               [ngModel]="email()"
               (ngModelChange)="email.set($event)"
-              [disabled]="isEditMode() && !canChangeEmail()"
-              [attr.aria-describedby]="isEditMode() && !canChangeEmail() ? 'email-hint' : null"
+              [disabled]="emailFixed()"
+              [attr.aria-describedby]="emailFixed() ? 'email-hint' : null"
             />
-            @if (isEditMode() && !canChangeEmail()) {
+            @if (isEditMode() && isProtectedAccount()) {
+              <span class="user-form__hint" id="email-hint">The email address of a protected account cannot be changed.</span>
+            } @else if (isEditMode() && lockedForViewer()) {
+              <span class="user-form__hint" id="email-hint">Only the technical owner's account can change the email address of this account.</span>
+            } @else if (isEditMode() && !canChangeEmail()) {
               <span class="user-form__hint" id="email-hint">Only a Super Admin can change a staff user's email.</span>
             }
           </label>
@@ -89,6 +115,23 @@ interface RoleOption {
               <span class="user-form__hint" id="initial-password-rule">{{ passwordRule }}</span>
               <span class="user-form__hint">The new user must change this on first sign-in.</span>
             </label>
+
+            <!-- The server refuses a user with no role, so the form has to offer them. -->
+            <fieldset
+              class="user-form__roles"
+              [attr.aria-describedby]="profileFieldError('roleIds') ? 'new-user-roles-hint new-user-roles-error' : 'new-user-roles-hint'"
+              data-testid="new-user-roles"
+            >
+              <legend class="user-form__label">Roles</legend>
+              <span class="user-form__hint" id="new-user-roles-hint">
+                Choose at least one. The new user can do only what their roles allow.
+              </span>
+              @if (roleOptions().length === 0) {
+                <p class="user-form__hint">No roles are available.</p>
+              } @else {
+                <ng-container [ngTemplateOutlet]="roleChoices" />
+              }
+            </fieldset>
           }
 
           @if (profileError(); as message) {
@@ -103,9 +146,16 @@ interface RoleOption {
           @if (profileFieldError('initialPassword'); as message) {
             <p class="user-form__error" role="alert">{{ message }}</p>
           }
+          @if (profileFieldError('roleIds'); as message) {
+            <p class="user-form__error" role="alert" id="new-user-roles-error" data-testid="role-error">{{ message }}</p>
+          }
+          <!-- Anything else the server refused, so that no refusal is ever silent. -->
+          @for (message of otherFieldErrors(); track $index) {
+            <p class="user-form__error" role="alert">{{ message }}</p>
+          }
 
           <div class="user-form__actions">
-            <button class="user-form__submit" type="submit" [disabled]="savingProfile()">
+            <button class="user-form__submit" type="submit" [attr.aria-disabled]="savingProfile() ? 'true' : null">
               {{ isEditMode() ? (savingProfile() ? 'Saving…' : 'Save profile') : (savingProfile() ? 'Creating…' : 'Create user') }}
             </button>
             <a class="user-form__link" routerLink="/users">Cancel</a>
@@ -121,20 +171,7 @@ interface RoleOption {
             } @else {
               <fieldset class="user-form__roles">
                 <legend class="sr-only">Assigned roles</legend>
-                @for (option of roleOptions(); track option.role.id) {
-                  <label class="user-form__role" [class.user-form__role--disabled]="option.disabled">
-                    <input
-                      type="checkbox"
-                      [checked]="selectedRoleIds().has(option.role.id)"
-                      [disabled]="option.disabled"
-                      (change)="toggleRole(option.role.id)"
-                    />
-                    {{ option.role.name }}
-                    @if (option.role.grantsAllPermissions) {
-                      <span class="user-form__role-badge">Super Admin</span>
-                    }
-                  </label>
-                }
+                <ng-container [ngTemplateOutlet]="roleChoices" />
               </fieldset>
             }
 
@@ -143,7 +180,7 @@ interface RoleOption {
             }
 
             <div class="user-form__actions">
-              <button class="user-form__submit" type="submit" [disabled]="savingRoles()">
+              <button class="user-form__submit" type="submit" [attr.aria-disabled]="savingRoles() ? 'true' : null">
                 {{ savingRoles() ? 'Saving…' : 'Save roles' }}
               </button>
             </div>
@@ -159,12 +196,20 @@ interface RoleOption {
               <p class="user-form__error" role="alert">{{ message }}</p>
             }
             <div class="user-form__actions">
-              @if (isActive()) {
-                <button class="user-form__danger" type="button" [disabled]="togglingStatus()" (click)="deactivate()">
+              @if (isActive() && isProtectedAccount()) {
+                <p class="user-form__protected" data-testid="protected-note">
+                  This account is protected. It can never be deactivated, and its email address cannot be changed.
+                </p>
+              } @else if (lockedForViewer()) {
+                <p class="user-form__protected" data-testid="locked-note">
+                  Only the technical owner's account can activate or deactivate this account, or change its email address.
+                </p>
+              } @else if (isActive()) {
+                <button class="user-form__danger" type="button" [attr.aria-disabled]="togglingStatus() ? 'true' : null" (click)="deactivate()">
                   {{ togglingStatus() ? 'Deactivating…' : 'Deactivate' }}
                 </button>
               } @else {
-                <button class="user-form__submit" type="button" [disabled]="togglingStatus()" (click)="reactivate()">
+                <button class="user-form__submit" type="button" [attr.aria-disabled]="togglingStatus() ? 'true' : null" (click)="reactivate()">
                   {{ togglingStatus() ? 'Reactivating…' : 'Reactivate' }}
                 </button>
               }
@@ -193,6 +238,7 @@ interface RoleOption {
     }
     .user-form__input:disabled { opacity: 0.6; }
     .user-form__hint { font-size: var(--text-small); color: var(--color-text-muted); }
+    .user-form__protected { margin: 0; padding: var(--space-1-5); border-inline-start: 4px solid var(--color-text-muted); background: var(--color-bg-alt); font-size: var(--text-small); }
     .user-form__error { margin: 0; font-size: var(--text-small); color: var(--color-sale); }
 
     .user-form__roles { display: grid; gap: var(--space-1); margin: 0; padding: 0; border: none; }
@@ -213,10 +259,10 @@ interface RoleOption {
       cursor: pointer;
     }
     .user-form__submit { color: var(--color-on-primary); background: var(--color-primary); }
-    .user-form__submit:hover:not(:disabled) { background: var(--color-primary-hover); }
+    .user-form__submit:hover:not([aria-disabled='true']) { background: var(--color-primary-hover); }
     .user-form__danger { color: var(--color-on-primary); background: var(--color-sale); }
-    .user-form__submit:disabled,
-    .user-form__danger:disabled { opacity: 0.6; cursor: not-allowed; }
+    .user-form__submit[aria-disabled='true'],
+    .user-form__danger[aria-disabled='true'] { opacity: 0.6; cursor: not-allowed; }
     .user-form__link { color: var(--color-text); text-decoration: underline; }
 
     .user-form__state { padding: var(--space-3); background: var(--color-surface); border: 1px solid var(--color-border); }
@@ -232,6 +278,9 @@ export class UserFormPage {
   private readonly userId = signal<number | null>(null);
   protected readonly isEditMode = computed(() => this.userId() !== null);
 
+  private readonly document = inject(DOCUMENT);
+  private readonly injector = inject(Injector);
+
   protected readonly loading = signal(true);
   protected readonly loadFailure = signal<StaffUserActionFailure | null>(null);
 
@@ -243,6 +292,12 @@ export class UserFormPage {
   /** The rule, shown with the initial-password box: the server's own sentence (issue #200). */
   protected readonly passwordRule = STAFF_PASSWORD_RULE;
   protected readonly isActive = signal(true);
+
+  /** A protected account (server configuration): no Deactivate button, and its email address is fixed. */
+  protected readonly isProtectedAccount = signal(false);
+
+  /** A guarded account the viewer may not switch off, switch on or rename: only the technical owner's account may. */
+  protected readonly lockedForViewer = signal(false);
   protected readonly selectedRoleIds = signal<ReadonlySet<number>>(new Set());
 
   protected readonly savingProfile = signal(false);
@@ -261,6 +316,18 @@ export class UserFormPage {
   private readonly viewerPermissions = signal<ReadonlySet<string>>(new Set());
 
   protected readonly canChangeEmail = computed(() => this.viewerGrantsAll());
+
+  /** Whether the email box is read-only: for someone who may not change it, and for an account that may not be renamed. */
+  protected readonly emailFixed = computed(
+    () => this.isEditMode() && (!this.canChangeEmail() || this.isProtectedAccount() || this.lockedForViewer()),
+  );
+
+  /** What the server refused beyond the boxes the form names, so that a refusal is never silent. */
+  protected readonly otherFieldErrors = computed(() =>
+    Object.entries(this.profileFieldErrors())
+      .filter(([field]) => !NAMED_PROFILE_FIELDS.includes(field))
+      .flatMap(([, messages]) => messages),
+  );
 
   protected readonly roleOptions = computed<readonly RoleOption[]>(() => {
     const grantsAll = this.viewerGrantsAll();
@@ -333,8 +400,31 @@ export class UserFormPage {
     });
   }
 
+  /**
+   * Puts the cursor in the first role box that can be ticked, so the refusal is read where the fix is (and again on a
+   * repeat press, which a message that did not change would not do). Waits for the render, as the other screens do.
+   */
+  private focusFirstRoleBox(): void {
+    afterNextRender(
+      () => {
+        this.document
+          .querySelector<HTMLInputElement>('[data-testid="new-user-roles"] input[type="checkbox"]:not(:disabled)')
+          ?.focus();
+      },
+      { injector: this.injector },
+    );
+  }
+
   protected saveProfile(): void {
     if (this.savingProfile()) {
+      return;
+    }
+
+    // The server refuses a user with no role. Said here too, in the form, instead of a round trip to be told.
+    if (this.userId() === null && this.selectedRoleIds().size === 0) {
+      this.profileError.set(null);
+      this.profileFieldErrors.set({ roleIds: ['Choose at least one role for the new user.'] });
+      this.focusFirstRoleBox();
       return;
     }
 
@@ -362,7 +452,7 @@ export class UserFormPage {
       return;
     }
 
-    const request = this.canChangeEmail() ? { firstName: this.firstName().trim(), lastName: this.lastName().trim() || null, email: this.email().trim() } : { firstName: this.firstName().trim(), lastName: this.lastName().trim() || null };
+    const request = this.canChangeEmail() && !this.isProtectedAccount() && !this.lockedForViewer() ? { firstName: this.firstName().trim(), lastName: this.lastName().trim() || null, email: this.email().trim() } : { firstName: this.firstName().trim(), lastName: this.lastName().trim() || null };
 
     this.api.updateProfile(userId, request).subscribe({
       next: () => this.savingProfile.set(false),
@@ -430,6 +520,8 @@ export class UserFormPage {
     this.firstName.set(user.firstName);
     this.lastName.set(user.lastName ?? '');
     this.isActive.set(user.isActive);
+    this.isProtectedAccount.set(user.isProtected);
+    this.lockedForViewer.set(user.lockedForViewer);
     this.selectedRoleIds.set(new Set(user.roles.map((role) => role.id)));
   }
 

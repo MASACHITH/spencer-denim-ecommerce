@@ -8,6 +8,7 @@ import {
 } from '@angular/core';
 import { DOCUMENT } from '@angular/common';
 
+import { focusEditForm } from '../../core/shell/focus-edit-form';
 import { AdminPromoApi } from '../../core/marketing/admin-promo-api';
 import {
   AdminPromoCode,
@@ -646,6 +647,7 @@ export class PromoCodesPage {
     this.isActive.set(promoCode.isActive);
     this.fieldErrors.set({});
     this.announce(`Editing ${promoCode.code}.`);
+    focusEditForm(this.document, this.injector, 'promo-code');
   }
 
   /**

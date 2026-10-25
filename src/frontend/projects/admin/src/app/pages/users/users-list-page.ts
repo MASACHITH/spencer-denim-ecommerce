@@ -127,7 +127,23 @@ const PAGE_SIZE = 25;
                     <td class="users__row-actions">
                       @if (canManage()) {
                         <a class="users__link" [routerLink]="['/users', row.id]">Edit</a>
-                        @if (row.isActive) {
+                        @if (row.isActive && row.isProtected) {
+                          <span
+                            class="users__protected"
+                            title="This account is protected. It can never be deactivated."
+                            data-testid="protected-note"
+                          >
+                            Protected
+                          </span>
+                        } @else if (row.lockedForViewer) {
+                          <span
+                            class="users__protected"
+                            title="Only the technical owner's account can activate or deactivate this account."
+                            data-testid="locked-note"
+                          >
+                            Managed by the technical owner
+                          </span>
+                        } @else if (row.isActive) {
                           <button
                             class="users__toggle"
                             type="button"
@@ -246,6 +262,7 @@ const PAGE_SIZE = 25;
     .users__table td { padding: var(--space-1-5); text-align: left; vertical-align: top; border-bottom: 1px solid var(--color-border); }
     .users__table th { font-size: var(--text-label); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--color-text-muted); background: var(--color-bg-alt); white-space: nowrap; }
     .users__muted { color: var(--color-text-muted); }
+    .users__protected { display: inline-flex; align-items: center; min-height: var(--tap); padding-inline: var(--space-1); font-size: var(--text-small); color: var(--color-text-muted); }
 
     .users__roles { display: flex; flex-wrap: wrap; gap: var(--space-0-5); margin: 0; padding: 0; list-style: none; }
     .users__role-badge { padding: 2px var(--space-1); font-size: var(--text-small); color: var(--color-text); background: var(--color-bg-alt); border: 1px solid var(--color-border); white-space: nowrap; }

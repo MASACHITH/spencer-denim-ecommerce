@@ -38,15 +38,16 @@ internal sealed class AdminCustomerReader(AppDbContext dbContext) : IAdminCustom
     public async Task<AdminCustomerListPage> ReadListAsync(
         AdminCustomerSearchTerm? search,
         int? districtId,
+        string? countryCode,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
-        var total = await Matching(search, districtId).CountAsync(cancellationToken);
+        var total = await Matching(search, districtId, countryCode).CountAsync(cancellationToken);
 
         var rows = total == 0
             ? []
-            : await PageQuery(search, districtId, page, pageSize).ToListAsync(cancellationToken);
+            : await PageQuery(search, districtId, countryCode, page, pageSize).ToListAsync(cancellationToken);
 
         var districts = await dbContext.Districts
             .AsNoTracking()
@@ -54,6 +55,8 @@ internal sealed class AdminCustomerReader(AppDbContext dbContext) : IAdminCustom
             .ThenBy(district => district.Name)
             .Select(district => new AdminDistrictOption(district.Id, district.Name))
             .ToListAsync(cancellationToken);
+
+        var countries = await CountryOptionsAsync(cancellationToken);
 
         return new AdminCustomerListPage(
             rows
@@ -75,7 +78,43 @@ internal sealed class AdminCustomerReader(AppDbContext dbContext) : IAdminCustom
             page,
             pageSize,
             total,
-            districts);
+            districts,
+            countries);
+    }
+
+    /// <summary>
+    /// Sri Lanka, then every other country a customer's default saved address is in, by name. Read off the
+    /// addresses (the filtered unique index <c>UX_CustomerAddresses_UserId_Default</c> keeps this to one row per
+    /// customer) rather than off <c>ref.Countries</c>, so the box never offers a place that would return nobody.
+    /// </summary>
+    private async Task<IReadOnlyList<AdminCountryOption>> CountryOptionsAsync(CancellationToken cancellationToken)
+    {
+        var present = await dbContext.CustomerAddresses
+            .AsNoTracking()
+            .Where(address => address.IsDefault)
+            .Select(address => new { address.CountryCode, address.Country!.Name })
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        var options = present
+            .Select(country => new AdminCountryOption(country.CountryCode, country.Name))
+            .ToList();
+
+        if (options.TrueForAll(option => option.Code != Domain.Reference.Country.SriLankaCode))
+        {
+            var sriLanka = await dbContext.Countries
+                .AsNoTracking()
+                .Where(country => country.Code == Domain.Reference.Country.SriLankaCode)
+                .Select(country => new AdminCountryOption(country.Code, country.Name))
+                .SingleOrDefaultAsync(cancellationToken);
+
+            if (sriLanka is not null)
+            {
+                options.Add(sriLanka);
+            }
+        }
+
+        return options.OrderBy(option => option.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
     }
 
     public async Task<AdminCustomerDetailDto?> ReadDetailAsync(int customerId, CancellationToken cancellationToken)
@@ -229,9 +268,10 @@ internal sealed class AdminCustomerReader(AppDbContext dbContext) : IAdminCustom
     internal IQueryable<CustomerShape> PageQuery(
         AdminCustomerSearchTerm? search,
         int? districtId,
+        string? countryCode,
         int page,
         int pageSize) =>
-        Matching(search, districtId)
+        Matching(search, districtId, countryCode)
             // Newest registration first: IX_Users_UserType_CreatedAtUtc is keyed (UserType, CreatedAtUtc),
             // so the unfiltered list is an ordered range read of the customer half of that index. The id
             // breaks ties so paging is stable.
@@ -276,13 +316,21 @@ internal sealed class AdminCustomerReader(AppDbContext dbContext) : IAdminCustom
             .AsNoTracking()
             .Where(user => user.UserType == UserType.Customer);
 
-    private IQueryable<Identity.AppUser> Matching(AdminCustomerSearchTerm? search, int? districtId)
+    private IQueryable<Identity.AppUser> Matching(AdminCustomerSearchTerm? search, int? districtId, string? countryCode)
     {
         var customers = Customers();
 
         if (districtId is { } district)
         {
             customers = customers.Where(user => user.DefaultDistrictId == district);
+        }
+
+        if (countryCode is { Length: > 0 } country)
+        {
+            // The country the list shows on each row: that of the default saved address. A customer with no
+            // saved address is in no country, so a country filter never returns them.
+            customers = customers.Where(user => dbContext.CustomerAddresses.Any(address =>
+                address.UserId == user.Id && address.IsDefault && address.CountryCode == country));
         }
 
         if (search is null)

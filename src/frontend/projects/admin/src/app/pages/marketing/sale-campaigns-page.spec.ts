@@ -602,6 +602,10 @@ describe('SaleCampaignsPage (ADM-14)', () => {
 
     click('edit-4');
     await settle();
+    TestBed.tick();
+
+    // Edit sits on a row far below the form; without this the press looked like it did nothing.
+    expect(document.activeElement).toBe(element.querySelector('[data-testid="campaign-name"]'));
 
     const chips = element.querySelectorAll('[data-testid="campaign-targets"] li');
 

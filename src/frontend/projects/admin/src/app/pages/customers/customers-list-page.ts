@@ -11,7 +11,11 @@ import { DOCUMENT } from '@angular/common';
 import { RouterLink } from '@angular/router';
 
 import { AdminCustomerApi } from '../../core/customers/admin-customer-api';
-import { AdminCustomerListPage, AdminDistrictOption } from '../../core/customers/admin-customer.model';
+import {
+  AdminCountryOption,
+  AdminCustomerListPage,
+  AdminDistrictOption,
+} from '../../core/customers/admin-customer.model';
 import { colomboDate, money } from '../../core/orders/order-formatting';
 import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catalog-api';
 
@@ -63,25 +67,52 @@ const PAGE_SIZE = 25;
         </p>
 
         <label class="adm-field adm-field--wide">
-          <span class="adm-label">Default district</span>
+          <span class="adm-label">Country</span>
           <select
             class="adm-input"
-            name="district"
-            data-testid="customer-district"
-            (change)="chooseDistrict($event)"
+            name="country"
+            aria-describedby="customer-country-hint"
+            data-testid="customer-country"
+            (change)="chooseCountry($event)"
           >
-            <option value="" [selected]="districtId() === null">Every district</option>
-            @for (district of districts(); track district.id) {
-              <option [value]="district.id" [selected]="districtId() === district.id">
-                {{ district.name }}
+            <option value="" [selected]="countryCode() === null">Every country</option>
+            @for (country of countryChoices(); track country.code) {
+              <option [value]="country.code" [selected]="countryCode() === country.code">
+                {{ country.name }}
               </option>
             }
           </select>
         </label>
+        <p class="adm-panel__hint" id="customer-country-hint">
+          The country of the customer's default saved address. A customer with no saved address is in no country.
+        </p>
+
+        @if (districtApplies()) {
+          <label class="adm-field adm-field--wide">
+            <span class="adm-label">Default district</span>
+            <select
+              class="adm-input"
+              name="district"
+              data-testid="customer-district"
+              (change)="chooseDistrict($event)"
+            >
+              <option value="" [selected]="districtId() === null">Every district</option>
+              @for (district of districts(); track district.id) {
+                <option [value]="district.id" [selected]="districtId() === district.id">
+                  {{ district.name }}
+                </option>
+              }
+            </select>
+          </label>
+        } @else {
+          <p class="adm-panel__hint" data-testid="customer-district-note">
+            Districts are Sri Lankan, so the district filter is hidden while another country is chosen.
+          </p>
+        }
 
         <div class="adm-actions">
           <button class="adm-btn--primary" type="submit" data-testid="customer-search-submit">Search</button>
-          @if (searchApplied() || districtId() !== null) {
+          @if (searchApplied() || districtId() !== null || countryCode() !== null) {
             <button class="adm-btn" type="button" data-testid="customer-search-clear" (click)="clear()">
               Clear
             </button>
@@ -257,8 +288,24 @@ export class CustomersListPage {
 
   /** The filter's options, kept across a failed read so the select does not empty itself. */
   protected readonly districts = signal<readonly AdminDistrictOption[]>([]);
+  protected readonly countries = signal<readonly AdminCountryOption[]>([]);
 
   protected readonly districtId = signal<number | null>(null);
+  /** The chosen country's ISO code, or null for every country. */
+  protected readonly countryCode = signal<string | null>(null);
+
+  /** The server's countries, plus the chosen one if a later answer no longer lists it, so the box never says "Every country" while one is still sent. */
+  protected readonly countryChoices = computed<readonly AdminCountryOption[]>(() => {
+    const chosen = this.countryCode();
+    const listed = this.countries();
+
+    return chosen === null || listed.some((country) => country.code === chosen)
+      ? listed
+      : [...listed, { code: chosen, name: chosen }];
+  });
+
+  /** A district belongs to Sri Lanka: it is offered for every country and for Sri Lanka, never for another. */
+  protected readonly districtApplies = computed(() => this.countryCode() === null || this.countryCode() === 'LK');
   protected readonly searchText = signal('');
   protected readonly searchApplied = signal('');
 
@@ -283,15 +330,21 @@ export class CustomersListPage {
   protected readonly emptyMessage = computed(() => {
     const term = this.searchApplied();
     const district = this.districtName();
+    const country = this.countryName();
+    const where = district ?? country;
 
     if (term.length > 0) {
-      return `No customer matches “${term}”${district ? ` in ${district}` : ''}. A guest who never `
+      return `No customer matches “${term}”${where ? ` in ${where}` : ''}. A guest who never `
         + 'registered is not a customer account — search the Orders screen by email instead.';
     }
 
-    return district === null
+    if (district !== null) {
+      return `No customer has chosen ${district} as their default district.`;
+    }
+
+    return country === null
       ? 'No customer has registered yet.'
-      : `No customer has chosen ${district} as their default district.`;
+      : `No customer's default saved address is in ${country}.`;
   });
 
   constructor() {
@@ -327,10 +380,27 @@ export class CustomersListPage {
     this.load(1, district === null ? 'Showing every district.' : `Showing customers in ${district}.`);
   }
 
+  /**
+   * A country applies at once, for the district's reason. Choosing another country than Sri Lanka also drops
+   * the district, which no longer applies to it and would otherwise keep filtering unseen.
+   */
+  protected chooseCountry(event: Event): void {
+    const value = (event.target as HTMLSelectElement | null)?.value ?? '';
+    this.countryCode.set(value === '' ? null : value);
+
+    if (!this.districtApplies()) {
+      this.districtId.set(null);
+    }
+
+    const country = this.countryName();
+    this.load(1, country === null ? 'Showing every country.' : `Showing customers in ${country}.`);
+  }
+
   protected clear(): void {
     this.searchText.set('');
     this.searchApplied.set('');
     this.districtId.set(null);
+    this.countryCode.set(null);
     this.load(1, 'Search cleared.');
   }
 
@@ -348,6 +418,11 @@ export class CustomersListPage {
 
   protected reload(): void {
     this.load(this.page()?.page ?? 1);
+  }
+
+  private countryName(): string | null {
+    const code = this.countryCode();
+    return code === null ? null : (this.countries().find((country) => country.code === code)?.name ?? null);
   }
 
   private districtName(): string | null {
@@ -370,6 +445,7 @@ export class CustomersListPage {
       .list({
         search: this.searchApplied().length === 0 ? null : this.searchApplied(),
         districtId: this.districtId(),
+        countryCode: this.countryCode(),
         page,
         pageSize: PAGE_SIZE,
       })
@@ -377,6 +453,7 @@ export class CustomersListPage {
         next: (answered) => {
           this.page.set(answered);
           this.districts.set(answered.districts);
+          this.countries.set(answered.countries);
           this.isLoading.set(false);
           this.announce(this.summarise(answered));
           this.rehomeFocusIfLost(focused);

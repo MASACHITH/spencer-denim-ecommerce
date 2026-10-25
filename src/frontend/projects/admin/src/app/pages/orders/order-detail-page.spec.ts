@@ -622,6 +622,19 @@ describe('OrderDetailPage (ADM-09)', () => {
     expect(history).toContain('the amount is short');
   });
 
+  it('shows the tracking number as a coloured link that says it opens in a new tab', async () => {
+    await open();
+
+    const link = element.querySelector<HTMLAnchorElement>('[data-testid="tracking-link"]')!;
+
+    expect(link.textContent).toContain('TRACK-0001');
+    expect(link.classList.contains('adm-link--external')).toBe(true);
+    expect(link.getAttribute('href')).toBe('https://track.example.test/TRACK-0001');
+    expect(link.getAttribute('target')).toBe('_blank');
+    expect(link.getAttribute('rel')).toContain('noopener');
+    expect(link.querySelector('.sr-only')?.textContent).toContain('new tab');
+  });
+
   it('selects the courier by the dispatch’s id, not by its snapshotted name', async () => {
     // The order shipped with "A carrier" and the courier has since been renamed. The snapshot is what the
     // order shows; the id is what the form selects by — matching on the name came up blank here, on an

@@ -17,6 +17,7 @@ import {
   blankToNull,
 } from '../../core/account/account.model';
 import { privatePage } from '../../core/platform/private-page';
+import { LegalLinks } from '../../ui/legal-links/legal-links';
 
 /**
  * Create an account (ACC-01, doc 11 P11 step A).
@@ -66,7 +67,7 @@ import { privatePage } from '../../core/platform/private-page';
  */
 @Component({
   selector: 'sd-register-page',
-  imports: [AccountNotice, RouterLink],
+  imports: [AccountNotice, LegalLinks, RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="container acc acc--narrow">
@@ -207,6 +208,20 @@ import { privatePage } from '../../core/platform/private-page';
             <p class="acc-error" id="rg-phone-error">{{ message }}</p>
           }
         </div>
+
+        <!-- Issue #252: consent where an account is made. Linked pages only: with neither published there is
+             no sentence at all, rather than one that points nowhere, and the empty host takes no row of the
+             form's grid (legal-links.ts hides it with :empty). The links open in a NEW TAB (newTab): the form's
+             values live in component state, and following a link in this tab would throw away what was typed. -->
+        <sd-legal-links
+          class="acc-hint"
+          data-testid="register-consent"
+          termsLead="By creating an account you agree to our"
+          privacyLead="How we use your details is explained in our"
+          [terms]="true"
+          [privacy]="true"
+          [newTab]="true"
+        />
 
         <div class="acc-actions">
           <button

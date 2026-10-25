@@ -152,6 +152,32 @@ public abstract class AdminCustomerTestBase(SqlServerDatabaseFixture sqlServer)
         return address.Id;
     }
 
+    /// <summary>Saves an overseas address, which has no district, for this customer.</summary>
+    protected async Task<int> AddOverseasAddressAsync(int userId, string countryCode, bool isDefault)
+    {
+        using var scope = SqlServer.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var address = new CustomerAddress
+        {
+            UserId = userId,
+            RecipientName = "Overseas Recipient",
+            Phone = "+447700900123",
+            Line1 = "1 Example Street",
+            City = "London",
+            CountryCode = countryCode,
+            DistrictId = null,
+            PostalCode = "N1 1AA",
+            IsDefault = isDefault,
+            CreatedAtUtc = DateTime.UtcNow,
+        };
+
+        db.CustomerAddresses.Add(address);
+        await db.SaveChangesAsync(Token);
+
+        return address.Id;
+    }
+
     /// <summary>Places one real order through the public checkout, as a guest, with this email.</summary>
     protected async Task<PlacedOrder> PlaceOrderAsync(MediaTestHost host, string email, string firstName = "Nimali")
     {

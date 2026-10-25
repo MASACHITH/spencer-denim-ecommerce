@@ -12,10 +12,19 @@ export interface AdminCustomerListPage {
   readonly totalCount: number;
   /** The district filter's options, from the server, so the screen invents none. */
   readonly districts: readonly AdminDistrictOption[];
+  /** The country filter's options: Sri Lanka and every country a customer's default address is in. */
+  readonly countries: readonly AdminCountryOption[];
 }
 
 export interface AdminDistrictOption {
   readonly id: number;
+  readonly name: string;
+}
+
+/** A country the list can be filtered by (UAT feedback, 2026-10-24). */
+export interface AdminCountryOption {
+  /** ISO 3166-1 alpha-2, e.g. `GB`. */
+  readonly code: string;
   readonly name: string;
 }
 

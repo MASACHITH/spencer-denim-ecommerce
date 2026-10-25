@@ -10,8 +10,8 @@ using SpencerDenim.Application.Ops.Alerts.Contracts;
 namespace SpencerDenim.Api.Endpoints.Admin;
 
 /// <summary>
-/// The admin shell's alert banner and its acknowledge (doc 08 §3.8 N2; ADM-04's banner, built in the
-/// shell rather than on the dashboard — see <c>AlertBanner</c> in the admin app).
+/// The admin shell's alerts and their acknowledge (doc 08 §3.8 N2; ADM-04's banner, built in the shell
+/// rather than on the dashboard, and drawn as the bell in the header — see <c>AlertBell</c> in the admin app).
 /// <para>
 /// <b>Doc 08 §3.8 R10 decides what comes back, per caller, inside the use case.</b> The route guard only
 /// has to let a caller who could hold <i>any</i> alert in at all: GrantsAll holders see every type, and

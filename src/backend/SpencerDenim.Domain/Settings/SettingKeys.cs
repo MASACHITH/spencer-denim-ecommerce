@@ -5,8 +5,8 @@ namespace SpencerDenim.Domain.Settings;
 /// is the authority for the names; these are the subset with a screen behind them.
 /// <para>
 /// <b>What is deliberately absent, and why that is not an oversight.</b> Doc 08 §3.8's "Groups" table
-/// has fifteen rows — counted from the table; "sixteen" is §3.1's module list, which is a different
-/// thing — and names 59 keys, of which this build seeds 45 (issue #193 added <c>Social.YouTubeUrl</c> and the
+/// has sixteen rows (counted from the table since #248 added Currency.Display; §3.1's module list is a different
+/// thing, and happens to have the same length) and names 64 keys, of which this build seeds 50 (issue #248 added the five <c>Currency.Display.*</c> rates; issue #193 added <c>Social.YouTubeUrl</c> and the
 /// two <c>Traffic.*</c> retention periods; issue #189 <c>Reviews.RequireApproval</c>; ADM-22's 2026-10-21 work the
 /// seven <c>Email.Smtp.*</c> keys; issue #33 the two <c>Content.Pdp*</c> product-page texts). <see cref="DeferredSettingKeys"/>
 /// is the per-key record of the other 14 and is machine-checked against the document (<c>SettingKeySpecificationTests</c>); the paragraphs below
@@ -299,6 +299,62 @@ public static partial class SettingKeys
         /// figure, so keeping them longer than people's views has no use.
         /// </summary>
         public const int BotRetentionDaysMax = 90;
+    }
+
+    /// <summary>
+    /// The exchange rates the storefront uses to <b>show</b> a price in USD, GBP, EUR, AUD or AED (issue #248,
+    /// docs/02's decision of 2026-10-24). Display only: nothing here is read by checkout, an order, a report or
+    /// PayPal, which goes on charging the USD equivalent of the LKR total at <c>Payments.PayPal.LkrPerUsd</c>.
+    /// <para>
+    /// <b>One row per currency, holding what one unit of that currency costs in rupees</b> (so 399.5 for the
+    /// pound means a price of Rs. 7,990 reads as £20). A rate's age is the row's own <c>UpdatedAtUtc</c>, which
+    /// the save stamps, so there is no separate timestamp key. <b>Seeded empty</b>: a rate is a fact only the
+    /// owner has, and a plausible-looking default would put a wrong price on a product page. A currency with no
+    /// rate is simply not offered to shoppers.
+    /// </para>
+    /// <para>
+    /// <b>Not under <c>Payments.*</c> on purpose.</b> Doc 08 §3.8 gives every <c>Payments.*</c> key
+    /// <c>Settings.Payments</c> and a sensitive-change alert to the Super Admins; these are a weekly chore for a
+    /// Store Manager and move no money, so they sit under <c>Settings.Edit</c> and raise no alert. The save is
+    /// still audited, one row per changed rate.
+    /// </para>
+    /// </summary>
+    public static class CurrencyDisplay
+    {
+        public const string Group = "Currency.Display";
+
+        /// <summary>Rupees for one US dollar, for display only. Not the PayPal rate.</summary>
+        public const string UsdLkrPerUnit = "Currency.Display.UsdLkrPerUnit";
+
+        /// <summary>Rupees for one pound sterling.</summary>
+        public const string GbpLkrPerUnit = "Currency.Display.GbpLkrPerUnit";
+
+        /// <summary>Rupees for one euro.</summary>
+        public const string EurLkrPerUnit = "Currency.Display.EurLkrPerUnit";
+
+        /// <summary>Rupees for one Australian dollar.</summary>
+        public const string AudLkrPerUnit = "Currency.Display.AudLkrPerUnit";
+
+        /// <summary>Rupees for one UAE dirham.</summary>
+        public const string AedLkrPerUnit = "Currency.Display.AedLkrPerUnit";
+
+        /// <summary>
+        /// The most decimal places a rate may carry. Four is what a rate quote shows (the dirham is about
+        /// Rs. 82.2750), and more would only be false precision on an approximate price.
+        /// </summary>
+        public const int MaxDecimalPlaces = 4;
+
+        /// <summary>
+        /// A rate must be greater than this (zero), so a rate can never divide a price into nothing or flip
+        /// its sign. Exclusive.
+        /// </summary>
+        public const decimal MinRateExclusive = 0m;
+
+        /// <summary>
+        /// One million rupees to one unit. Far above any real currency's rate against the rupee, and low enough
+        /// that a mistyped figure (an extra three zeros) is refused rather than shown as a price.
+        /// </summary>
+        public const decimal MaxRate = 1_000_000m;
     }
 
     /// <summary>

@@ -8,6 +8,7 @@ import {
 } from '@angular/core';
 import { DOCUMENT } from '@angular/common';
 
+import { focusEditForm } from '../../core/shell/focus-edit-form';
 import { AdminOrderApi } from '../../core/orders/admin-order-api';
 import { AdminCourier, TRACKING_NUMBER_PLACEHOLDER } from '../../core/orders/admin-order.model';
 import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catalog-api';
@@ -357,6 +358,7 @@ export class CouriersPage {
     this.isActive.set(courier.isActive);
     this.fieldErrors.set({});
     this.announce(`Editing ${courier.name}.`);
+    focusEditForm(this.document, this.injector, 'courier-name');
   }
 
   /**

@@ -63,7 +63,7 @@ public sealed record SettingDefinition(
 /// <b>This is the allow-list, in both directions.</b> The seeder creates exactly these rows, and a key
 /// that is not here has no row — so a write path cannot reach one, a read model cannot project one, and
 /// the question "which permission guards this key" always has an answer that came from source rather
-/// than from a caller. <see cref="DeferredSettingKeys"/> records every key of doc 08 §3.8's fifteen
+/// than from a caller. <see cref="DeferredSettingKeys"/> records every key of doc 08 §3.8's sixteen
 /// groups that this build does not seed, and why, and a test diffs both lists against the document
 /// itself.
 /// </para>
@@ -321,6 +321,11 @@ public static class SettingCatalog
             SeedValue: SettingKeys.Traffic.BotRetentionDaysDefault.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)),
 
+        // Group Currency.Display (doc 08 §3.8; issue #248): the five rates the storefront uses to show a price in
+        // USD, GBP, EUR, AUD or AED. Display only, Settings.Edit, seeded empty (a rate is a fact only the owner has).
+        // Their own file, derived from the one table of currencies.
+        .. CurrencySettingDefinitions.All,
+
         // Group Reviews (doc 08 §3.8, doc 11 P12; issue #189). Seeded "true", doc 08's own "(true)", so a new
         // database starts with every review waiting for a moderator. The seeder never overwrites a saved value.
         new(
@@ -408,6 +413,14 @@ public static class SettingCatalog
         // The two retention periods: one form, one permission (Settings.Edit), and a cross-field rule (bots never
         // longer than people) that only holds if both are compared under one token.
         [SettingKeys.Traffic.Group],
+
+        // The five display rates (issue #248): one form, one permission (Settings.Edit). One token for all five, so
+        // a screen that read the rates before somebody else's save is refused (409) and told to reload, instead of
+        // saving over what it never saw. That is a check on a stale read, not a lock: two saves that read the same
+        // version and arrive together, on DIFFERENT currencies, both succeed, and no value is lost, because each
+        // writes only its own rows. Two that touch the SAME currency collide on that row's own row version and the
+        // second is refused.
+        [SettingKeys.CurrencyDisplay.Group],
 
         // The review approval switch (issue #189): one form, one permission (Settings.Edit).
         [SettingKeys.Reviews.Group],
