@@ -83,7 +83,8 @@ public static class AdminWriteRequest
             }
 
             // Issue #147: a record is built from the strings it binds while it is read, so text that cannot be decoded
-            // in one of those already fails above as a JsonException. A JsonObject (29 of the 44 callers) is parsed
+            // in one of those already fails above as a JsonException. A JsonObject (most callers: 30 of 44 call sites
+            // when last counted, with `grep -rn "ReadJsonAsync<JsonObject>" src`) is parsed
             // lazily and hands its problems to whichever handler first reads it, as a 500: text that cannot be
             // decoded, and a property named twice. Reading all of it here puts both in the same place as a record's.
             if (body is JsonNode node && FindUnreadableContent(node) is { } unreadable)

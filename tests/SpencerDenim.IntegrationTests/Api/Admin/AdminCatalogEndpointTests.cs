@@ -363,7 +363,8 @@ public sealed class AdminCatalogEndpointTests(SqlServerDatabaseFixture sqlServer
 
     /// <summary>
     /// Issue <b>#147</b>, the second trigger, on a route whose body is a <c>JsonObject</c> (the promo-code create
-    /// route; 29 of the 44 callers of the shared reader). The object is parsed lazily, so bytes that are not UTF-8 and
+    /// route; most callers of the shared reader read one: 30 of 44 call sites when last counted). The object is
+    /// parsed lazily, so bytes that are not UTF-8 and
     /// an escaped lone surrogate used to reach the handler and fail there, as a <b>500</b>, the first time it read a
     /// string. A record-bodied route (the category create above) was already a 400, which is why the first fix missed it.
     /// </summary>
