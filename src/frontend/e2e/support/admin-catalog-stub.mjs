@@ -40,6 +40,16 @@ import { freshInventoryState, handleInventoryRoute } from './admin-inventory-stu
 import { freshReviewState, handleReviewRoute } from './admin-review-stub.mjs';
 import { addManyProducts, freshProductState, handleProductRoute } from './admin-product-stub.mjs';
 import { handleDeliveryRoute } from './admin-delivery-stub.mjs';
+import {
+  DISPLAY_CURRENCIES,
+  MISSING_ROW_VERSION_MESSAGE,
+  STALE_ROW_VERSION_MESSAGE,
+  canonicalCurrencyRate,
+  checkCurrencyRate,
+  currencyRateMessage,
+  findFieldKey,
+  repeatedNames,
+} from './currency-rate-rules.mjs';
 
 const PORT = Number(process.env.E2E_ADMIN_PORT ?? 4430);
 const DIST = resolve(process.env.E2E_ADMIN_DIST ?? 'dist/admin/browser');
@@ -1229,6 +1239,10 @@ function freshState() {
       'Bank.AccountNumber': null,
       'Bank.Instructions': null,
     },
+    // Issue #248: when each settings row last changed (the real row's UpdatedAtUtc), set when a save changes a
+    // value and by `/__test__/currency-age`; a row nobody has written reads null, like the real seeder's.
+    settingsUpdatedAt: {},
+    currencyHidden: false,
     logo: null,
     uploads: new Map(),
 
@@ -1666,6 +1680,18 @@ function settingsPayload(state) {
     // Issue #189: the review approval switch. Settings.Edit, its own save unit.
     { groupKey: 'Reviews', keys: ['Reviews.RequireApproval'], types: { 'Reviews.RequireApproval': 'Bool' } },
 
+    // Issue #248: the five display-currency rates. Settings.Edit, Decimal, its own save unit. Absent when
+    // `/__test__/currency-hidden` says the signed-in user may not read it, as the real read model leaves it out.
+    ...(state.currencyHidden
+      ? []
+      : [
+          {
+            groupKey: 'Currency.Display',
+            keys: DISPLAY_CURRENCIES.map((currency) => currency.key),
+            types: Object.fromEntries(DISPLAY_CURRENCIES.map((currency) => [currency.key, 'Decimal'])),
+          },
+        ]),
+
     // Issue #33: the product page texts. Settings.Edit, TextHtml, its own save unit.
     {
       groupKey: 'Content',
@@ -1737,6 +1763,10 @@ function settingsPayload(state) {
       return ['Reviews.RequireApproval'];
     }
 
+    if (groupKey === 'Currency.Display') {
+      return DISPLAY_CURRENCIES.map((currency) => currency.key);
+    }
+
     if (groupKey === 'Content') {
       return ['Content.PdpDeliveryInfoHtml', 'Content.PdpReturnsInfoHtml'];
     }
@@ -1764,7 +1794,7 @@ function settingsPayload(state) {
         hasValue: Boolean(state.settings[key]),
         requiredPermission: group.permission ?? 'Settings.Edit',
         description: `What ${key} is for.`,
-        updatedAtUtc: null,
+        updatedAtUtc: state.settingsUpdatedAt?.[key] ?? null,
       })),
     })),
     logo: state.logo,
@@ -2244,6 +2274,25 @@ const server = createServer(async (request, response) => {
   // the rule the site-settings and bank-transfer switches already follow.
   // Test-only (ADM-22, 2026-10-21): `hidden=yes` leaves the Email.Smtp group out, as the real read model does for
   // anybody who is not a Super Admin; `outcome=refused` makes the next test send fail as a refused password does.
+  // Test-only (issue #248): `hidden=yes` leaves the Currency.Display group out, as the real read model does for a
+  // caller without Settings.Edit; `field=gbp&days=45` makes that rate's row look last changed 45 days ago.
+  if (path === '/__test__/currency-hidden') {
+    state.currencyHidden = url.searchParams.get('hidden') === 'yes';
+    return json(response, 200, { hidden: state.currencyHidden });
+  }
+
+  if (path === '/__test__/currency-age') {
+    const currency = DISPLAY_CURRENCIES.find((candidate) => candidate.field === url.searchParams.get('field'));
+    const days = Number(url.searchParams.get('days'));
+
+    if (!currency || !Number.isFinite(days)) {
+      return problem(response, 400, 'Bad test request', 'Send field=usd|gbp|eur|aud|aed and days=N.', 'bad_test_request');
+    }
+
+    state.settingsUpdatedAt[currency.key] = new Date(Date.now() - days * 86_400_000).toISOString();
+    return json(response, 200, { key: currency.key, updatedAtUtc: state.settingsUpdatedAt[currency.key] });
+  }
+
   if (path === '/__test__/smtp-hidden') {
     state.smtpHidden = url.searchParams.get('hidden') === 'yes';
     return json(response, 200, { hidden: state.smtpHidden });
@@ -3103,6 +3152,85 @@ const server = createServer(async (request, response) => {
     }
 
     return json(response, 200, { sentTo: SESSION.email });
+  }
+
+  // Issue #248: the display-currency rates. Mirrors UpdateCurrencyRatesCommandHandler's rules and order: field
+  // errors, then the row version, then the diff. A field the body leaves out is untouched; an empty or null one
+  // CLEARS that rate. The rule itself is currency-rate-rules.mjs, tied to the API's by currency-rate-cases.json.
+  if (path === '/api/admin/settings/currency-rates' && request.method === 'PUT') {
+    const body = await readBody(request);
+    if (body === undefined || body === null) {
+      return problem(response, 400, 'Malformed JSON', 'The request body is not valid JSON.', 'malformed_json');
+    }
+
+    // The real reader is case-insensitive: {"Usd":"333"} is the dollar, and one name twice in two cases is a 400.
+    if (repeatedNames(body)) {
+      return problem(response, 400, 'Malformed JSON', 'The request body repeats a property name.', 'malformed_json');
+    }
+
+    const errors = {};
+    const wanted = {};
+
+    for (const currency of DISPLAY_CURRENCIES) {
+      const sent = findFieldKey(body, currency.field);
+
+      if (sent === undefined) {
+        continue;
+      }
+
+      const raw = body[sent];
+
+      if (raw !== null && typeof raw !== 'string') {
+        errors[currency.field] = ['Send this field as text, or as null to clear it.'];
+        continue;
+      }
+
+      const text = raw === null ? '' : raw.trim();
+
+      if (text === '') {
+        wanted[currency.key] = null;
+        continue;
+      }
+
+      const problemName = checkCurrencyRate(text);
+
+      if (problemName === 'none') {
+        wanted[currency.key] = canonicalCurrencyRate(text);
+      } else {
+        errors[currency.field] = [currencyRateMessage(problemName, currency)];
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      return json(response, 400, { title: 'One or more fields are invalid.', status: 400, errors });
+    }
+
+    const sentVersion = body[findFieldKey(body, 'rowVersion') ?? 'rowVersion'];
+
+    if (sentVersion !== settingsToken(state, 'Currency.Display')) {
+      // The handler tells "no usable token" from "a token that is not the current one"; the table holds both sentences.
+      const carried = typeof sentVersion === 'string' && sentVersion.trim() !== '';
+
+      return problem(
+        response,
+        409,
+        'This change cannot be applied',
+        carried ? STALE_ROW_VERSION_MESSAGE : MISSING_ROW_VERSION_MESSAGE,
+        'stale_row_version',
+      );
+    }
+
+    for (const [key, value] of Object.entries(wanted)) {
+      // The diff: a rate asked for in the form it is already stored in writes nothing and does not re-date it.
+      if ((state.settings[key] ?? null) === value) {
+        continue;
+      }
+
+      state.settings[key] = value;
+      state.settingsUpdatedAt[key] = new Date().toISOString();
+    }
+
+    return noContent(response);
   }
 
   if (path === '/api/admin/settings/traffic' && request.method === 'PUT') {

@@ -242,6 +242,11 @@ export const SETTING_KEYS = {
   trafficRawRetentionDays: 'Traffic.RawRetentionDays',
   trafficBotRetentionDays: 'Traffic.BotRetentionDays',
   reviewsRequireApproval: 'Reviews.RequireApproval',
+  currencyUsd: 'Currency.Display.UsdLkrPerUnit',
+  currencyGbp: 'Currency.Display.GbpLkrPerUnit',
+  currencyEur: 'Currency.Display.EurLkrPerUnit',
+  currencyAud: 'Currency.Display.AudLkrPerUnit',
+  currencyAed: 'Currency.Display.AedLkrPerUnit',
   smtpHost: 'Email.Smtp.Host',
   smtpPort: 'Email.Smtp.Port',
   smtpUsername: 'Email.Smtp.Username',
@@ -281,12 +286,50 @@ export const SETTING_GROUPS = {
   /** The review approval switch (issue #189): its own panel and save unit, `Settings.Edit`. */
   reviews: 'Reviews',
 
+  /** The five display-currency rates (issue #248): their own panel and save unit, `Settings.Edit`. */
+  currencyDisplay: 'Currency.Display',
+
   /**
    * The mail account (ADM-22, 2026-10-21): its own panel and save unit, `Settings.Security` — Super Admin only,
    * so no other role ever receives this group.
    */
   smtp: 'Email.Smtp',
 } as const;
+
+/**
+ * One currency a shopper may choose to see prices in (issue #248). **The same five, in the same order, as
+ * `DisplayCurrencies.All` on the server**, which is also the order of the public feed and of this panel's rows.
+ *
+ * `field` is the lower-case code, the name of the body field `PUT /api/admin/settings/currency-rates` reads; `key` is
+ * the `ops.Settings` row holding the rate (rupees for one unit).
+ *
+ * **`name` is the name as it reads in the middle of a sentence**, exactly as `DisplayCurrency.Name` on the server has
+ * it ("US dollar", "pound sterling", "euro", "UAE dirham"), and it is used as it stands: lower-casing a capitalised
+ * name at the point of use is how "US dollar" became "us dollar" in the server's own messages. The row's label
+ * capitalises its first letter. `currency-rate-cases.json` holds all five, and both this table and the server's are
+ * tested against it.
+ */
+export const DISPLAY_CURRENCIES = [
+  { code: 'USD', name: 'US dollar', field: 'usd', key: 'Currency.Display.UsdLkrPerUnit' },
+  { code: 'GBP', name: 'pound sterling', field: 'gbp', key: 'Currency.Display.GbpLkrPerUnit' },
+  { code: 'EUR', name: 'euro', field: 'eur', key: 'Currency.Display.EurLkrPerUnit' },
+  { code: 'AUD', name: 'Australian dollar', field: 'aud', key: 'Currency.Display.AudLkrPerUnit' },
+  { code: 'AED', name: 'UAE dirham', field: 'aed', key: 'Currency.Display.AedLkrPerUnit' },
+] as const;
+
+export type CurrencyField = (typeof DISPLAY_CURRENCIES)[number]['field'];
+
+/**
+ * The rates to save (issue #248, group `Currency.Display`, `Settings.Edit`).
+ *
+ * **Only the fields that changed**, the bank group's rule: a field this object omits is one the API leaves alone, a
+ * field it carries as an empty string is one the API **clears** (the currency is then not offered to shoppers).
+ * Those are two different instructions, which is why every key is optional and nothing is filled in with `null`.
+ */
+export type CurrencyRateValues = Readonly<Partial<Record<CurrencyField, string>>>;
+
+/** A rate that has not changed for longer than this many days is flagged on the screen (issue #248's decision). */
+export const CURRENCY_RATE_STALE_AFTER_DAYS = 30;
 
 /**
  * The email account form's text fields, as `PUT /api/admin/settings/email-smtp` names them

@@ -13,6 +13,7 @@ import { BRAND } from '@spencer-denim/shared';
 
 import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catalog-api';
 import { AdminSettingsApi } from '../../core/settings/admin-settings-api';
+import { CurrencyRatesPanel } from './currency-rates-panel';
 import { EmailAccountPanel } from './email-account-panel';
 import {
   AdminLogo,
@@ -61,7 +62,7 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
  */
 @Component({
   selector: 'sda-settings-page',
-  imports: [FormsModule, RouterLink, EmailAccountPanel, PaymentMethodsPanel],
+  imports: [FormsModule, RouterLink, CurrencyRatesPanel, EmailAccountPanel, PaymentMethodsPanel],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="settings">
@@ -729,13 +730,21 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
           </section>
         }
 
+        @if (currencyGroup(); as currency) {
+          <sda-currency-rates-panel
+            [group]="currency"
+            (saved)="onCurrencyRatesChanged()"
+            (reload)="onCurrencyRatesChanged()"
+          />
+        }
+
         @if (smtpGroup(); as smtp) {
           <sda-email-account-panel [group]="smtp" (saved)="onEmailAccountSaved()" />
         }
 
         @if (
           !canEditStore() && !canEditContact() && !canEditBank() && !canEditInvoice() && !canEditPayPal()
-          && !canEditTraffic() && !canEditReviews() && !smtpGroup() && !canEditProductPage()
+          && !canEditTraffic() && !canEditReviews() && !smtpGroup() && !canEditProductPage() && !currencyGroup()
         ) {
           <p class="adm-state" data-testid="nothing-to-edit">
             There are no settings you can change here.
@@ -1287,6 +1296,14 @@ export class SettingsPage {
 
   /** Whether the server sent the `Reviews` group (issue #189, `Settings.Edit`). */
   protected readonly canEditReviews = computed(() => this.hasGroup(SETTING_GROUPS.reviews));
+
+  /**
+   * The display-currency group (issue #248, `Settings.Edit`), or null when the server did not send it. Absent, not
+   * empty, for a caller who may not read it: the read model filters every row by its own permission.
+   */
+  protected readonly currencyGroup = computed(
+    () => this.loaded()?.groups.find((group) => group.groupKey === SETTING_GROUPS.currencyDisplay) ?? null,
+  );
 
   /** The email account group, sent to a Super Admin only (`Settings.Security`). */
   protected readonly smtpGroup = computed(
@@ -1858,6 +1875,11 @@ export class SettingsPage {
     if (input) {
       input.value = '';
     }
+  }
+
+  /** The currency panel saved, or asked for the latest rates after a conflict: re-read, as the email panel's does. */
+  protected onCurrencyRatesChanged(): void {
+    this.refresh();
   }
 
   /** The email account panel saved: its token has moved, so re-read without taking the screen down. */

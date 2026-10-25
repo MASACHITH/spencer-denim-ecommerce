@@ -30,7 +30,7 @@ export const SETTINGS_SECTIONS: readonly GuideSection[] = [
       {
         kind: 'list',
         items: [
-          '**You only see the panels you are allowed to use.** A Store Manager (Settings Edit) sees the Logo, Contact and social, Invoice and fulfilment, Traffic, Product page and Reviews panels. The bank, PayPal and payment-method panels need Settings Payments, and the Email account panel needs Settings Security, which in practice means a Super Admin. With only Settings View (no default role is like that) you see "There are no settings you can change here."',
+          '**You only see the panels you are allowed to use.** A Store Manager (Settings Edit) sees the Logo, Contact and social, Invoice and fulfilment, Traffic, Product page, Reviews and Display currencies panels. The bank, PayPal and payment-method panels need Settings Payments, and the Email account panel needs Settings Security, which in practice means a Super Admin. With only Settings View (no default role is like that) you see "There are no settings you can change here."',
           '**Secrets** (the PayPal client secret, the email password) show an empty box with "A secret is saved. Type a new one to replace it." Leaving the box empty keeps the saved one. The value is stored encrypted and never shown again.',
           'If someone else saved the same panel first, your save is refused ("Somebody else changed the email account while you were editing it. Reload the page to see what they changed.") and you reload and try again.',
           'Every saved change is recorded in the [Audit log](#audit-log), key by key, with secrets shown only as "[secret changed]".',
@@ -40,7 +40,7 @@ export const SETTINGS_SECTIONS: readonly GuideSection[] = [
       {
         kind: 'callout',
         tone: 'note',
-        text: 'You cannot add a setting. The Settings screen shows a fixed list of 45 settings, grouped into the panels below. A new one appears only when a new version of the software is installed. If a setting is missing in the database, saving fails with a general "Something went wrong" message: tell your developer to run the settings seeder. Things that are not on the screen (see the end of this section) are set by your developer on the server.',
+        text: 'You cannot add a setting. The Settings screen shows a fixed list of 50 settings, grouped into the panels below. A new one appears only when a new version of the software is installed. If a setting is missing in the database, saving fails with a general "Something went wrong" message: tell your developer to run the settings seeder. Things that are not on the screen (see the end of this section) are set by your developer on the server.',
       },
       { kind: 'heading', text: 'Logo' },
       {
@@ -123,6 +123,20 @@ export const SETTINGS_SECTIONS: readonly GuideSection[] = [
           ['Delivery text, Returns text', 'The two collapsible panels on every product page. See [Delivery and returns text on product pages](#product-page-text).', 'Up to 4,000 characters of HTML each.'],
           ['Approve reviews before they appear', 'On: new and edited reviews wait for you on the [Reviews](#reviews) screen. Off: they appear as soon as written. A review you hid stays hidden either way.', 'Starts on.'],
         ],
+      },
+      { kind: 'heading', text: 'Display currencies' },
+      {
+        kind: 'table',
+        caption: 'Display currencies panel (Settings Edit; saves together)',
+        head: ['Box', 'What to enter', 'Limits and notes'],
+        rows: [
+          ['Rupees for one US dollar, pound sterling, euro, Australian dollar, UAE dirham', 'How many rupees one unit of that currency costs, for example `399.5` for the pound.', 'Digits with an optional decimal point, up to 4 decimal places, more than 0 and no more than 1,000,000. Empty leaves that currency out. Only the boxes you change are saved.'],
+          ['The line under each box', 'When the rate last changed, by Sri Lanka time, for example "Last changed 3 days ago (21 Oct 2026)".', 'After 30 days a yellow warning says to check the rate is still right. The age counts from the last time the number changed, so there is no way yet to confirm an unchanged rate.'],
+        ],
+      },
+      {
+        kind: 'text',
+        text: 'These rates are typed by hand and are never updated automatically, so check them when exchange rates move. They are for display only: PayPal still charges the rupee total converted to dollars at the PayPal rate above. **The currency switcher for customers is not released yet**, so until it is these rates change nothing a customer sees. This panel is the one exception to "no visible Saved message": it shows "Rates saved." under its Save button.',
       },
       { kind: 'heading', text: 'Email account (Super Admin only)' },
       {
