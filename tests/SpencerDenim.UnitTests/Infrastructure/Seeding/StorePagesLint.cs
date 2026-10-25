@@ -31,6 +31,9 @@ internal static partial class StorePagesLint
     public const string CookieName = "cookie-name";
     public const string UsSpelling = "us-spelling";
     public const string PinnedSentence = "pinned-sentence";
+    public const string Comparison = "comparison";
+    public const string Certification = "certification";
+    public const string AnalyticsClaim = "analytics-claim";
 
     /// <summary>
     /// Words and phrases that make a promise, a boast or a trade the shop has not agreed to. A match is an error
@@ -110,6 +113,48 @@ internal static partial class StorePagesLint
         @"\bmom\b", @"\bpajamas\b", @"\bsweater\b",
     ];
 
+    /// <summary>
+    /// A comparison with somebody else, which the shop has nothing to back: "better than", "unlike", and "than" followed
+    /// by a capitalised name (a competitor, a brand). Matched with the case as written, so "than" before an ordinary word
+    /// at the start of a sentence is not mistaken for a name.
+    /// </summary>
+    private static readonly string[] ComparisonPatterns =
+    [
+        @"\b(?i:better|cheaper|faster|safer|more secure|higher quality) than\b", @"\b(?i:unlike)\b", @"\bthan\s+[A-Z][a-z]+",
+        @"\b(?i:compared (with|to)|as good as|rather than other)\b",
+    ];
+
+    /// <summary>
+    /// Claims of a standard, a certificate or a regime the shop has not been audited against. "Complain" (the right to
+    /// complain to the Data Protection Authority) is a different word and is not matched.
+    /// </summary>
+    private static readonly string[] CertificationPatterns =
+    [
+        @"\bGDPR\b", @"\bcompl(y|ies|ied|iant|iance)\b", @"\bcertif\w*", @"\bISO\b", @"\bPCI\b", @"\bSOC ?2\b",
+        @"\baccredit\w*", @"\bapproved by\b",
+    ];
+
+    /// <summary>
+    /// What the Privacy policy says it does not do: it loads no third-party analytics or tracking scripts. Naming a
+    /// product that does, or an analytics or tracking cookie, contradicts it in the same breath.
+    /// </summary>
+    private static readonly string[] AnalyticsPatterns =
+    [
+        @"(?i)\bgoogle analytics\b", @"(?i)\bgoogle tag manager\b", @"(?i)\bgtag\b", @"(?i)\b(meta|facebook) pixel\b", @"(?i)\btracking pixels?\b",
+        @"(?i)\banalytics cookies?\b", @"(?i)\btracking cookies?\b", @"(?i)\bhotjar\b", @"(?i)\bmatomo\b", @"(?i)\bplausible\b", @"(?i)\bmixpanel\b",
+    ];
+
+    /// <summary>
+    /// A token that looks like somebody else's cookie: it starts with an underscore (<c>_ga</c>, <c>_gid</c>,
+    /// <c>_fbp</c>, <c>_hjid</c>), or with <c>ga</c> or <c>fb</c> and an underscore (<c>ga_ABC123</c>). The shop's own
+    /// cookies all start <c>sd_</c> and are checked against the code instead; the lookbehind keeps the underscore inside
+    /// <c>sd_cart</c> from counting.
+    /// </summary>
+    private static readonly string[] ForeignCookiePatterns =
+    [
+        @"(?<![A-Za-z0-9])_[A-Za-z][A-Za-z0-9_]*", @"(?<![A-Za-z0-9])(?i:ga|fb)_[A-Za-z0-9_]*",
+    ];
+
     /// <summary>Words that end in <c>-ize</c> and are spelled so in British English too.</summary>
     private static readonly string[] IzeWordsThatAreFine = ["prize", "prizes", "seize", "capsize", "baptize"];
 
@@ -185,6 +230,33 @@ internal static partial class StorePagesLint
         else if (named.Count > 0)
         {
             violations.Add(new LintViolation(CookieName, "only the Privacy policy may name a cookie"));
+        }
+
+        // 3b. Anything that looks like another service's cookie, even on the Privacy policy.
+        foreach (var pattern in ForeignCookiePatterns)
+        {
+            foreach (Match match in Regex.Matches(text, pattern, RegexOptions.CultureInvariant))
+            {
+                violations.Add(new LintViolation(CookieName, $"\"{match.Value}\" looks like a cookie the code does not set"));
+            }
+        }
+
+        // 3c. Comparisons, certifications and analytics products: claims nobody has confirmed, and (for the last) a
+        // contradiction of the sentence that says no third-party analytics are loaded.
+        foreach (var (rule, patterns, detail) in new[]
+        {
+            (Comparison, ComparisonPatterns, "a comparison with somebody else"),
+            (Certification, CertificationPatterns, "a standard or certificate the shop has not been audited against"),
+            (AnalyticsClaim, AnalyticsPatterns, "an analytics or tracking product, which the policy says the shop does not load"),
+        })
+        {
+            foreach (var pattern in patterns)
+            {
+                foreach (Match match in Regex.Matches(text, pattern, RegexOptions.CultureInvariant))
+                {
+                    violations.Add(new LintViolation(rule, $"\"{match.Value}\" is {detail}"));
+                }
+            }
         }
 
         // 4. American spelling.

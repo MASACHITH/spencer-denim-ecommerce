@@ -1304,10 +1304,26 @@ test.describe('the About, Privacy and Terms pages (#252)', () => {
     await page.goto('/account/register');
     await expect(page.locator('[data-testid="register-consent"] a').first()).toBeVisible();
 
-    // Hydrated first (the gate account.e2e.ts uses): text typed before the handlers exist is not in the page's state.
+    // Hydrated first (the gate account.e2e.ts uses). That gate is first-order, as bank-transfer.e2e.ts explains at length:
+    // a fill that lands between bootstrap and this component's first change detection is overwritten by it. The register
+    // page has no re-quote to wait on, so the interaction itself is retried until the values have survived a settle
+    // delay - a hydrated page is stable thereafter, which is what makes the later assertions about the new tab honest.
     await page.waitForFunction(() => !!document.querySelector('sd-root')?.hasAttribute('ng-version'));
-    await page.locator('[data-testid="register-first-name"]').fill('Nimal');
-    await page.locator('[data-testid="register-email"]').fill('nimal@example.invalid');
+    await expect
+      .poll(
+        async () => {
+          await page.locator('[data-testid="register-first-name"]').fill('Nimal');
+          await page.locator('[data-testid="register-email"]').fill('nimal@example.invalid');
+          await page.waitForTimeout(600);
+
+          return [
+            await page.locator('[data-testid="register-first-name"]').inputValue(),
+            await page.locator('[data-testid="register-email"]').inputValue(),
+          ];
+        },
+        { timeout: 20_000, intervals: [0] },
+      )
+      .toEqual(['Nimal', 'nimal@example.invalid']);
 
     await followConsentLinks(page, context, '[data-testid="register-consent"]', {
       '[data-testid="register-first-name"]': 'Nimal',

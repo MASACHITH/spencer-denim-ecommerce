@@ -538,6 +538,38 @@ public sealed partial class StorePagesCopyTests
         Assert.Contains(violations, violation => violation.Rule == expectedRule);
     }
 
+    /// <summary>
+    /// The edits that survived round 2 (three of the tester's twenty-two): a comparison with a competitor, a standard
+    /// the shop is not audited against, a cookie that is not the shop's, and an analytics product that contradicts the
+    /// sentence saying none is loaded. Each is applied to the real copy in memory and must fire its rule.
+    /// </summary>
+    [Theory]
+    [InlineData("<h2>Get in touch</h2>", "<h2>Get in touch</h2><p>We are better than Zara.</p>", ContentPageKeys.About, StorePagesLint.Comparison)]
+    [InlineData("<h2>Get in touch</h2>", "<h2>Get in touch</h2><p>Unlike other shops, we reply.</p>", ContentPageKeys.About, StorePagesLint.Comparison)]
+    [InlineData("<h2>Get in touch</h2>", "<h2>Get in touch</h2><p>Cheaper than Daraz.</p>", ContentPageKeys.About, StorePagesLint.Comparison)]
+    [InlineData("<h2>Get in touch</h2>", "<h2>Get in touch</h2><p>We are bigger than Fashion Bug.</p>", ContentPageKeys.About, StorePagesLint.Comparison)]
+    [InlineData("<h2>Contact</h2>", "<h2>Contact</h2><p>We are GDPR compliant.</p>", ContentPageKeys.Terms, StorePagesLint.Certification)]
+    [InlineData("<h2>Contact</h2>", "<h2>Contact</h2><p>Our processes are ISO certified.</p>", ContentPageKeys.Terms, StorePagesLint.Certification)]
+    [InlineData("<h2>Keeping your data safe</h2>", "<h2>Keeping your data safe</h2><p>We follow PCI compliance.</p>", ContentPageKeys.Privacy, StorePagesLint.Certification)]
+    [InlineData("<strong>sd_vs</strong>", "<strong>_ga</strong>", ContentPageKeys.Privacy, StorePagesLint.CookieName)]
+    [InlineData("<li><strong>sd_vs</strong>", "<li><strong>_gid</strong> counts visitors.</li><li><strong>sd_vs</strong>", ContentPageKeys.Privacy, StorePagesLint.CookieName)]
+    [InlineData("<li><strong>sd_vs</strong>", "<li><strong>_fbp</strong> serves ads.</li><li><strong>sd_vs</strong>", ContentPageKeys.Privacy, StorePagesLint.CookieName)]
+    [InlineData("<li><strong>sd_vs</strong>", "<li><strong>ga_ABC123</strong> counts visitors.</li><li><strong>sd_vs</strong>", ContentPageKeys.Privacy, StorePagesLint.CookieName)]
+    [InlineData("<li><strong>sd_vs</strong>", "<li><strong>fb_pixel</strong> counts visitors.</li><li><strong>sd_vs</strong>", ContentPageKeys.Privacy, StorePagesLint.CookieName)]
+    [InlineData("<h2>Cookies and your browser</h2>", "<h2>Cookies and your browser</h2><p>We use Google Analytics.</p>", ContentPageKeys.Privacy, StorePagesLint.AnalyticsClaim)]
+    [InlineData("<h2>Cookies and your browser</h2>", "<h2>Cookies and your browser</h2><p>We use the Meta Pixel.</p>", ContentPageKeys.Privacy, StorePagesLint.AnalyticsClaim)]
+    [InlineData("<h2>Cookies and your browser</h2>", "<h2>Cookies and your browser</h2><p>Analytics cookies help us improve.</p>", ContentPageKeys.Privacy, StorePagesLint.AnalyticsClaim)]
+    public void The_round_two_survivors_are_caught_too(string find, string replacement, string key, string expectedRule)
+    {
+        var body = BodyOf(key);
+
+        Assert.Contains(find, body, StringComparison.Ordinal);
+
+        var violations = StorePagesLint.Check(key, body.Replace(find, replacement, StringComparison.Ordinal), RealCookieNames);
+
+        Assert.Contains(violations, violation => violation.Rule == expectedRule);
+    }
+
     /// <summary>The tester's edits, as functions of a body. Each changes the body, or the test above says so.</summary>
     private static string Mutate(string mutation, string body) => mutation switch
     {
