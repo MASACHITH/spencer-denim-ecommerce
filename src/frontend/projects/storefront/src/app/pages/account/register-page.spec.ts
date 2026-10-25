@@ -11,6 +11,7 @@ import { provideRouter } from '@angular/router';
 
 import { RegisterPage } from './register-page';
 import { ACCOUNT_FIELD_LENGTHS } from '../../core/account/account.model';
+import { flushContentPages } from '../../core/content/content-pages.testing';
 
 /**
  * The server's one sentence for every address, which registration answers with.
@@ -116,7 +117,18 @@ describe('RegisterPage (ACC-01)', () => {
 
   beforeEach(() => create());
 
-  afterEach(() => http?.verify());
+  afterEach(() => {
+    // The consent line asks for the published-page index (issue #252), as the footer does on every page.
+    if (http) {
+      flushContentPages(http);
+      http.verify();
+    }
+  });
+
+  /** Everything the page asked for except the published-page index, which the shell asks for on every page anyway. */
+  function otherRequests(): TestRequest[] {
+    return http.match((request) => request.url !== '/api/content/pages');
+  }
 
   describe('what the server renders', () => {
     it('renders the whole form and asks the shop nothing', async () => {
@@ -127,7 +139,7 @@ describe('RegisterPage (ACC-01)', () => {
       expect(field('register-first-name')).not.toBeNull();
       expect(field('register-email')).not.toBeNull();
       expect(field('register-password')).not.toBeNull();
-      expect(http.match(() => true)).toEqual([]);
+      expect(otherRequests()).toEqual([]);
     });
 
     it('renders both live regions before there is anything to announce', async () => {
@@ -145,6 +157,75 @@ describe('RegisterPage (ACC-01)', () => {
       expect(TestBed.inject(Meta).getTag('name="robots"')?.content).toBe('noindex');
       expect(new Headers(response.headers ?? {}).get('Cache-Control')).toContain('no-store');
       expect(TestBed.inject(Title).getTitle()).toBe('Create an account | Colombo Wardrobe');
+    });
+  });
+
+  /**
+   * Issue #252: where an account is made, the shop says what creating one means, and points at the pages that say it
+   * - the ones that are published. With neither there is no sentence, rather than one that points nowhere.
+   */
+  describe('the consent line', () => {
+    function consent(): string {
+      return (element.querySelector('[data-testid="register-consent"]')?.textContent ?? '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    it('is empty while neither page is published', async () => {
+      await settle();
+      flushContentPages(http, []);
+      await settle();
+
+      expect(consent()).toBe('');
+      expect(element.querySelector('[data-testid="register-consent"] a')).toBeNull();
+    });
+
+    const NEW_TAB = ' (opens in a new tab)';
+
+    it('links the terms and the privacy policy, in new tabs, once both are published', async () => {
+      await settle();
+      flushContentPages(http, [
+        { slug: 'terms-of-sale', title: 'Terms and conditions', systemKey: 'terms' },
+        { slug: 'privacy', title: 'Privacy policy', systemKey: 'privacy' },
+      ]);
+      await settle();
+
+      expect(consent()).toBe(
+        `By creating an account you agree to our terms and conditions${NEW_TAB}. `
+          + `How we use your details is explained in our privacy policy${NEW_TAB}.`,
+      );
+      expect(
+        [...element.querySelectorAll('[data-testid="register-consent"] a')].map((link) => link.getAttribute('href')),
+      ).toEqual(['/terms-of-sale', '/privacy']);
+    });
+
+    /**
+     * The form's values are component state with no draft and no route guard: following a link in this tab would
+     * throw away the name, email and password already typed. The browser proof is `content-pages.e2e.ts`.
+     */
+    it('opens both links in a new tab, so the half-typed form is not lost', async () => {
+      await settle();
+      flushContentPages(http, [
+        { slug: 'terms-of-sale', title: 'Terms and conditions', systemKey: 'terms' },
+        { slug: 'privacy', title: 'Privacy policy', systemKey: 'privacy' },
+      ]);
+      await settle();
+
+      const links = [...element.querySelectorAll<HTMLAnchorElement>('[data-testid="register-consent"] a')];
+      expect(links).toHaveLength(2);
+      for (const link of links) {
+        expect(link.getAttribute('target')).toBe('_blank');
+        expect(link.getAttribute('rel')).toBe('noopener');
+        expect(link.querySelector('.sr-only')?.textContent?.trim()).toBe('(opens in a new tab)');
+      }
+    });
+
+    it('names only the page that exists when one of them is unpublished', async () => {
+      await settle();
+      flushContentPages(http, [{ slug: 'privacy', title: 'Privacy policy', systemKey: 'privacy' }]);
+      await settle();
+
+      expect(consent()).toBe(`How we use your details is explained in our privacy policy${NEW_TAB}.`);
     });
   });
 
@@ -251,7 +332,7 @@ describe('RegisterPage (ACC-01)', () => {
       type('register-email', 'already@example.invalid');
       await settle();
 
-      expect(http.match(() => true)).toEqual([]);
+      expect(otherRequests()).toEqual([]);
       expect(text()).not.toMatch(/taken|in use|already registered|already has an account/i);
     });
 

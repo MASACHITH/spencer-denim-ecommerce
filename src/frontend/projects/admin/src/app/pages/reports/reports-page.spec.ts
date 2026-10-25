@@ -75,6 +75,16 @@ describe('ReportsPage (ADM-19)', () => {
     return element.querySelector<T>(`[data-testid="${testId}"]`);
   }
 
+  /** A failed export's body is a Blob, and reading a Blob back finishes outside Angular's own bookkeeping. */
+  async function noteAppears(testId: string): Promise<HTMLElement> {
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(testId)).not.toBeNull();
+    });
+
+    return byTestId(testId)!;
+  }
+
   function configure(query: Record<string, string>): void {
     TestBed.configureTestingModule({
       providers: [
@@ -164,6 +174,100 @@ describe('ReportsPage (ADM-19)', () => {
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(byTestId('sales-status')!.textContent).toContain('sales-report-2026-09-16-to-2026-10-15.csv');
     expect(button.getAttribute('aria-disabled')).toBeNull();
+    // UAT feedback: the result was announced to screen readers only, so a sighted user saw nothing happen.
+    expect(byTestId('sales-export-note')!.textContent).toContain('sales-report-2026-09-16-to-2026-10-15.csv');
+    expect(byTestId('sales-export-note')!.textContent).toContain('Downloads');
+  });
+
+  it('does not leave an old export note on screen after the filters change', async () => {
+    configure({});
+    await open(['Reports.View', 'Reports.Export']);
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/sales').flush(SALES);
+    await settle();
+
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+
+    byTestId<HTMLButtonElement>('sales-export')!.click();
+    await settle();
+    http.expectOne('/api/admin/auth/antiforgery-token').flush({ token: 'tok' });
+    http
+      .expectOne((candidate) => candidate.url === '/api/admin/reports/sales/export')
+      .flush(new Blob(['x']), { headers: { 'Content-Disposition': 'attachment; filename=sales-report-2026-09-16-to-2026-10-15.csv' } });
+    await settle();
+    expect(byTestId('sales-export-note')).not.toBeNull();
+
+    byTestId<HTMLButtonElement>('sales-apply')!.click();
+    await settle();
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/sales').flush(SALES);
+    await settle();
+
+    // The note was about the file for the old filters.
+    expect(byTestId('sales-export-note')).toBeNull();
+  });
+
+  it('shows on the screen, with the server’s own words, why an export failed', async () => {
+    configure({});
+    await open(['Reports.View', 'Reports.Export']);
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/sales').flush(SALES);
+    await settle();
+
+    expect(byTestId('sales-export-note')).toBeNull();
+
+    byTestId<HTMLButtonElement>('sales-export')!.click();
+    await settle();
+    http.expectOne('/api/admin/auth/antiforgery-token').flush({ token: 'tok' });
+    // The export asks for a Blob, so the error body comes back as a Blob too; the page has to read it.
+    http
+      .expectOne((candidate) => candidate.url === '/api/admin/reports/sales/export')
+      .flush(new Blob([JSON.stringify({ detail: 'The audit log is full, so the export was not allowed.' })]), {
+        status: 400,
+        statusText: 'Bad Request',
+      });
+    await settle();
+
+    const note = await noteAppears('sales-export-note');
+    expect(note.textContent).toContain('The export failed.');
+    expect(note.textContent).toContain('The audit log is full, so the export was not allowed.');
+    expect(note.classList.contains('adm-field-error')).toBe(true);
+  });
+
+  it('names the status number when the server breaks during an export', async () => {
+    configure({ report: 'customers' });
+    await open(['Reports.View', 'Reports.Export']);
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers').flush(customerPage(1, 1));
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers/buyers').flush(buyers([]));
+    await settle();
+
+    byTestId<HTMLButtonElement>('customers-export')!.click();
+    await settle();
+    http.expectOne('/api/admin/auth/antiforgery-token').flush({ token: 'tok' });
+    http
+      .expectOne((candidate) => candidate.url === '/api/admin/reports/customers/export')
+      .flush(new Blob(['<html>Bad gateway</html>']), { status: 502, statusText: 'Bad Gateway' });
+    await settle();
+
+    const note = await noteAppears('customers-export-note');
+    expect(note.textContent).toContain('The export failed.');
+    expect(note.textContent).toContain('error 502');
+  });
+
+  it('shows the same note on the inventory report', async () => {
+    configure({ report: 'inventory' });
+    await open(['Reports.View', 'Reports.Export']);
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/inventory').flush(inventory(1, 1));
+    await settle();
+
+    byTestId<HTMLButtonElement>('inventory-export')!.click();
+    await settle();
+    http.expectOne('/api/admin/auth/antiforgery-token').flush({ token: 'tok' });
+    http
+      .expectOne((candidate) => candidate.url === '/api/admin/reports/inventory/export')
+      .flush(new Blob(['']), { status: 403, statusText: 'Forbidden' });
+    await settle();
+
+    expect((await noteAppears('inventory-export-note')).textContent).toContain('You do not have permission');
   });
 
   it('refuses a period longer than 366 days without asking the server', async () => {

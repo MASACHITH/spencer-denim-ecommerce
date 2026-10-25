@@ -693,6 +693,9 @@ const EMPTY: Scalars = {
 
             @if (mediaError(); as message) {
               <p class="adm-state adm-state--error" role="alert" data-testid="media-error">{{ message }}</p>
+            } @else if (mediaStatus(); as status) {
+              <!-- Not a live region: the same words go to the form's hidden one. This is for people who can see. -->
+              <p class="adm-state" data-testid="media-status">{{ status }}</p>
             }
 
             @if (media().length === 0) {
@@ -1287,6 +1290,7 @@ export class ProductFormPage {
   private readonly isBusy = signal(false);
   private readonly problem = signal<CatalogFailure | null>(null);
   private readonly mediaProblem = signal<string | null>(null);
+  private readonly mediaProgress = signal<string | null>(null);
   private readonly said = signal('');
   private readonly isRemoving = signal(false);
   private readonly videoFile = signal<File | null>(null);
@@ -1316,6 +1320,8 @@ export class ProductFormPage {
   protected readonly busy = this.isBusy.asReadonly();
   protected readonly failure = this.problem.asReadonly();
   protected readonly mediaError = this.mediaProblem.asReadonly();
+  /** What the last choose-a-file press is doing or did, in view. Only the hidden live region said so before. */
+  protected readonly mediaStatus = this.mediaProgress.asReadonly();
   protected readonly announcement = this.said.asReadonly();
   protected readonly removing = this.isRemoving.asReadonly();
   protected readonly saved = this.loadedProduct.asReadonly();
@@ -1634,11 +1640,13 @@ export class ProductFormPage {
 
     if (file.size > MAX_IMAGE_BYTES) {
       this.mediaProblem.set('That photograph is larger than 8 MB. Save it smaller and try again.');
+      this.mediaProgress.set(null);
       this.clearFileInput(this.imageInput());
       return;
     }
 
     this.mediaProblem.set(null);
+    this.mediaProgress.set(`Uploading ${file.name} (${sizeLabel(file.size)}). Please wait; the photograph appears below when it has arrived.`);
     this.isBusy.set(true);
     this.said.set('Uploading the photograph…');
 
@@ -1651,6 +1659,7 @@ export class ProductFormPage {
       next: (asset) => {
         this.isBusy.set(false);
         this.said.set('Photograph added. Describe it in the alt text box.');
+        this.mediaProgress.set(`${file.name} is added to the gallery below. Describe it in its alt text box.`);
         this.clearFileInput(this.imageInput());
         this.mediaEdited = true;
 
@@ -1674,6 +1683,7 @@ export class ProductFormPage {
       error: (error: unknown) => {
         this.isBusy.set(false);
         this.said.set('');
+        this.mediaProgress.set(null);
         this.mediaProblem.set(toCatalogFailure(error).message);
         this.clearFileInput(this.imageInput());
       },
@@ -1694,6 +1704,7 @@ export class ProductFormPage {
       this.mediaProblem.set(
         'That video is larger than 50 MB, which is the most the library stores. Export it smaller.',
       );
+      this.mediaProgress.set(null);
       this.clearFileInput(this.videoInput());
       this.videoFile.set(null);
       return;
@@ -1704,6 +1715,9 @@ export class ProductFormPage {
 
     if (file) {
       this.said.set('Now choose a poster image for the video.');
+      this.mediaProgress.set(`${file.name} is chosen. Now choose its poster image; the video uploads when you do.`);
+    } else {
+      this.mediaProgress.set(null);
     }
   }
 
@@ -1716,6 +1730,7 @@ export class ProductFormPage {
     }
 
     this.mediaProblem.set(null);
+    this.mediaProgress.set(`Uploading ${video.name} (${sizeLabel(video.size)}) and its poster. A video can take a minute or more on a slow connection; please wait.`);
     this.isBusy.set(true);
     this.said.set('Uploading the video…');
 
@@ -1726,6 +1741,7 @@ export class ProductFormPage {
       next: (asset) => {
         this.isBusy.set(false);
         this.said.set('Video added.');
+        this.mediaProgress.set(`${video.name} is added to the product.`);
         this.videoFile.set(null);
         this.clearFileInput(this.videoInput());
         this.clearFileInput(this.posterInput());
@@ -1752,6 +1768,7 @@ export class ProductFormPage {
       error: (error: unknown) => {
         this.isBusy.set(false);
         this.said.set('');
+        this.mediaProgress.set(null);
         this.mediaProblem.set(toCatalogFailure(error).message);
         this.clearFileInput(this.posterInput());
       },
@@ -2166,6 +2183,11 @@ export class ProductFormPage {
       input.nativeElement.value = '';
     }
   }
+}
+
+/** "3.2 MB", or "640 KB" for a small one: enough to tell a staff member the right file was picked. */
+function sizeLabel(bytes: number): string {
+  return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 function blankToNull(value: string | null): string | null {

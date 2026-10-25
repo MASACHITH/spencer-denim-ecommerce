@@ -8,7 +8,16 @@ namespace SpencerDenim.Application.Admin.Customers;
 /// <param name="DistrictId">Only customers whose default district is this one, or null for every customer.</param>
 /// <param name="Page">1-based. Clamped, never refused.</param>
 /// <param name="PageSize">Clamped to <see cref="AdminCustomerPaging.MaxPageSize"/>.</param>
-public sealed record GetAdminCustomersQuery(string? Search, int? DistrictId, int? Page, int? PageSize);
+/// <param name="CountryCode">
+/// Only customers whose <b>default saved address</b> is in this country (ISO 3166-1 alpha-2, any case), or null
+/// or blank for every customer. A district is a Sri Lankan thing, so overseas customers are reached through this.
+/// </param>
+public sealed record GetAdminCustomersQuery(
+    string? Search,
+    int? DistrictId,
+    int? Page,
+    int? PageSize,
+    string? CountryCode = null);
 
 /// <summary>A customer's detail.</summary>
 public sealed record GetAdminCustomerQuery(int CustomerId);
@@ -50,6 +59,10 @@ public static class AdminCustomerPaging
 public sealed class GetAdminCustomersQueryHandler(IAdminCustomerReader reader)
     : IQueryHandler<GetAdminCustomersQuery, AdminCustomerListPage>
 {
+    /// <summary>Blank is "every country"; anything else is compared upper-case, as the code is stored.</summary>
+    private static string? NormaliseCountryCode(string? code) =>
+        string.IsNullOrWhiteSpace(code) ? null : code.Trim().ToUpperInvariant();
+
     public Task<AdminCustomerListPage> HandleAsync(GetAdminCustomersQuery query, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
@@ -59,6 +72,7 @@ public sealed class GetAdminCustomersQueryHandler(IAdminCustomerReader reader)
         return reader.ReadListAsync(
             AdminCustomerSearch.Classify(query.Search),
             query.DistrictId,
+            NormaliseCountryCode(query.CountryCode),
             page,
             pageSize,
             cancellationToken);

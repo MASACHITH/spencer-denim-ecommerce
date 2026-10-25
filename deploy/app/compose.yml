@@ -111,6 +111,11 @@ services:
       Seed__Admin__Enabled: ${SD_SEED_ADMIN_ENABLED:-false}
       Seed__Admin__Email: ${SD_SEED_ADMIN_EMAIL:-}
       Seed__Admin__Password: ${SD_SEED_ADMIN_PASSWORD:-}
+      # Staff accounts that can never be deactivated (and whose email cannot be changed): addresses separated by
+      # commas, semicolons or spaces. Empty protects nobody. A malformed address stops the API at start-up.
+      AdminSecurity__ProtectedStaffEmails: ${SD_PROTECTED_STAFF_EMAILS:-}
+      # Accounts only a protected account may deactivate, reactivate or rename. Same format; needs the line above.
+      AdminSecurity__GuardedStaffEmails: ${SD_GUARDED_STAFF_EMAILS:-}
       Catalog__MediaBaseUrl: /media
       DataProtection__KeysPath: /var/lib/spencer-denim/dataprotection-keys
       # Encrypts the key ring at rest. Both are empty unless SD_DP_CERT_FILE / SD_DP_CERT_PASSWORD are set in

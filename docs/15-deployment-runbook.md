@@ -147,6 +147,7 @@ a `SD_SEED_ADMIN_PASSWORD` shorter than 10 characters, because the API would cre
 | | `SD_MIGRATOR_DB_CONNECTION` | Migrator login `sd_<env>_migrator` (db_owner). The API never sees it |
 | | `SD_DB_COMPATIBILITY_LEVEL` | `170` (SQL Server 2025) |
 | | `SD_SEED_ADMIN_ENABLED/EMAIL/PASSWORD` | First Super Admin, first install only; set back to `false` afterwards. The password is held to the same rule as every account: **at least 10 characters** with an upper-case letter, a lower-case letter, a number and a symbol (not `$`, and not starting with a quote: compose reads the file literally). A shorter one creates no account, so `check-env.sh` refuses it while the seed is on |
+| | `SD_PROTECTED_STAFF_EMAILS` / `SD_GUARDED_STAFF_EMAILS` | Optional, empty by default → `AdminSecurity__ProtectedStaffEmails` / `__GuardedStaffEmails` (#255). Email addresses separated by commas, semicolons or spaces. **Protected**: the technical owner's Super Admin, which nobody can deactivate or rename. **Guarded**: an account handed to someone else (the client's Super Admin), which only a protected account can deactivate, reactivate or rename. Set both in `app.env` on UAT and Live and redeploy; the second needs the first. Start-up refuses a malformed address, or a guarded list with no protected one |
 | | `SD_IMAGE_REPOSITORY` | `spencer-denim` (image name prefix) |
 | `config/db.env` | `SD_ENV` | `production` / `staging` |
 | | `SD_MSSQL_SA_PASSWORD` | sa: healthcheck and provisioning only |

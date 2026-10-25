@@ -144,14 +144,28 @@ public sealed class HomeContentSeeder(AppDbContext dbContext, IClock clock)
     }
 
     /// <summary>
-    /// Issue #33: the Shipping and Returns pages' starting copy (<see cref="PolicyPageContent"/>), published —
-    /// the owner's instruction of 2026-10-21.
+    /// Issue #33 and issue #252: the starting copy of the Shipping and Returns pages (version 1) and of the About,
+    /// Privacy and Terms pages (version 2), all from <see cref="PolicyPageContent"/>, published — the owner's
+    /// instructions of 2026-10-21 and 2026-10-24.
     /// <para>
     /// <b>Offered once, by version</b> (<c>Seed.PolicyPagesVersion</c>, the #152 rule), after the shells above
-    /// exist. <b>Never over an admin's words:</b> a page is filled only when its body is still empty or still
-    /// exactly an earlier version's seed, and only that page is published. A page an admin has written, a page
+    /// exist, and <b>once per page</b>: a page is considered only while the recorded version is below the version
+    /// that first offered it (<see cref="PolicyPageContent.IntroducedIn"/>). So a database that already took
+    /// version 1 is offered the three new pages and nothing else, and an admin who emptied Shipping or Returns
+    /// after version 1 does not have them filled and published again by the bump.
+    /// </para>
+    /// <para>
+    /// <b>Never over an admin's words:</b> a page is filled only when its body is still empty or still exactly
+    /// an earlier version's seed, and only that page is published. A page an admin has written, a page
     /// whose body an admin emptied after a previous run (the marker stops a second run), and a soft-deleted page are
     /// all left alone. The title, slug and SEO fields are never touched — a title is the client's label.
+    /// </para>
+    /// <para>
+    /// <b>An empty page counts as untouched whatever its publish flag.</b> A shell that was never edited is empty and
+    /// unpublished, and a page an admin published empty (About on UAT) is empty too; the seeder cannot tell either
+    /// from one an admin deliberately unpublished while it was empty, so they are all filled and published on the
+    /// first offer. After that the marker holds: an admin who unpublishes a page, or empties it, keeps it that way
+    /// through every later deployment.
     /// </para>
     /// </summary>
     private async Task<int> SeedPolicyPagesAsync(CancellationToken cancellationToken)
@@ -164,7 +178,9 @@ public sealed class HomeContentSeeder(AppDbContext dbContext, IClock clock)
             return 0;
         }
 
-        var keys = PolicyPageContent.Bodies.Keys.ToList();
+        var keys = PolicyPageContent.Bodies.Keys
+            .Where(key => PolicyPageContent.IntroducedIn[key] > recorded)
+            .ToList();
         var pages = await dbContext.ContentPages
             .Where(page => page.SystemKey != null && keys.Contains(page.SystemKey))
             .ToListAsync(cancellationToken);
@@ -181,6 +197,11 @@ public sealed class HomeContentSeeder(AppDbContext dbContext, IClock clock)
 
             page.BodyHtml = PolicyPageContent.Bodies[page.SystemKey!];
             page.SetPublished(true, utcNow);
+
+            // The page shows "Last updated" from UpdatedAtUtc, falling back to PublishedAtUtc. A page published
+            // empty long ago keeps its old PublishedAtUtc (SetPublished stamps it once), so without this the
+            // shopper would be told the policy was last updated the day somebody published an empty page.
+            page.UpdatedAtUtc = utcNow;
             filled++;
         }
 
@@ -189,8 +210,8 @@ public sealed class HomeContentSeeder(AppDbContext dbContext, IClock clock)
             marker,
             SettingKeys.Seed.PolicyPagesVersion,
             PolicyPageContent.SeedVersion,
-            "The highest Shipping and Returns page copy version applied to this database (#33). Written by the "
-            + "seeder; not editable.");
+            "The highest policy page copy version (Shipping, Returns, About, Privacy and Terms) applied to this "
+            + "database (#33, #252). Written by the seeder; not editable.");
 
         await dbContext.SaveChangesAsync(cancellationToken);
 

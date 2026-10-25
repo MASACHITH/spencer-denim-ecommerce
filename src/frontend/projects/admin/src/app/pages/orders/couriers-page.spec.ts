@@ -160,6 +160,17 @@ describe('CouriersPage (ADM-09)', () => {
     await settle();
   });
 
+  it('takes the staff member to the form when Edit is pressed', async () => {
+    await open();
+
+    click('edit-4');
+    await settle();
+    TestBed.tick();
+
+    // Edit sits on a row far below the form; without this the press looked like it did nothing.
+    expect(document.activeElement).toBe(element.querySelector('[data-testid="courier-name"]'));
+  });
+
   it('puts an existing courier in the form and saves it by its id', async () => {
     await open();
 

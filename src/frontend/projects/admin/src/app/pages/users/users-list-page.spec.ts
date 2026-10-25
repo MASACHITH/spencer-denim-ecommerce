@@ -53,6 +53,8 @@ describe('UsersListPage', () => {
       mustChangePassword: false,
       lastLoginAtUtc: null,
       roles: [{ id: 5, name: 'Order Staff', grantsAllPermissions: false }],
+      isProtected: false,
+      lockedForViewer: false,
       ...overrides,
     };
   }
@@ -123,6 +125,65 @@ describe('UsersListPage', () => {
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelector('a[href="/users/new"]')).not.toBeNull();
     expect(root.querySelector('button.users__toggle')?.textContent?.trim()).toBe('Deactivate');
+  });
+
+  it('offers no Deactivate button for a protected account, and says why', () => {
+    const fixture = create();
+    flushWhoAmI(false, ['Users.Manage']);
+    flushRoles();
+    controller
+      .expectOne((r) => r.url === UsersApi.usersUrl)
+      .flush({ items: [user({ id: 1, isProtected: true }), user({ id: 2, email: 'other@example.com' })], page: 1, pageSize: 25, totalCount: 2 });
+    fixture.detectChanges();
+
+    const rows = (fixture.nativeElement as HTMLElement).querySelectorAll('tbody tr');
+    expect(rows[0].querySelector('button.users__toggle')).toBeNull();
+    expect(rows[0].querySelector('[data-testid="protected-note"]')?.textContent?.trim()).toBe('Protected');
+    expect(rows[0].querySelector('a[href="/users/1"]')?.textContent).toContain('Edit');
+    expect(rows[1].querySelector('button.users__toggle')?.textContent?.trim()).toBe('Deactivate');
+  });
+
+  it('offers no Deactivate or Reactivate button for an account only the technical owner may change, and says why', () => {
+    const fixture = create();
+    flushWhoAmI(true);
+    flushRoles();
+    controller
+      .expectOne((r) => r.url === UsersApi.usersUrl)
+      .flush({
+        items: [
+          user({ id: 1, lockedForViewer: true }),
+          user({ id: 2, email: 'off@example.com', isActive: false, lockedForViewer: true }),
+          user({ id: 3, email: 'other@example.com' }),
+        ],
+        page: 1,
+        pageSize: 25,
+        totalCount: 3,
+      });
+    fixture.detectChanges();
+
+    const rows = (fixture.nativeElement as HTMLElement).querySelectorAll('tbody tr');
+    for (const locked of [rows[0], rows[1]]) {
+      expect(locked.querySelector('button.users__toggle')).toBeNull();
+      expect(locked.querySelector('[data-testid="locked-note"]')?.textContent?.trim()).toBe('Managed by the technical owner');
+      expect(locked.querySelector('[data-testid="locked-note"]')?.getAttribute('title')).toContain('Only the technical owner');
+      expect(locked.querySelector('a[href^="/users/"]')?.textContent).toContain('Edit');
+    }
+    expect(rows[2].querySelector('button.users__toggle')?.textContent?.trim()).toBe('Deactivate');
+    expect(rows[2].querySelector('[data-testid="locked-note"]')).toBeNull();
+  });
+
+  it('still offers Reactivate for a protected account that is deactivated', () => {
+    const fixture = create();
+    flushWhoAmI(false, ['Users.Manage']);
+    flushRoles();
+    controller
+      .expectOne((r) => r.url === UsersApi.usersUrl)
+      .flush({ items: [user({ isActive: false, isProtected: true })], page: 1, pageSize: 25, totalCount: 1 });
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('button.users__toggle')?.textContent?.trim()).toBe('Reactivate');
+    expect(root.querySelector('[data-testid="protected-note"]')).toBeNull();
   });
 
   it('shows a server error state and can retry', () => {

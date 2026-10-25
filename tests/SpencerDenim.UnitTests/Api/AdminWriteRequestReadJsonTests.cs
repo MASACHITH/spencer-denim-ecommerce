@@ -150,7 +150,8 @@ public sealed class AdminWriteRequestReadJsonTests
     }
 
     /// <summary>
-    /// Issue #147's second trigger, on the call sites that matter: 29 of the 44 callers read a
+    /// Issue #147's second trigger, on the call sites that matter: most callers (30 of the 44 call sites when last
+    /// counted, by <c>grep -rn "ReadJsonAsync&lt;JsonObject&gt;" src</c>) read a
     /// <see cref="JsonObject"/>, which is parsed <b>lazily</b>. Text that cannot be decoded does not fail at the read;
     /// it failed later, with an <c>InvalidOperationException</c>, the first time a handler asked for a string (a 500),
     /// where a record body fails inside the deserializer and is already a 400. Two shapes: bytes that are not UTF-8,

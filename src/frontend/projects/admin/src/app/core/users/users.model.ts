@@ -15,6 +15,13 @@ export interface StaffUserSummary {
   readonly mustChangePassword: boolean;
   readonly lastLoginAtUtc: string | null;
   readonly roles: readonly RoleRef[];
+  /** Named in the server's protected list: it can never be deactivated, so the screen offers no button. */
+  readonly isProtected: boolean;
+  /**
+   * A guarded account (the client's own login) and the person looking is not the technical owner's account: they
+   * cannot deactivate, reactivate or rename it, so the screen offers no button.
+   */
+  readonly lockedForViewer: boolean;
 }
 
 /** One staff user's detail, including the effective permissions computed from their roles (doc 08 §3.1 R4). */
@@ -30,6 +37,10 @@ export interface StaffUserDetail {
   readonly grantsAllPermissions: boolean;
   readonly roles: readonly RoleRef[];
   readonly effectivePermissions: readonly string[];
+  /** As on the list row: it can never be deactivated, and its email address cannot be changed. */
+  readonly isProtected: boolean;
+  /** As on the list row: only the technical owner's account can activate, deactivate or rename it. */
+  readonly lockedForViewer: boolean;
 }
 
 /** One row of the role list. Role management is read-only in this slice (doc 08 §3.1 DB4 rule 1). */

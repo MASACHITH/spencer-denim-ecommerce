@@ -6,7 +6,8 @@ import { money } from '../../core/orders/order-formatting';
 import { PeriodQuery, ReportingApi } from '../../core/reporting/reporting-api';
 import { addDays, colomboToday, count, formatDay, presetPeriod } from '../../core/reporting/reporting-format';
 import { SalesGrouping, SalesReport, SalesReportRow } from '../../core/reporting/reporting.model';
-import { Announcer, periodProblem, saveFile } from './report-shared';
+import { Announcer, ExportNote, exportFailed, exportSucceeded, periodProblem, saveFile } from './report-shared';
+import { ExportNoteView } from './export-note';
 import { ChartView } from '../../core/charts/chart';
 import { BarSpec, compactRupees } from '../../core/charts/chart-config';
 
@@ -22,7 +23,7 @@ import { BarSpec, compactRupees } from '../../core/charts/chart-config';
  */
 @Component({
   selector: 'sda-sales-report',
-  imports: [ChartView],
+  imports: [ChartView, ExportNoteView],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <form class="rpt__filters" aria-label="Sales report filters" (submit)="apply($event)">
@@ -55,6 +56,7 @@ import { BarSpec, compactRupees } from '../../core/charts/chart-config';
           {{ exporting() ? 'Preparing the file…' : 'Export CSV' }}
         </button>
       </div>
+      <sda-export-note [note]="exportNote()" testId="sales-export-note" />
     }
 
     <p class="sr-only" role="status" data-testid="sales-status">{{ announcer.text() }}</p>
@@ -144,6 +146,7 @@ export class SalesReportView {
   protected readonly report = signal<SalesReport | null>(null);
   protected readonly problem = signal<CatalogFailure | null>(null);
   protected readonly exporting = signal(false);
+  protected readonly exportNote = signal<ExportNote | null>(null);
 
   private requests = 0;
 
@@ -177,6 +180,7 @@ export class SalesReportView {
     }
 
     this.exporting.set(true);
+    this.exportNote.set(null);
     this.announcer.say('Preparing the export…');
 
     const { period, groupBy } = this.applied();
@@ -185,10 +189,12 @@ export class SalesReportView {
         this.exporting.set(false);
         saveFile(this.document, file.blob, file.fileName);
         this.announcer.say(`Export downloaded as ${file.fileName}.`);
+        this.exportNote.set(exportSucceeded(file.fileName));
       },
       error: (error: unknown) => {
         this.exporting.set(false);
         this.announcer.say(`The export failed. ${toCatalogFailure(error).message}`);
+        this.exportNote.set(exportFailed(toCatalogFailure(error).message));
       },
     });
   }
@@ -234,6 +240,7 @@ export class SalesReportView {
   }
 
   private load(): void {
+    this.exportNote.set(null);
     const request = ++this.requests;
     const { period, groupBy } = this.applied();
 

@@ -131,6 +131,22 @@ describe('toStaffUserActionFailure', () => {
     expect(failure.reason).toBe('email_already_in_use');
   });
 
+  it('maps a 409 protected_account to conflict and shows the server sentence', () => {
+    const failure = toStaffUserActionFailure(fakeError(409, { error: 'protected_account', detail: 'This account is protected and can never be deactivated.' }));
+    expect(failure.kind).toBe('conflict');
+    expect(failure.reason).toBe('protected_account');
+    expect(failure.message).toBe('This account is protected and can never be deactivated.');
+  });
+
+  it('maps a 403 guarded_account to forbidden and shows the server sentence', () => {
+    const failure = toStaffUserActionFailure(
+      fakeError(403, { error: 'guarded_account', detail: "Only the technical owner's account can activate or deactivate this account." }),
+    );
+    expect(failure.kind).toBe('forbidden');
+    expect(failure.reason).toBe('guarded_account');
+    expect(failure.message).toBe("Only the technical owner's account can activate or deactivate this account.");
+  });
+
   it('maps a 409 last_super_admin_guard to conflict with an explanatory message', () => {
     const failure = toStaffUserActionFailure(fakeError(409, { error: 'last_super_admin_guard' }));
     expect(failure.kind).toBe('conflict');

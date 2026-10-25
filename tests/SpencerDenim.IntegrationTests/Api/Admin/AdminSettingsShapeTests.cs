@@ -171,6 +171,36 @@ public sealed class AdminSettingsShapeTests(SqlServerDatabaseFixture sqlServer)
             StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Issue #248's display rates: the OpenAPI record, the handler's field list, the table of five currencies and the
+    /// catalogue's group name the same five rates. The body fields are the lower-case currency codes rather than the
+    /// key's last segment (<c>usd</c>, not <c>UsdLkrPerUnit</c>), so the pin goes through the table that joins the two.
+    /// A field added to one list and not the others is a box the screen sends and the API ignores.
+    /// </summary>
+    [Fact]
+    public void The_currency_rates_request_carries_one_field_per_currency_it_writes()
+    {
+        var fields = typeof(UpdateCurrencyRatesRequest)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Select(property => property.Name)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(["Aed", "Aud", "Eur", "Gbp", "RowVersion", "Usd"], fields);
+
+        var handlerFields = SpencerDenim.Application.Settings.Admin.UpdateCurrencyRatesCommandHandler.Fields;
+
+        Assert.Equal(
+            fields.Where(field => field != "RowVersion").Order(StringComparer.OrdinalIgnoreCase),
+            handlerFields.Order(StringComparer.OrdinalIgnoreCase),
+            StringComparer.OrdinalIgnoreCase);
+
+        Assert.Equal(DisplayCurrencies.All.Select(currency => currency.Field), handlerFields);
+        Assert.Equal(
+            DisplayCurrencies.All.Select(currency => currency.SettingKey),
+            SettingCatalog.KeysIn(SettingKeys.CurrencyDisplay.Group));
+    }
+
     [Fact]
     public void The_store_logo_request_carries_the_asset_and_the_token_and_nothing_else()
     {

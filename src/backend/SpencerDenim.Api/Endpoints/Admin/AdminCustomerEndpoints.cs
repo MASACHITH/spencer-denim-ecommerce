@@ -36,7 +36,8 @@ internal static class AdminCustomerEndpoints
                 + "found by searching the order list by email. One search box: an email address (matched "
                 + "from its start), a telephone number (its last nine digits, so 0771234567 finds "
                 + "+94771234567) or part of a name. ?districtId= keeps the customers whose default delivery "
-                + "district is that one. Order count, lifetime spend (paid orders) and last order are "
+                + "district is that one. ?countryCode= (an ISO two-letter code such as GB) keeps the customers whose "
+                + "default saved address is in that country. Order count, lifetime spend (paid orders) and last order are "
                 + "computed live from the account's own orders.")
             .Produces<AdminCustomerListPage>()
             .Produces(StatusCodes.Status401Unauthorized)
@@ -73,6 +74,7 @@ internal static class AdminCustomerEndpoints
         IQueryHandler<GetAdminCustomersQuery, AdminCustomerListPage> handler,
         string? search,
         int? districtId,
+        string? countryCode,
         int? page,
         int? pageSize,
         CancellationToken cancellationToken)
@@ -82,7 +84,7 @@ internal static class AdminCustomerEndpoints
 
         return TypedResults.Ok(
             await handler.HandleAsync(
-                new GetAdminCustomersQuery(search, districtId, page, pageSize),
+                new GetAdminCustomersQuery(search, districtId, page, pageSize, countryCode),
                 cancellationToken));
     }
 

@@ -4,29 +4,29 @@ import { NavigationEnd, Router, RouterLink, RouterOutlet } from '@angular/router
 import { filter, map } from 'rxjs';
 import { BRAND } from '@spencer-denim/shared';
 
-import { AlertBanner } from './core/alerts/alert-banner';
+import { AlertBell } from './core/alerts/alert-bell';
 import { AdminSidebar } from './core/shell/admin-sidebar';
 
 /** Screens shown before a staff member is fully signed in: no sidebar there, only the header. */
 const SIGNED_OUT_PATHS = ['/login', '/login/two-factor', '/change-password', '/two-factor/setup'];
 
 /**
- * The admin shell: the header, the left-hand navigation, the alert banner and the router outlet.
+ * The admin shell: the header, the left-hand navigation, the alert bell and the router outlet.
  *
- * **The banner is here rather than on the dashboard, and the reason is in `AlertBanner`'s own
- * docblock.** Doc 08 §3.8 calls `ops.AdminAlerts` "the dashboard banner" and ADM-04's dashboard does not
+ * **The alerts are drawn as a bell in the header (UAT feedback, 2026-10-24); they were a full-width strip above
+ * the page.** The bell is here rather than on the dashboard, and the reason is in `AlertBell`'s own
+ * docblock. Doc 08 §3.8 calls `ops.AdminAlerts` "the dashboard banner" and ADM-04's dashboard does not
  * exist — the route at `/` is W0-09's scaffold placeholder. Doc 11 §6.1 step 1's morning routine starts
  * from these banners, so a dead email, a payment exception or a sensitive settings change has to reach a
  * Super Admin wherever in the panel they happen to be, not only if they go back to the home screen. The
- * component takes no inputs and fetches for itself, so ADM-04 can render the same `<sda-alert-banner />`
- * in a dashboard widget without a second implementation.
+ * component takes no inputs and fetches for itself, so no page needs a second implementation.
  *
  * **The sidebar is rendered only once signed in**, and is created afresh after each sign-in, so it reads
  * the new session's permissions rather than the previous user's.
  */
 @Component({
   selector: 'sda-root',
-  imports: [RouterOutlet, RouterLink, AlertBanner, AdminSidebar],
+  imports: [RouterOutlet, RouterLink, AlertBell, AdminSidebar],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="shell" [class.shell--nav]="showNav()">
@@ -48,8 +48,8 @@ const SIGNED_OUT_PATHS = ['/login', '/login/two-factor', '/change-password', '/t
             </button>
           }
           <a class="admin-header__brand" routerLink="/">{{ brand }}</a>
+          <sda-alert-bell />
         </header>
-        <sda-alert-banner />
         <main id="main">
           <router-outlet />
         </main>

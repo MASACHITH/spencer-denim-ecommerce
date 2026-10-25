@@ -218,6 +218,8 @@ internal static class UserEndpoints
             UpdateStaffUserProfileResult.TargetNotFound => TypedResults.NotFound(),
             UpdateStaffUserProfileResult.Forbidden forbidden => ToProblem(forbidden.Reason, forbidden.Message),
             UpdateStaffUserProfileResult.EmailAlreadyInUse => EmailAlreadyInUseProblem(),
+            UpdateStaffUserProfileResult.ProtectedEmail => ProtectedAccountProblem("The email address of a protected account cannot be changed."),
+            UpdateStaffUserProfileResult.GuardedEmail => GuardedAccountProblem("Only the technical owner's account can change this account's email address."),
             _ => throw new InvalidOperationException($"Unhandled {nameof(UpdateStaffUserProfileResult)}: {result.GetType().Name}"),
         };
     }
@@ -318,6 +320,8 @@ internal static class UserEndpoints
             SetStaffUserActiveResult.SelfEditNotAllowed => ToProblem(RbacDenialReason.SelfEditNotAllowed, "You cannot deactivate your own account."),
             SetStaffUserActiveResult.Forbidden forbidden => ToProblem(forbidden.Reason, forbidden.Message),
             SetStaffUserActiveResult.LastSuperAdminGuardTriggered => LastSuperAdminGuardProblem(),
+            SetStaffUserActiveResult.ProtectedAccount => ProtectedAccountProblem("This account is protected and can never be deactivated."),
+            SetStaffUserActiveResult.GuardedAccount => GuardedAccountProblem("Only the technical owner's account can activate or deactivate this account."),
             _ => throw new InvalidOperationException($"Unhandled {nameof(SetStaffUserActiveResult)}: {result.GetType().Name}"),
         };
     }
@@ -345,6 +349,20 @@ internal static class UserEndpoints
             title: "Email already in use.",
             detail: "Another account already uses this email address.",
             extensions: new Dictionary<string, object?> { ["error"] = "email_already_in_use" });
+
+    private static ProblemHttpResult ProtectedAccountProblem(string detail) =>
+        TypedResults.Problem(
+            statusCode: StatusCodes.Status409Conflict,
+            title: "Protected account.",
+            detail: detail,
+            extensions: new Dictionary<string, object?> { ["error"] = "protected_account" });
+
+    private static ProblemHttpResult GuardedAccountProblem(string detail) =>
+        TypedResults.Problem(
+            statusCode: StatusCodes.Status403Forbidden,
+            title: "Guarded account.",
+            detail: detail,
+            extensions: new Dictionary<string, object?> { ["error"] = "guarded_account" });
 
     private static ProblemHttpResult LastSuperAdminGuardProblem() =>
         TypedResults.Problem(

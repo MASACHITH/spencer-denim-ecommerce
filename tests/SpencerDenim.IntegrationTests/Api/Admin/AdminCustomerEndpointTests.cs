@@ -245,6 +245,65 @@ public sealed class AdminCustomerEndpointTests(SqlServerDatabaseFixture sqlServe
         Assert.Equal([galle], await IdsAsync(client, Marker, $"&districtId={galleId}"));
     }
 
+    /// <summary>
+    /// UAT feedback (2026-10-24): the district filter only knows Sri Lankan districts, so an overseas customer
+    /// could not be found by where they are. The country filter keys on the same fact the list shows on each
+    /// row: the country of the default saved address.
+    /// </summary>
+    [Fact]
+    public async Task The_country_filter_keeps_customers_whose_default_address_is_in_that_country()
+    {
+        await using var host = await StartAsync();
+        var british = await CreateCustomerAsync(host, $"{Marker}-gb@example.com", "Brit", Marker);
+        await AddOverseasAddressAsync(british, "GB", isDefault: true);
+
+        var local = await CreateCustomerAsync(host, $"{Marker}-lk@example.com", "Local", Marker, districtName: "Galle");
+        await AddAddressAsync(local, "Local", "Galle", isDefault: true);
+
+        // A British address that is not the default does not make this customer British.
+        var mixed = await CreateCustomerAsync(host, $"{Marker}-mixed@example.com", "Mixed", Marker, districtName: "Galle");
+        await AddAddressAsync(mixed, "Mixed", "Galle", isDefault: true);
+        await AddOverseasAddressAsync(mixed, "GB", isDefault: false);
+
+        // No saved address: in no country at all.
+        await CreateCustomerAsync(host, $"{Marker}-none@example.com", "None", Marker);
+
+        using var client = await host.SignInAsync(Permissions.Customers.View);
+
+        Assert.Equal([british], await IdsAsync(client, Marker, "&countryCode=GB"));
+        Assert.Equal([british], await IdsAsync(client, Marker, "&countryCode=gb"));
+        Assert.Equal([mixed, local], await IdsAsync(client, Marker, "&countryCode=LK"));
+        Assert.Empty(await IdsAsync(client, Marker, "&countryCode=FR"));
+
+        // Blank is every country, and the district filter still works beside it.
+        Assert.Equal(4, (await IdsAsync(client, Marker, "&countryCode=")).Count);
+        Assert.Equal([mixed, local], await IdsAsync(client, Marker, $"&countryCode=LK&districtId={await DistrictIdAsync("Galle")}"));
+    }
+
+    [Fact]
+    public async Task The_country_options_are_Sri_Lanka_and_the_countries_customers_are_in()
+    {
+        await using var host = await StartAsync();
+        var british = await CreateCustomerAsync(host, $"{Marker}-gb@example.com", "Brit", Marker);
+        await AddOverseasAddressAsync(british, "GB", isDefault: true);
+
+        using var client = await host.SignInAsync(Permissions.Customers.View);
+
+        var page = await GetJsonAsync(client, $"{CustomersUrl}?search={Uri.EscapeDataString(Marker)}");
+        var options = page.GetProperty("countries").EnumerateArray()
+            .ToDictionary(
+                option => option.GetProperty("code").GetString()!,
+                option => option.GetProperty("name").GetString()!);
+
+        Assert.Equal("Sri Lanka", options["LK"]);
+        Assert.Equal("United Kingdom", options["GB"]);
+        Assert.DoesNotContain("FR", options.Keys);
+
+        // By name, so the box reads alphabetically.
+        var names = page.GetProperty("countries").EnumerateArray().Select(option => option.GetProperty("name").GetString()!).ToList();
+        Assert.Equal(names.Order(StringComparer.CurrentCultureIgnoreCase), names);
+    }
+
     // ---- paging ---------------------------------------------------------------------------------
 
     /// <summary>
