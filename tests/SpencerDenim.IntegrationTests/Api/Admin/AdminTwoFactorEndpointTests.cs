@@ -1331,6 +1331,61 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
         Assert.Equal(0, await CountAuditRowsAsync(host, email, "Login"));
     }
 
+    /// <summary>
+    /// An account that is closed AND locked when the write runs is answered as the closed account it is: the same reply an
+    /// unknown or deactivated address always gets (doc 08 §3.1 DB10), never "locked", which would tell a caller that
+    /// holds the right password that the address exists. The locked answer is for an account that is still active.
+    /// </summary>
+    [Fact]
+    public async Task A_password_step_held_at_its_write_is_not_told_that_an_account_closed_and_locked_meanwhile_is_locked()
+    {
+        var gate = new PendingSignInWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("held-vs-closed-and-locked");
+        var userId = await CreateStaffUserAsync(host, email);
+        await EnrolThroughApiAsync(host, email);
+
+        var held = await SendPasswordStepHeldAsync(host, gate, email, async () =>
+        {
+            await SetActiveAsync(host, userId, active: false);
+            await SetLockedOutAsync(host, userId);
+        });
+
+        AssertSessionExpired(held, "closed and locked");
+    }
+
+    [Fact]
+    public async Task A_single_step_sign_in_held_at_its_write_is_not_told_that_an_account_closed_and_locked_meanwhile_is_locked()
+    {
+        var gate = new UserRowWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("single-step-vs-closed-and-locked");
+        var userId = await CreateStaffUserAsync(host, email);
+
+        using var heldClient = CreateClient(host);
+        gate.Arm();
+        var heldStep = PostJsonAsync(heldClient, LoginUrl, new { email, password = Password });
+        try
+        {
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+            await SetActiveAsync(host, userId, active: false);
+            await SetLockedOutAsync(host, userId);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var held = await heldStep;
+        var body = await held.Content.ReadAsStringAsync(Ct);
+
+        Assert.True(
+            held.StatusCode == HttpStatusCode.Unauthorized,
+            $"A sign-in for an account closed and locked while it ran is refused like any closed account. Got {(int)held.StatusCode}: {body}");
+        Assert.Equal("invalid_credentials", ErrorCodeOf(body));
+        Assert.Null(CookiePairOrNull(held, "sd_admin_auth"));
+    }
+
     // ---- issue #250, what the recording write leaves behind --------------------------------------------------------
 
     /// <summary>
@@ -1463,6 +1518,15 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
             using var wrong = await PostJsonAsync(anonymous, LoginUrl, new { email, password = "wrong" });
             Assert.Equal(attempt < maxFailedAttempts ? HttpStatusCode.Unauthorized : (HttpStatusCode)423, wrong.StatusCode);
         }
+    }
+
+    /// <summary>A lockout set directly, as the lockout statement would leave it (an hour, so no test outlives it).</summary>
+    private static async Task SetLockedOutAsync(WebApplicationFactory<Program> host, int userId)
+    {
+        var until = DateTimeOffset.UtcNow.AddHours(1);
+        await using var scope = host.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await dbContext.Users.Where(u => u.Id == userId).ExecuteUpdateAsync(s => s.SetProperty(u => u.LockoutEnd, until), Ct);
     }
 
     private static async Task<string> RotateSecurityStampAsync(WebApplicationFactory<Program> host, int userId)
