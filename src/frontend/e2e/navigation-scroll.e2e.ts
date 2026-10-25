@@ -85,6 +85,11 @@ async function contentLoaded(page: Page, timeout = 30_000): Promise<void> {
 const scrollY = (page: Page): Promise<number> => page.evaluate(() => Math.round(window.scrollY));
 
 async function scrollTo(page: Page, y: number): Promise<void> {
+  // The page has to be tall enough to be scrolled that far, and one on a throttled connection draws its content late:
+  // a scroll that asked for 300 on a page that was 292 px taller than the window stopped at 292 and failed the check below.
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight), { timeout: 60_000 })
+    .toBeGreaterThanOrEqual(y);
   await page.evaluate((target) => window.scrollTo(0, target), y);
   await expect.poll(() => scrollY(page)).toBeGreaterThanOrEqual(y - 2);
 }
