@@ -107,6 +107,17 @@ async function wasKept(page: Page): Promise<boolean> {
 }
 
 /**
+ * A DOM click for a poll that repeats it until the page has answered. **Not `count()` and then `evaluate()`:** the
+ * element can be gone between the two (a removed chip is removed by the very click that worked), and `evaluate`
+ * then waits for an element that never comes back, and the poll, which cannot interrupt its callback, runs out of
+ * time holding the last URL it saw. That was the occasional flaky run of the chip test (about one in ten to
+ * twenty), in which the page had in fact moved on. An element that is not there is simply not clicked.
+ */
+async function clickIfPresent(target: Locator): Promise<void> {
+  await target.evaluate((element: HTMLElement) => element.click(), undefined, { timeout: 1_000 }).catch(() => undefined);
+}
+
+/**
  * Runs `click` from a page that is scrolled down, and checks the page it opens starts at the top, is a client-side
  * navigation (the marker survives), and has its heading on screen.
  */
@@ -525,9 +536,7 @@ test.describe('a change of state does not move the shopper', () => {
     await expect
       .poll(
         async () => {
-          if (await chip.count()) {
-            await chip.evaluate((button: HTMLElement) => button.click());
-          }
+          await clickIfPresent(chip);
           return page.url();
         },
         { timeout: 15_000 },
@@ -551,7 +560,7 @@ test.describe('a change of state does not move the shopper', () => {
       .poll(
         async () => {
           if ((await cards.count()) === first) {
-            await page.getByRole('button', { name: 'Load More' }).evaluate((button: HTMLElement) => button.click());
+            await clickIfPresent(page.getByRole('button', { name: 'Load More' }));
           }
           return cards.count();
         },
@@ -645,9 +654,7 @@ test.describe('on the search results', () => {
     await expect
       .poll(
         async () => {
-          if (await chip.count()) {
-            await chip.evaluate((button: HTMLElement) => button.click());
-          }
+          await clickIfPresent(chip);
           return page.url();
         },
         { timeout: 15_000 },
@@ -670,7 +677,7 @@ test.describe('on the search results', () => {
       .poll(
         async () => {
           if ((await cards.count()) === first) {
-            await page.getByRole('button', { name: 'Load More' }).evaluate((button: HTMLElement) => button.click());
+            await clickIfPresent(page.getByRole('button', { name: 'Load More' }));
           }
           return cards.count();
         },
