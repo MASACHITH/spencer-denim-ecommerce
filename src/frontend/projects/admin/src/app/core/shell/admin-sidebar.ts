@@ -50,6 +50,7 @@ const ICON = {
   user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8',
   shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
   logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9',
+  book: 'M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z',
 } as const;
 
 /** The same sections, in the same order, as the dashboard's "Admin sections" list, grouped the way staff work. */
@@ -106,6 +107,10 @@ const GROUPS: readonly NavGroup[] = [
       { label: 'Staff users', path: '/users', icon: ICON.user },
       { label: 'Roles', path: '/roles', icon: ICON.shield },
     ],
+  },
+  {
+    label: 'Help',
+    links: [{ label: 'User guide', path: '/guide', icon: ICON.book }],
   },
 ];
 

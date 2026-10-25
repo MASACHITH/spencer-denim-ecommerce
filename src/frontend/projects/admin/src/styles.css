@@ -186,6 +186,22 @@ textarea.adm-input {
   cursor: not-allowed;
 }
 
+/* Printing ----------------------------------------------------------------------------------- */
+/* A screen staff print (the user guide, an invoice) should come out without the application's own frame:
+   the navigation column, the header bar and the alert banner. */
+@media print {
+  #admin-sidebar,
+  .admin-header,
+  sda-alert-banner {
+    display: none !important;
+  }
+
+  /* With the navigation column gone the page is the only grid item; let it use the whole sheet. */
+  .shell--nav {
+    display: block !important;
+  }
+}
+
 /* States and badges -------------------------------------------------------------------------- */
 
 .adm-state {
