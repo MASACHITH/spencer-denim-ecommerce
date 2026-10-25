@@ -44,7 +44,7 @@ public sealed class AdminCustomerQueryPlanTests(SqlServerDatabaseFixture sqlServ
         using var scope = sqlServer.CreateScope();
         var reader = (AdminCustomerReader)scope.ServiceProvider.GetRequiredService<IAdminCustomerReader>();
 
-        var sql = reader.PageQuery(AdminCustomerSearch.Classify(search), null, 1, 25).ToQueryString();
+        var sql = reader.PageQuery(AdminCustomerSearch.Classify(search), null, null, 1, 25).ToQueryString();
 
         // The statement is the one with the three aggregates in it, or this test is measuring nothing.
         Assert.Contains("[sales].[Orders]", sql, StringComparison.Ordinal);
@@ -83,7 +83,7 @@ public sealed class AdminCustomerQueryPlanTests(SqlServerDatabaseFixture sqlServ
         using var scope = sqlServer.CreateScope();
         var reader = (AdminCustomerReader)scope.ServiceProvider.GetRequiredService<IAdminCustomerReader>();
 
-        var sql = reader.PageQuery(AdminCustomerSearch.Classify(search), null, 1, 25).ToQueryString();
+        var sql = reader.PageQuery(AdminCustomerSearch.Classify(search), null, null, 1, 25).ToQueryString();
 
         var references = OrdersReference.Count(sql);
         Assert.Equal(3, references);

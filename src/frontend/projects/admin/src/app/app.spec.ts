@@ -38,7 +38,7 @@ describe('Admin App', () => {
    * than left as a template detail, because moving it back into one page is exactly the change that would
    * make a banner invisible on every other one.
    */
-  it('puts the alert banner in the shell, above the outlet, on every admin screen', async () => {
+  it('puts the alert bell in the shell header, above the outlet, on every admin screen', async () => {
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
     await fixture.whenStable();
@@ -71,13 +71,22 @@ describe('Admin App', () => {
     fixture.detectChanges();
     await fixture.whenStable();
 
-    const banner = element.querySelector('[data-testid="alert-banner"]');
-    expect(banner).not.toBeNull();
-    expect(banner?.textContent).toContain('SD-2026-000123');
+    // In the header, with its count, and shut: the alerts no longer push the page down (UAT feedback).
+    const bell = element.querySelector('.admin-header [data-testid="alert-bell"]') as HTMLButtonElement;
+    expect(bell).not.toBeNull();
+    expect(element.querySelector('[data-testid="alert-count"]')?.textContent?.trim()).toBe('1');
+    expect(element.querySelector('[data-testid="alert-panel"]')).toBeNull();
 
-    // Above the outlet rather than below it, so it is the first thing on the page after the header.
+    bell.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const panel = element.querySelector('[data-testid="alert-panel"]');
+    expect(panel?.textContent).toContain('SD-2026-000123');
+
+    // Above the outlet rather than below it, so it is reachable before the page's own controls.
     const main = element.querySelector('#main');
-    expect(banner!.compareDocumentPosition(main!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(bell.compareDocumentPosition(main!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   });
 
   /**

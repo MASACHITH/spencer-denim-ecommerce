@@ -26,6 +26,23 @@ const DISTRICTS = [
 
 const MAX_PAGE_SIZE = 100;
 
+/** The two countries the fixtures use. The real list is read off the customers' default addresses. */
+const COUNTRY_CODES = { 'Sri Lanka': 'LK', Canada: 'CA' };
+
+/** Sri Lanka, and every other country a customer's default address is in, by name. */
+function countryOptions(customers) {
+  const names = new Set(['Sri Lanka']);
+  for (const row of customers) {
+    if (row.countryName) {
+      names.add(row.countryName);
+    }
+  }
+
+  return [...names]
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => ({ code: COUNTRY_CODES[name] ?? '??', name }));
+}
+
 export function freshCustomerState() {
   return { customers: [], subscribers: [] };
 }
@@ -292,11 +309,13 @@ export async function handleCustomerRoute({ path, method, url, response, state, 
     const search = (url.searchParams.get('search') ?? '').trim().toLowerCase();
     const districtId = url.searchParams.get('districtId');
     const district = districtId ? DISTRICTS.find((candidate) => candidate.id === Number(districtId)) : null;
+    const countryCode = (url.searchParams.get('countryCode') ?? '').trim().toUpperCase();
 
     // Deliberately crude: the real classification is proved against SQL Server. Newest registration first.
     const digits = search.replace(/\D/g, '');
     const matching = state.customers
       .filter((row) => !districtId || row.districtName === district?.name)
+      .filter((row) => countryCode === '' || COUNTRY_CODES[row.countryName] === countryCode)
       .filter((row) => search === ''
         || listRow(row).name.toLowerCase().includes(search)
         || row.email.toLowerCase().startsWith(search)
@@ -309,6 +328,7 @@ export async function handleCustomerRoute({ path, method, url, response, state, 
       pageSize,
       totalCount: matching.length,
       districts: DISTRICTS,
+      countries: countryOptions(state.customers),
     });
     return true;
   }

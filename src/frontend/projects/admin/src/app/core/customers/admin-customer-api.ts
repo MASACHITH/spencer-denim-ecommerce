@@ -21,6 +21,7 @@ export class AdminCustomerApi {
   list(options: {
     search?: string | null;
     districtId?: number | null;
+    countryCode?: string | null;
     page: number;
     pageSize: number;
   }): Observable<AdminCustomerListPage> {
@@ -34,6 +35,10 @@ export class AdminCustomerApi {
 
     if (options.districtId !== null && options.districtId !== undefined) {
       params = params.set('districtId', String(options.districtId));
+    }
+
+    if (options.countryCode) {
+      params = params.set('countryCode', options.countryCode);
     }
 
     return this.http.get<AdminCustomerListPage>(AdminCustomerApi.url, { params });

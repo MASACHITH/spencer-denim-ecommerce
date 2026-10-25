@@ -5,7 +5,8 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
 import { ReportingApi } from '../../core/reporting/reporting-api';
 import { count } from '../../core/reporting/reporting-format';
 import { INVENTORY_FILTERS, InventoryReportPage, InventoryStockFilter } from '../../core/reporting/reporting.model';
-import { Announcer, canGo, rehomeFocus, saveFile, showing } from './report-shared';
+import { Announcer, ExportNote, canGo, exportFailed, exportSucceeded, rehomeFocus, saveFile, showing } from './report-shared';
+import { ExportNoteView } from './export-note';
 import { ChartTable, ChartView } from '../../core/charts/chart';
 import { DoughnutSpec, shareText, sharesOf } from '../../core/charts/chart-config';
 
@@ -27,7 +28,7 @@ const FILTER_LABELS: Record<InventoryStockFilter, string> = {
  */
 @Component({
   selector: 'sda-inventory-report',
-  imports: [ChartView],
+  imports: [ChartView, ExportNoteView],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <form class="rpt__filters" aria-label="Inventory report filters" (submit)="apply($event)">
@@ -52,6 +53,7 @@ const FILTER_LABELS: Record<InventoryStockFilter, string> = {
           {{ exporting() ? 'Preparing the file…' : 'Export CSV' }}
         </button>
       </div>
+      <sda-export-note [note]="exportNote()" testId="inventory-export-note" />
     }
 
     <p class="sr-only" role="status" tabindex="-1" data-testid="inventory-status-message">{{ announcer.text() }}</p>
@@ -144,6 +146,7 @@ export class InventoryReportView implements OnInit {
   protected readonly page = signal<InventoryReportPage | null>(null);
   protected readonly problem = signal<CatalogFailure | null>(null);
   protected readonly exporting = signal(false);
+  protected readonly exportNote = signal<ExportNote | null>(null);
 
   private requests = 0;
 
@@ -218,6 +221,7 @@ export class InventoryReportView implements OnInit {
     }
 
     this.exporting.set(true);
+    this.exportNote.set(null);
     this.announcer.say('Preparing the export…');
 
     const { status, search } = this.applied();
@@ -226,10 +230,12 @@ export class InventoryReportView implements OnInit {
         this.exporting.set(false);
         saveFile(this.document, file.blob, file.fileName);
         this.announcer.say(`Export downloaded as ${file.fileName}.`);
+        this.exportNote.set(exportSucceeded(file.fileName));
       },
       error: (error: unknown) => {
         this.exporting.set(false);
         this.announcer.say(`The export failed. ${toCatalogFailure(error).message}`);
+        this.exportNote.set(exportFailed(toCatalogFailure(error).message));
       },
     });
   }
@@ -240,6 +246,7 @@ export class InventoryReportView implements OnInit {
    * line after the next render — `afterNextRender`, never `queueMicrotask` (#109).
    */
   private load(target: number): void {
+    this.exportNote.set(null);
     const request = ++this.requests;
     const { status, search } = this.applied();
 

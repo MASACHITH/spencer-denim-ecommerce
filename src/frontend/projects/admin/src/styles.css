@@ -132,6 +132,22 @@ textarea.adm-input {
   cursor: pointer;
 }
 
+/*
+ * A link that leaves the admin, such as a courier's tracking page: **blue and underlined**, so it reads as something
+ * to click. Everything else in the admin is black on white, and a tracking number in plain black text looked like
+ * a label (UAT feedback). 6.7:1 on white, 6.2:1 on the admin's ivory, so it meets WCAG AA for text. The arrow is
+ * decoration; the screen-reader text says what the link does.
+ */
+.adm-link--external {
+  color: #1d4ed8;
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.adm-link--external:hover {
+  color: #1e3a8a;
+}
+
 .adm-btn,
 .adm-btn--primary,
 .adm-btn--danger {

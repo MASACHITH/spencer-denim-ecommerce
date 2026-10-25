@@ -767,6 +767,38 @@ describe('ProductFormPage (ADM-10)', () => {
     expect(testId('announcement').textContent).toContain('poster');
   });
 
+  it('says in plain words, in view, why a photograph was refused by the web server', async () => {
+    await open(product({ media: [] }));
+
+    const input = testId<HTMLInputElement>('upload-image');
+    Object.defineProperty(input, 'files', { value: [new File(['x'], 'front.png', { type: 'image/png' })] });
+
+    input.dispatchEvent(new Event('change'));
+    await settle();
+
+    // The web server in front of the API answers an over-size upload itself, with a page and no JSON.
+    writeTo(AdminProductApi.mediaImagesUrl).flush('<html>413</html>', { status: 413, statusText: 'Payload Too Large' });
+    await settle();
+
+    expect(testId('media-error').textContent).toContain('larger than the server accepts');
+    expect(element.querySelector('[data-testid="media-status"]')).toBeNull();
+  });
+
+  it('names the status number when the server breaks while a photograph is uploading', async () => {
+    await open(product({ media: [] }));
+
+    const input = testId<HTMLInputElement>('upload-image');
+    Object.defineProperty(input, 'files', { value: [new File(['x'], 'front.png', { type: 'image/png' })] });
+
+    input.dispatchEvent(new Event('change'));
+    await settle();
+
+    writeTo(AdminProductApi.mediaImagesUrl).flush(null, { status: 503, statusText: 'Service Unavailable' });
+    await settle();
+
+    expect(testId('media-error').textContent).toContain('error 503');
+  });
+
   it('uploads a photograph through the media library and adds it to the gallery', async () => {
     await open(product({ media: [] }));
 
@@ -776,6 +808,9 @@ describe('ProductFormPage (ADM-10)', () => {
 
     input.dispatchEvent(new Event('change'));
     await settle();
+
+    // UAT feedback: choosing a file looked like it did nothing, because only a hidden live region said so.
+    expect(testId('media-status').textContent).toContain('Uploading front.png');
 
     const request = writeTo(AdminProductApi.mediaImagesUrl);
 
@@ -794,6 +829,7 @@ describe('ProductFormPage (ADM-10)', () => {
     await settle();
 
     expect(testId('media-list').children).toHaveLength(1);
+    expect(testId('media-status').textContent).toContain('front.png is added to the gallery');
 
     // And the gallery is now "touched", so the next save sends the field.
     await save();
