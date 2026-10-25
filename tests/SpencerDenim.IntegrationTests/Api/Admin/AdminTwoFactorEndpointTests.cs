@@ -797,6 +797,798 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
         Assert.Null(CookiePairOrNull(held, "sd_admin_2fa"));
     }
 
+    // ---- issue #250: a sign-in that overlaps a change to the account must not undo it ----------------------------
+    //
+    // Identity saves a user as a whole row, so a sign-in that loaded the account, spent its time on the password hash
+    // and then wrote, put back every column it had loaded: a deactivation became "active" again, and a password change
+    // was replaced by the old hash and the old security stamp. The window is the hash verification, a few hundred
+    // milliseconds; the gates stop the request AT its write so the change can be made inside it deterministically.
+    // These tests were red on the whole-row save and say which part of it did what.
+
+    /// <summary>
+    /// A password step held at its pending-sign-in write while an administrator deactivates the account. The account
+    /// must stay deactivated, and the held step must not hand out a pending sign-in for it (its write is conditional
+    /// on the account still being active and unchanged, so it finds nothing to write and is told it is too late).
+    /// </summary>
+    [Fact]
+    public async Task A_password_step_held_at_its_write_cannot_re_activate_an_account_deactivated_meanwhile()
+    {
+        var gate = new PendingSignInWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("held-vs-deactivation");
+        var userId = await CreateStaffUserAsync(host, email);
+        await EnrolThroughApiAsync(host, email);
+
+        using var heldClient = CreateClient(host);
+        gate.Arm();
+        var heldStep = PostJsonAsync(heldClient, LoginUrl, new { email, password = Password });
+        try
+        {
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+            await SetActiveAsync(host, userId, active: false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var held = await heldStep;
+        var body = await held.Content.ReadAsStringAsync(Ct);
+
+        Assert.False((await FindUserAsync(host, userId)).IsActive, "The deactivated account was made active again by the sign-in's write.");
+        Assert.True(
+            held.StatusCode == HttpStatusCode.Unauthorized,
+            $"A sign-in for an account that was deactivated while it ran is refused. Got {(int)held.StatusCode}: {body}");
+        Assert.Equal("two_factor_session_expired", ErrorCodeOf(body));
+        Assert.Null(CookiePairOrNull(held, "sd_admin_2fa"));
+        Assert.Equal(0, await PendingSignInRowsAsync(host, userId));
+    }
+
+    /// <summary>
+    /// The same overlap for the SECOND step: the code has been accepted and the session is about to be issued when the
+    /// account is deactivated. The write that records the sign-in is the last look at the account, so it must refuse
+    /// and no session may come out; the account stays deactivated.
+    /// </summary>
+    [Fact]
+    public async Task A_second_step_held_at_its_sign_in_write_gets_no_session_for_an_account_deactivated_meanwhile()
+    {
+        var gate = new UserRowWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("second-step-vs-deactivation");
+        var userId = await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        using var client = await PendingSignInAsync(host, email);
+
+        gate.Arm();
+        var heldStep = SendSecondStepAsync(client, TotpTestCodes.Next(key));
+        try
+        {
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+            await SetActiveAsync(host, userId, active: false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var held = await heldStep;
+        var body = await held.Content.ReadAsStringAsync(Ct);
+
+        Assert.False((await FindUserAsync(host, userId)).IsActive, "The deactivated account was made active again by the sign-in's write.");
+        Assert.True(
+            held.StatusCode == HttpStatusCode.Unauthorized,
+            $"No session for an account deactivated while the code was being checked. Got {(int)held.StatusCode}: {body}");
+        Assert.Equal("two_factor_session_expired", ErrorCodeOf(body));
+        Assert.Null(CookiePairOrNull(held, "sd_admin_auth"));
+    }
+
+    /// <summary>
+    /// A password step held at its pending-sign-in write while the owner changes the password from another session.
+    /// The new hash and the rotated security stamp must survive: the old pair coming back would make the new password
+    /// stop working, the old one work again, and bring back every session the change was meant to end.
+    /// </summary>
+    [Fact]
+    public async Task A_password_step_held_at_its_write_cannot_undo_a_password_change_made_meanwhile()
+    {
+        var gate = new PendingSignInWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("held-vs-password-change");
+        var userId = await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        // The session that will change the password: password step, then code.
+        using var session = await PendingSignInAsync(host, email);
+        using (var signedIn = await SendSecondStepAsync(session, TotpTestCodes.Next(key)))
+        {
+            Assert.Equal(HttpStatusCode.OK, signedIn.StatusCode);
+        }
+
+        var stampBefore = (await FindUserAsync(host, userId)).SecurityStamp;
+
+        using var heldClient = CreateClient(host);
+        gate.Arm();
+        var heldStep = PostJsonAsync(heldClient, LoginUrl, new { email, password = Password });
+        string? stampAfterChange;
+        string? hashAfterChange;
+        try
+        {
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+
+            using var change = await PostWithTokenAsync(session, ChangePasswordUrl, new { currentPassword = Password, newPassword = NewPassword });
+            Assert.Equal(HttpStatusCode.NoContent, change.StatusCode);
+
+            var changed = await FindUserAsync(host, userId);
+            stampAfterChange = changed.SecurityStamp;
+            hashAfterChange = changed.PasswordHash;
+            Assert.NotEqual(stampBefore, stampAfterChange);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var held = await heldStep;
+        var body = await held.Content.ReadAsStringAsync(Ct);
+
+        var after = await FindUserAsync(host, userId);
+        Assert.True(
+            string.Equals(after.SecurityStamp, stampAfterChange, StringComparison.Ordinal),
+            "The sign-in's write put the old security stamp back: every session the password change ended is alive again.");
+        Assert.True(
+            string.Equals(after.PasswordHash, hashAfterChange, StringComparison.Ordinal),
+            "The sign-in's write put the old password hash back.");
+
+        // The step verified the OLD password against the account as it was; the account is not that any more.
+        Assert.True(
+            held.StatusCode == HttpStatusCode.Unauthorized,
+            $"A sign-in that verified a password that was changed meanwhile is refused. Got {(int)held.StatusCode}: {body}");
+        Assert.Null(CookiePairOrNull(held, "sd_admin_2fa"));
+
+        using var newPassword = await PostJsonAsync(CreateClient(host), LoginUrl, new { email, password = NewPassword });
+        Assert.Equal(HttpStatusCode.OK, newPassword.StatusCode);
+        Assert.True((await ReadJsonAsync(newPassword)).GetProperty("twoFactorRequired").GetBoolean());
+
+        using var oldPassword = await PostJsonAsync(CreateClient(host), LoginUrl, new { email, password = Password });
+        Assert.Equal(HttpStatusCode.Unauthorized, oldPassword.StatusCode);
+    }
+
+    /// <summary>
+    /// The second step, held at the write that records the sign-in, while the owner changes the password from another
+    /// session. The pending sign-in was opened against the old security stamp, so the write must refuse: no session, and
+    /// the new hash and the rotated stamp stay. (A later time step's code is used because the first session spent the
+    /// earlier one: a code is accepted once.)
+    /// </summary>
+    [Fact]
+    public async Task A_second_step_held_at_its_sign_in_write_cannot_undo_a_password_change_made_meanwhile()
+    {
+        var gate = new UserRowWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("second-step-vs-password-change");
+        var userId = await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        using var session = await PendingSignInAsync(host, email);
+        using (var signedIn = await SendSecondStepAsync(session, TotpTestCodes.Next(key)))
+        {
+            Assert.Equal(HttpStatusCode.OK, signedIn.StatusCode);
+        }
+
+        using var client = await PendingSignInAsync(host, email);
+        var stampBefore = (await FindUserAsync(host, userId)).SecurityStamp;
+
+        gate.Arm();
+        var heldStep = SendSecondStepAsync(client, TotpTestCodes.Next(key, stepsAhead: 2));
+        string? stampAfterChange;
+        string? hashAfterChange;
+        try
+        {
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+
+            using var change = await PostWithTokenAsync(session, ChangePasswordUrl, new { currentPassword = Password, newPassword = NewPassword });
+            Assert.Equal(HttpStatusCode.NoContent, change.StatusCode);
+
+            var changed = await FindUserAsync(host, userId);
+            stampAfterChange = changed.SecurityStamp;
+            hashAfterChange = changed.PasswordHash;
+            Assert.NotEqual(stampBefore, stampAfterChange);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var held = await heldStep;
+        var body = await held.Content.ReadAsStringAsync(Ct);
+
+        var after = await FindUserAsync(host, userId);
+        Assert.True(
+            string.Equals(after.SecurityStamp, stampAfterChange, StringComparison.Ordinal),
+            "The sign-in's write put the old security stamp back: every session the password change ended is alive again.");
+        Assert.True(
+            string.Equals(after.PasswordHash, hashAfterChange, StringComparison.Ordinal),
+            "The sign-in's write put the old password hash back.");
+        Assert.True(
+            held.StatusCode == HttpStatusCode.Unauthorized,
+            $"A second step whose pending sign-in was opened against the old password gets no session. Got {(int)held.StatusCode}: {body}");
+        Assert.Equal("two_factor_session_expired", ErrorCodeOf(body));
+        Assert.Null(CookiePairOrNull(held, "sd_admin_auth"));
+    }
+
+    /// <summary>
+    /// An account WITHOUT 2FA: one request checks the password and issues the session, so the write that records the
+    /// sign-in is the only place the deactivation can be lost. Held there, with the account deactivated meanwhile:
+    /// no session, and the account stays deactivated.
+    /// </summary>
+    [Fact]
+    public async Task A_single_step_sign_in_held_at_its_write_gets_no_session_for_an_account_deactivated_meanwhile()
+    {
+        var gate = new UserRowWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("single-step-vs-deactivation");
+        var userId = await CreateStaffUserAsync(host, email);
+
+        using var heldClient = CreateClient(host);
+        gate.Arm();
+        var heldStep = PostJsonAsync(heldClient, LoginUrl, new { email, password = Password });
+        try
+        {
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+            await SetActiveAsync(host, userId, active: false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var held = await heldStep;
+        var body = await held.Content.ReadAsStringAsync(Ct);
+
+        Assert.False((await FindUserAsync(host, userId)).IsActive, "The deactivated account was made active again by the sign-in's write.");
+        Assert.True(
+            held.StatusCode == HttpStatusCode.Unauthorized,
+            $"No session for an account deactivated while its password was being checked. Got {(int)held.StatusCode}: {body}");
+        Assert.Equal("invalid_credentials", ErrorCodeOf(body));
+        Assert.Null(CookiePairOrNull(held, "sd_admin_auth"));
+    }
+
+    /// <summary>
+    /// An account without 2FA, the password changed from another session while the old password's sign-in is held at
+    /// its write: the new hash and stamp survive and the held sign-in gets no session.
+    /// </summary>
+    [Fact]
+    public async Task A_single_step_sign_in_held_at_its_write_cannot_undo_a_password_change_made_meanwhile()
+    {
+        var gate = new UserRowWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("single-step-vs-password-change");
+        var userId = await CreateStaffUserAsync(host, email);
+
+        using var session = await SignedInClientAsync(host, email);
+        var stampBefore = (await FindUserAsync(host, userId)).SecurityStamp;
+
+        using var heldClient = CreateClient(host);
+        gate.Arm();
+        var heldStep = PostJsonAsync(heldClient, LoginUrl, new { email, password = Password });
+        string? stampAfterChange;
+        string? hashAfterChange;
+        try
+        {
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+
+            using var change = await PostWithTokenAsync(session, ChangePasswordUrl, new { currentPassword = Password, newPassword = NewPassword });
+            Assert.Equal(HttpStatusCode.NoContent, change.StatusCode);
+
+            var changed = await FindUserAsync(host, userId);
+            stampAfterChange = changed.SecurityStamp;
+            hashAfterChange = changed.PasswordHash;
+            Assert.NotEqual(stampBefore, stampAfterChange);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var held = await heldStep;
+        var body = await held.Content.ReadAsStringAsync(Ct);
+
+        var after = await FindUserAsync(host, userId);
+        Assert.True(
+            string.Equals(after.SecurityStamp, stampAfterChange, StringComparison.Ordinal),
+            "The sign-in's write put the old security stamp back: every session the password change ended is alive again.");
+        Assert.True(
+            string.Equals(after.PasswordHash, hashAfterChange, StringComparison.Ordinal),
+            "The sign-in's write put the old password hash back.");
+        Assert.True(
+            held.StatusCode == HttpStatusCode.Unauthorized,
+            $"A sign-in that verified a password changed meanwhile gets no session. Got {(int)held.StatusCode}: {body}");
+        Assert.Null(CookiePairOrNull(held, "sd_admin_auth"));
+
+        using var newPassword = await PostJsonAsync(CreateClient(host), LoginUrl, new { email, password = NewPassword });
+        Assert.Equal(HttpStatusCode.OK, newPassword.StatusCode);
+
+        using var oldPassword = await PostJsonAsync(CreateClient(host), LoginUrl, new { email, password = Password });
+        Assert.Equal(HttpStatusCode.Unauthorized, oldPassword.StatusCode);
+    }
+
+    /// <summary>
+    /// A lockout that lands while a password step is held at its write: the lockout must survive it (it was already
+    /// protected by <c>AppUserStore</c>, which keeps the two lockout columns out of a save that did not change them),
+    /// and the step must not be handed a pending sign-in for a locked account. The write's condition names the lockout,
+    /// so it finds nothing to write, and the step is answered as locked, 423, which is what the next attempt would get
+    /// and what the endpoint already says for a locked account: no pending cookie, no pending row.
+    /// </summary>
+    [Fact]
+    public async Task A_lockout_that_lands_while_a_password_step_is_held_survives_it()
+    {
+        var gate = new PendingSignInWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("held-vs-lockout");
+        var userId = await CreateStaffUserAsync(host, email);
+        await EnrolThroughApiAsync(host, email);
+
+        var held = await SendPasswordStepHeldAsync(host, gate, email, () => LockAccountAsync(host, email));
+
+        var after = await FindUserAsync(host, userId);
+        Assert.True(after.LockoutEnd > DateTimeOffset.UtcNow, "The held sign-in's write wiped the lockout that landed while it waited.");
+        Assert.True(
+            held.Status == (HttpStatusCode)423,
+            $"A password step that finds the account locked when it writes is answered as locked. Got {(int)held.Status}: {held.Body}");
+        Assert.Null(held.PendingCookie);
+        Assert.Equal(0, await PendingSignInRowsAsync(host, userId));
+    }
+
+    /// <summary>
+    /// The same lockout, but the account already has a pending sign-in, so the held write is the <c>UPDATE</c> that
+    /// replaces it and not the <c>INSERT</c> that opens the first one. Both carry the condition, and each needs a test
+    /// of its own: the branch is chosen by a read made before the write, so a test of one proves nothing of the other.
+    /// The row that was there is left exactly as it was.
+    /// </summary>
+    [Fact]
+    public async Task A_lockout_that_lands_while_a_password_step_is_held_at_the_replace_write_opens_no_new_pending_sign_in()
+    {
+        var gate = new PendingSignInWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("replace-vs-lockout");
+        var userId = await CreateStaffUserAsync(host, email);
+        await EnrolThroughApiAsync(host, email);
+
+        using var firstBrowser = await PendingSignInAsync(host, email);
+        var rowBefore = await PendingSignInValueAsync(host, userId);
+        Assert.NotNull(rowBefore);
+
+        var held = await SendPasswordStepHeldAsync(host, gate, email, () => LockAccountAsync(host, email));
+
+        Assert.True(
+            held.Status == (HttpStatusCode)423,
+            $"A password step that finds the account locked when it writes is answered as locked. Got {(int)held.Status}: {held.Body}");
+        Assert.Null(held.PendingCookie);
+        Assert.Equal(rowBefore, await PendingSignInValueAsync(host, userId));
+        Assert.True((await FindUserAsync(host, userId)).LockoutEnd > DateTimeOffset.UtcNow);
+    }
+
+    // ---- issue #250, the replace branch -------------------------------------------------------------------------
+    //
+    // A password step on an account that already has a pending sign-in (a second tab, a second browser, a retry) writes
+    // an UPDATE of that row instead of an INSERT. The six tests above all use an account with no pending sign-in, so
+    // they reach only the INSERT; these hold the UPDATE and change the account while it waits. In each the write must
+    // find nothing to replace: the step is told its sign-in is over (401 two_factor_session_expired), gets no pending
+    // cookie, and the row that was there is untouched.
+
+    [Fact]
+    public async Task A_password_step_held_at_the_replace_write_opens_no_pending_sign_in_for_an_account_deactivated_meanwhile()
+    {
+        var gate = new PendingSignInWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("replace-vs-deactivation");
+        var userId = await CreateStaffUserAsync(host, email);
+        await EnrolThroughApiAsync(host, email);
+
+        using var firstBrowser = await PendingSignInAsync(host, email);
+        var rowBefore = await PendingSignInValueAsync(host, userId);
+        Assert.NotNull(rowBefore);
+
+        var held = await SendPasswordStepHeldAsync(host, gate, email, () => SetActiveAsync(host, userId, active: false));
+
+        Assert.False((await FindUserAsync(host, userId)).IsActive, "The deactivated account was made active again by the sign-in's write.");
+        AssertSessionExpired(held, "deactivated");
+        Assert.Equal(rowBefore, await PendingSignInValueAsync(host, userId));
+    }
+
+    [Fact]
+    public async Task A_password_step_held_at_the_replace_write_opens_no_pending_sign_in_for_an_account_whose_security_stamp_rotated_meanwhile()
+    {
+        var gate = new PendingSignInWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("replace-vs-stamp");
+        var userId = await CreateStaffUserAsync(host, email);
+        await EnrolThroughApiAsync(host, email);
+
+        using var firstBrowser = await PendingSignInAsync(host, email);
+        var rowBefore = await PendingSignInValueAsync(host, userId);
+        Assert.NotNull(rowBefore);
+
+        // What a role change, a reset of the authenticator or a password change from elsewhere does to the account.
+        string? rotated = null;
+        var held = await SendPasswordStepHeldAsync(host, gate, email, async () =>
+        {
+            rotated = await RotateSecurityStampAsync(host, userId);
+        });
+
+        Assert.Equal(rotated, (await FindUserAsync(host, userId)).SecurityStamp);
+        AssertSessionExpired(held, "stamp-rotated");
+        Assert.Equal(rowBefore, await PendingSignInValueAsync(host, userId));
+    }
+
+    [Fact]
+    public async Task A_password_step_held_at_the_replace_write_opens_no_pending_sign_in_for_an_account_whose_password_was_changed_meanwhile()
+    {
+        var gate = new PendingSignInWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("replace-vs-password-change");
+        var userId = await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        // The session that will change the password: password step, then code. Its pending sign-in is spent.
+        using var session = await PendingSignInAsync(host, email);
+        using (var signedIn = await SendSecondStepAsync(session, TotpTestCodes.Next(key)))
+        {
+            Assert.Equal(HttpStatusCode.OK, signedIn.StatusCode);
+        }
+
+        // A later browser's pending sign-in: the row the held step will try to replace.
+        using var otherBrowser = await PendingSignInAsync(host, email);
+        var rowBefore = await PendingSignInValueAsync(host, userId);
+        Assert.NotNull(rowBefore);
+        var stampBefore = (await FindUserAsync(host, userId)).SecurityStamp;
+
+        string? hashAfterChange = null;
+        var held = await SendPasswordStepHeldAsync(host, gate, email, async () =>
+        {
+            using var change = await PostWithTokenAsync(session, ChangePasswordUrl, new { currentPassword = Password, newPassword = NewPassword });
+            Assert.Equal(HttpStatusCode.NoContent, change.StatusCode);
+            hashAfterChange = (await FindUserAsync(host, userId)).PasswordHash;
+        });
+
+        var after = await FindUserAsync(host, userId);
+        Assert.NotEqual(stampBefore, after.SecurityStamp);
+        Assert.True(string.Equals(after.PasswordHash, hashAfterChange, StringComparison.Ordinal), "The sign-in's write put the old password hash back.");
+        AssertSessionExpired(held, "password-changed");
+        Assert.Equal(rowBefore, await PendingSignInValueAsync(host, userId));
+    }
+
+    // ---- issue #250, a lockout that lands at the last write ------------------------------------------------------
+    //
+    // The password or the code was checked while the account was unlocked; a burst of wrong passwords then locked it
+    // while the sign-in waited at its last write. Without the lockout in that write's condition the sign-in went on to
+    // issue a session for a locked account (the audit log showed Lockout, then Login). It is answered with the same
+    // locked answer the endpoint gives everywhere else (423), not a new status.
+
+    [Fact]
+    public async Task A_second_step_held_at_its_sign_in_write_is_refused_as_locked_when_the_account_locks_meanwhile()
+    {
+        var gate = new UserRowWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("second-step-vs-lockout");
+        var userId = await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        using var client = await PendingSignInAsync(host, email);
+        var loginRowsBefore = await CountAuditRowsAsync(host, email, "Login");
+
+        gate.Arm();
+        var heldStep = SendSecondStepAsync(client, TotpTestCodes.Next(key));
+        try
+        {
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+            await LockAccountAsync(host, email);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var held = await heldStep;
+        var body = await held.Content.ReadAsStringAsync(Ct);
+
+        Assert.True(
+            held.StatusCode == (HttpStatusCode)423,
+            $"A second step that finds the account locked at its last write is answered as locked. Got {(int)held.StatusCode}: {body}");
+        Assert.Null(CookiePairOrNull(held, "sd_admin_auth"));
+        Assert.True((await FindUserAsync(host, userId)).LockoutEnd > DateTimeOffset.UtcNow, "The lockout did not survive the sign-in.");
+        Assert.Equal(loginRowsBefore, await CountAuditRowsAsync(host, email, "Login"));
+    }
+
+    [Fact]
+    public async Task A_single_step_sign_in_held_at_its_write_is_refused_as_locked_when_the_account_locks_meanwhile()
+    {
+        var gate = new UserRowWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("single-step-vs-lockout");
+        var userId = await CreateStaffUserAsync(host, email);
+
+        using var heldClient = CreateClient(host);
+        gate.Arm();
+        var heldStep = PostJsonAsync(heldClient, LoginUrl, new { email, password = Password });
+        try
+        {
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+            await LockAccountAsync(host, email);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var held = await heldStep;
+        var body = await held.Content.ReadAsStringAsync(Ct);
+
+        Assert.True(
+            held.StatusCode == (HttpStatusCode)423,
+            $"A sign-in that finds the account locked at its last write is answered as locked. Got {(int)held.StatusCode}: {body}");
+        Assert.Null(CookiePairOrNull(held, "sd_admin_auth"));
+        Assert.True((await FindUserAsync(host, userId)).LockoutEnd > DateTimeOffset.UtcNow, "The lockout did not survive the sign-in.");
+        Assert.Equal(0, await CountAuditRowsAsync(host, email, "Login"));
+    }
+
+    /// <summary>
+    /// An account that is closed AND locked when the write runs is answered as the closed account it is: the same reply an
+    /// unknown or deactivated address always gets (doc 08 §3.1 DB10), never "locked", which would tell a caller that
+    /// holds the right password that the address exists. The locked answer is for an account that is still active.
+    /// </summary>
+    [Fact]
+    public async Task A_password_step_held_at_its_write_is_not_told_that_an_account_closed_and_locked_meanwhile_is_locked()
+    {
+        var gate = new PendingSignInWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("held-vs-closed-and-locked");
+        var userId = await CreateStaffUserAsync(host, email);
+        await EnrolThroughApiAsync(host, email);
+
+        var held = await SendPasswordStepHeldAsync(host, gate, email, async () =>
+        {
+            await SetActiveAsync(host, userId, active: false);
+            await SetLockedOutAsync(host, userId);
+        });
+
+        AssertSessionExpired(held, "closed and locked");
+    }
+
+    [Fact]
+    public async Task A_single_step_sign_in_held_at_its_write_is_not_told_that_an_account_closed_and_locked_meanwhile_is_locked()
+    {
+        var gate = new UserRowWriteGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("single-step-vs-closed-and-locked");
+        var userId = await CreateStaffUserAsync(host, email);
+
+        using var heldClient = CreateClient(host);
+        gate.Arm();
+        var heldStep = PostJsonAsync(heldClient, LoginUrl, new { email, password = Password });
+        try
+        {
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+            await SetActiveAsync(host, userId, active: false);
+            await SetLockedOutAsync(host, userId);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var held = await heldStep;
+        var body = await held.Content.ReadAsStringAsync(Ct);
+
+        Assert.True(
+            held.StatusCode == HttpStatusCode.Unauthorized,
+            $"A sign-in for an account closed and locked while it ran is refused like any closed account. Got {(int)held.StatusCode}: {body}");
+        Assert.Equal("invalid_credentials", ErrorCodeOf(body));
+        Assert.Null(CookiePairOrNull(held, "sd_admin_auth"));
+    }
+
+    // ---- issue #250, what the recording write leaves behind --------------------------------------------------------
+
+    /// <summary>
+    /// The last-login write goes around <c>SaveChanges</c>, so the audit interceptor never sees it and the write sets the
+    /// two audit columns itself. <c>UpdatedAtUtc</c> is the time it records; <c>UpdatedByUserId</c> is what the
+    /// interceptor would have stamped for an anonymous sign-in request, which is null, and not what a previous save left
+    /// there. Both account kinds end in the same write, and both are checked.
+    /// </summary>
+    [Fact]
+    public async Task A_completed_sign_in_stamps_the_audit_columns_with_the_time_it_records()
+    {
+        await using var host = await StartAsync();
+        var plainEmail = UniqueEmail("audit-columns-plain");
+        var plainId = await CreateStaffUserAsync(host, plainEmail);
+        var twoFactorEmail = UniqueEmail("audit-columns-two-factor");
+        var twoFactorId = await CreateStaffUserAsync(host, twoFactorEmail);
+        var key = await EnrolThroughApiAsync(host, twoFactorEmail);
+
+        var longAgo = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        foreach (var id in new[] { plainId, twoFactorId })
+        {
+            await using var scope = host.Services.CreateAsyncScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await dbContext.Users.Where(u => u.Id == id).ExecuteUpdateAsync(
+                s => s.SetProperty(u => u.UpdatedAtUtc, longAgo).SetProperty(u => u.UpdatedByUserId, (int?)id), Ct);
+        }
+
+        using (var plain = await SignedInClientAsync(host, plainEmail))
+        {
+            Assert.NotNull(plain);
+        }
+
+        using (var pending = await PendingSignInAsync(host, twoFactorEmail))
+        using (var signedIn = await SendSecondStepAsync(pending, TotpTestCodes.Next(key)))
+        {
+            Assert.Equal(HttpStatusCode.OK, signedIn.StatusCode);
+        }
+
+        foreach (var id in new[] { plainId, twoFactorId })
+        {
+            var user = await FindUserAsync(host, id);
+            Assert.NotNull(user.LastLoginAtUtc);
+            Assert.True(user.UpdatedAtUtc > longAgo, $"User {id}: the sign-in's write left UpdatedAtUtc at {user.UpdatedAtUtc:O}.");
+            Assert.True(
+                Math.Abs((user.UpdatedAtUtc!.Value - user.LastLoginAtUtc!.Value).TotalSeconds) < 5,
+                $"User {id}: UpdatedAtUtc ({user.UpdatedAtUtc:O}) is not the time the sign-in recorded ({user.LastLoginAtUtc:O}).");
+            Assert.True(user.UpdatedByUserId is null, $"User {id}: UpdatedByUserId is {user.UpdatedByUserId}; an anonymous sign-in stamps null.");
+        }
+    }
+
+    // ---- issue #250, only a lost race is a 401 ---------------------------------------------------------------------
+
+    /// <summary>
+    /// The pending write answers 401 for a unique-key violation (a lost race, #145) and for nothing else. A SQL error that
+    /// is not one (here: a trigger that refuses the row) is a bug, and must stay a 500 rather than become a quiet 401 that
+    /// looks like an expired sign-in. The trigger is named for one user and dropped afterwards, so it cannot touch another
+    /// test's sign-in on the shared database.
+    /// </summary>
+    [Fact]
+    public async Task A_sql_error_that_is_not_a_unique_violation_on_the_pending_write_is_a_500_not_a_401()
+    {
+        await using var host = await StartAsync();
+        var email = UniqueEmail("pending-write-fails");
+        var userId = await CreateStaffUserAsync(host, email);
+        await EnrolThroughApiAsync(host, email);
+
+        var trigger = "TR_Test250_" + Guid.NewGuid().ToString("N");
+        await ExecuteSqlAsync(
+            host,
+            "CREATE TRIGGER [identity].[" + trigger + "] ON [identity].[UserTokens] AFTER INSERT AS BEGIN "
+            + "IF EXISTS (SELECT 1 FROM inserted WHERE [UserId] = " + userId.ToString(CultureInfo.InvariantCulture)
+            + " AND [Name] = N'PendingTwoFactorSignIn') THROW 50250, N'Injected by the test: not a unique violation.', 1; END");
+        try
+        {
+            using var client = CreateClient(host);
+            using var response = await PostJsonAsync(client, LoginUrl, new { email, password = Password });
+            var body = await response.Content.ReadAsStringAsync(Ct);
+
+            Assert.True(
+                response.StatusCode == HttpStatusCode.InternalServerError,
+                $"A SQL error that is not a lost race must surface as a 500, not be swallowed. Got {(int)response.StatusCode}: {body}");
+            Assert.Null(CookiePairOrNull(response, "sd_admin_2fa"));
+            Assert.Equal(0, await PendingSignInRowsAsync(host, userId));
+        }
+        finally
+        {
+            await ExecuteSqlAsync(host, "DROP TRIGGER [identity].[" + trigger + "]");
+        }
+    }
+
+    /// <summary>A password step stopped at the pending-sign-in write, with something done to the account meanwhile.</summary>
+    private sealed record HeldReply(HttpStatusCode Status, string Body, string? PendingCookie);
+
+    private static async Task<HeldReply> SendPasswordStepHeldAsync(
+        WebApplicationFactory<Program> host, PendingSignInWriteGateInterceptor gate, string email, Func<Task> whileHeld)
+    {
+        using var client = CreateClient(host);
+        gate.Arm();
+        var step = PostJsonAsync(client, LoginUrl, new { email, password = Password });
+        try
+        {
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+            await whileHeld();
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var response = await step;
+        return new HeldReply(response.StatusCode, await response.Content.ReadAsStringAsync(Ct), CookiePairOrNull(response, "sd_admin_2fa"));
+    }
+
+    private static void AssertSessionExpired(HeldReply held, string what)
+    {
+        Assert.True(
+            held.Status == HttpStatusCode.Unauthorized,
+            $"A password step for an account {what} while it ran is refused. Got {(int)held.Status}: {held.Body}");
+        Assert.Equal("two_factor_session_expired", ErrorCodeOf(held.Body));
+        Assert.Null(held.PendingCookie);
+    }
+
+    /// <summary>Locks the account the way an attacker does: the configured number of wrong passwords, the last one answered 423.</summary>
+    private static async Task LockAccountAsync(WebApplicationFactory<Program> host, string email)
+    {
+        const int maxFailedAttempts = 5; // AdminSecurityOptions.LockoutMaxFailedAttempts default.
+        using var anonymous = CreateClient(host);
+        for (var attempt = 1; attempt <= maxFailedAttempts; attempt++)
+        {
+            using var wrong = await PostJsonAsync(anonymous, LoginUrl, new { email, password = "wrong" });
+            Assert.Equal(attempt < maxFailedAttempts ? HttpStatusCode.Unauthorized : (HttpStatusCode)423, wrong.StatusCode);
+        }
+    }
+
+    /// <summary>A lockout set directly, as the lockout statement would leave it (an hour, so no test outlives it).</summary>
+    private static async Task SetLockedOutAsync(WebApplicationFactory<Program> host, int userId)
+    {
+        var until = DateTimeOffset.UtcNow.AddHours(1);
+        await using var scope = host.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await dbContext.Users.Where(u => u.Id == userId).ExecuteUpdateAsync(s => s.SetProperty(u => u.LockoutEnd, until), Ct);
+    }
+
+    private static async Task<string> RotateSecurityStampAsync(WebApplicationFactory<Program> host, int userId)
+    {
+        var stamp = Guid.NewGuid().ToString("N");
+        await using var scope = host.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await dbContext.Users.Where(u => u.Id == userId).ExecuteUpdateAsync(s => s.SetProperty(u => u.SecurityStamp, stamp), Ct);
+        return stamp;
+    }
+
+    private static async Task<string?> PendingSignInValueAsync(WebApplicationFactory<Program> host, int userId)
+    {
+        await using var scope = host.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await dbContext.Set<IdentityUserToken<int>>().AsNoTracking()
+            .Where(t => t.UserId == userId && t.Name == "PendingTwoFactorSignIn")
+            .Select(t => t.Value)
+            .SingleOrDefaultAsync(Ct);
+    }
+
+    private static async Task<int> CountAuditRowsAsync(WebApplicationFactory<Program> host, string email, string action)
+    {
+        await using var scope = host.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await dbContext.AuditLogs.AsNoTracking().CountAsync(a => a.UserEmail == email && a.Action == action, Ct);
+    }
+
+    private static async Task ExecuteSqlAsync(WebApplicationFactory<Program> host, string sql)
+    {
+        await using var scope = host.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await dbContext.Database.ExecuteSqlRawAsync(sql, Ct);
+    }
+
+    private static async Task SetActiveAsync(WebApplicationFactory<Program> host, int userId, bool active)
+    {
+        await using var scope = host.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await dbContext.Users.Where(u => u.Id == userId).ExecuteUpdateAsync(s => s.SetProperty(u => u.IsActive, active), Ct);
+    }
+
+    private static async Task<int> PendingSignInRowsAsync(WebApplicationFactory<Program> host, int userId)
+    {
+        await using var scope = host.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await dbContext.Set<IdentityUserToken<int>>().AsNoTracking()
+            .CountAsync(t => t.UserId == userId && t.Name == "PendingTwoFactorSignIn", Ct);
+    }
+
+    /// <summary>The second sign-in step from a client that already holds the pending cookie (and the antiforgery pair).</summary>
+    private static async Task<HttpResponseMessage> SendSecondStepAsync(HttpClient client, string code)
+    {
+        var token = await GetAntiforgeryTokenAsync(client);
+        using var request = new HttpRequestMessage(HttpMethod.Post, LoginTwoFactorUrl)
+        {
+            Content = JsonContent.Create(new { code, isRecoveryCode = false }),
+        };
+        request.Headers.Add("X-XSRF-TOKEN", token);
+        return await client.SendAsync(request, Ct);
+    }
+
     /// <summary>
     /// The lockout threshold is raised for the same-code races above. Twelve requests with one code is the point of
     /// those tests, but the ones that read the code after the winner redeemed it count as wrong codes, and at the
