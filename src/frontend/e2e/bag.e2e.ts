@@ -393,6 +393,26 @@ test.describe('the bag (CART-01, CART-02)', () => {
         'test-product-1',
       );
     });
+
+    /**
+     * Regression for issue #267: `onBagClick` takes this click over with a plain `href="/bag"` (see the
+     * component doc above it), and the bag toggle is clicked here while the shopper is already on `/bag` —
+     * exactly the shape `NavigationScroll`'s "a link to the page already shown" handling looks for. Without
+     * `onBagClick`'s own `stopPropagation`, that handler would focus `main` underneath the drawer that had
+     * just opened on it (found by the independent tester of #267, traced to this exact click). **Not a
+     * scroll-position assertion**: the mini bag's own focus management already moves scroll and focus when
+     * it opens, for reasons that have nothing to do with this fix, so asserting against `main` specifically
+     * is what isolates `NavigationScroll`'s handling from that.
+     */
+    test('opening the mini bag from the bag page itself does not focus main the way a same-page link does', async ({
+      page,
+    }) => {
+      await page.locator('[data-testid="bag-toggle"]').click();
+
+      await expect(page.locator('sd-mini-bag [role="dialog"]')).toBeVisible();
+      const activeId = await page.evaluate(() => document.activeElement?.id);
+      expect(activeId, "NavigationScroll's same-page-link handling should not have run").not.toBe('main');
+    });
   });
 
   test.describe('lines the shop can no longer sell', () => {

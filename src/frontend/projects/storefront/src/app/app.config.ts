@@ -15,6 +15,7 @@ import { apiBaseUrlInterceptor } from '@spencer-denim/shared';
 
 import { cartCookieInterceptor } from './core/cart/cart-cookie.interceptor';
 import { routes } from './app.routes';
+import { NavigationScroll } from './core/platform/navigation-scroll';
 import { PageViewTracker } from './core/traffic/page-view-tracker';
 
 export const appConfig: ApplicationConfig = {
@@ -36,5 +37,9 @@ export const appConfig: ApplicationConfig = {
     // Traffic recording (W4-03): in the browser, every page reached by clicking, and the first page when
     // the server did not record it. A no-op on the server. See `core/traffic/page-view-tracker.ts`.
     provideAppInitializer(() => inject(PageViewTracker).start()),
+    // A link that opens a different page opens it at the top (a footer link used to leave the shopper at the
+    // bottom of the new page). Not `withInMemoryScrolling`: see `core/platform/navigation-scroll.ts`. A no-op
+    // on the server.
+    provideAppInitializer(() => inject(NavigationScroll).start()),
   ],
 };
