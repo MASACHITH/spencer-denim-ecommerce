@@ -37,7 +37,14 @@ export const RESTORE_PATIENCE_MS = new InjectionToken<number>('RESTORE_PATIENCE_
  *   page than the one on screen (a different path: a query string or a fragment is the same page; the page the
  *   document was loaded with counts, so a click before the load's navigation has ended still scrolls) scrolls to
  *   the top, when it ends, with no wait. A filter, the sort, Load More, a colour or a size change only the query
- *   string, so they never trigger it and there is nothing to opt out of.
+ *   string, so they never trigger it and there is nothing to opt out of. Focus moves into `main` as well (same
+ *   `tabindex="-1"` target as the skip link): otherwise it stays on the link that was just activated, now at the
+ *   bottom of a page scrolled back to its top, and the shopper's next Tab jumps the page straight back down to it.
+ * - **A link to the page already on screen also lands at the top.** The router's own `onSameUrlNavigation: 'ignore'`
+ *   (the default, left as-is: changing it to `'reload'` would re-run every resolver for a filter click that happens
+ *   to produce a URL already applied) fires no event at all for that click, so nothing above ever runs. A footer
+ *   link is still a link, so a `click` on an internal, unmodified, non-fragment anchor whose target is the address
+ *   already shown gets the same top-and-focus treatment here, outside the router entirely.
  * - **Back and Forward return to where the shopper was.** The browser restores them the moment the history
  *   changes, before the page has been drawn again, so on a wide screen it clamps to a short page (measured: Back
  *   from the Sale page to the home page landed at 0 at 1280 px, on the base as well as with this, and at the right
@@ -59,6 +66,16 @@ export class NavigationScroll {
   private readonly patienceMs = inject(RESTORE_PATIENCE_MS);
 
   private started = false;
+
+  /**
+   * Cancels whatever `restoreOnceDrawn` wait is still polling, if any. **Not cleared from inside that method's own
+   * `finish`, read from here:** a stray reference to a finished wait is harmless (it is `null` or already another
+   * wait's `finish` by the time anything would call it), but a wait left running past its own navigation is not —
+   * a Back followed by a quick Forward, or by a plain link click, before the first wait's patience is up left it
+   * polling in the background, and it could still land its remembered position on top of the page the shopper is
+   * now looking at.
+   */
+  private cancelPendingRestore: (() => void) | null = null;
 
   /** Subscribes to navigation. Called once, from an app initializer; does nothing on the server. */
   start(): void {
@@ -96,11 +113,51 @@ export class NavigationScroll {
       frozen = true;
     };
 
+    // Scrolls to the top and hands focus to `main`, the one thing both an ordinary "different page" navigation and
+    // a click on a link to the page already shown have in common. Cancels any Back/Forward restore still polling
+    // in the background first, or it could land its remembered position on top of this.
+    const landAtTop = (): void => {
+      this.cancelPendingRestore?.();
+      this.viewport.scrollToPosition([0, 0]);
+      this.document.getElementById('main')?.focus({ preventScroll: true });
+    };
+
+    // Catches the click the router never tells us about: `onSameUrlNavigation` is left at its default `'ignore'`
+    // (see the class doc), so a link to the page already on screen fires no `NavigationStart`/`NavigationEnd` at
+    // all. **Requires `event.defaultPrevented`:** `RouterLink` itself calls `preventDefault()`, before the router
+    // decides the URL is one it can ignore, only for the kind of click it means to take over (the same checks are
+    // repeated below only so this does not depend on exactly how `RouterLink` reaches that decision) — a plain
+    // `<a>` outside Angular's routing, or a modified click `RouterLink` left for the browser, never sets it, and
+    // is rightly left alone here too. Reading `anchor.pathname`/`.search`/`.origin`, which the browser resolves
+    // against `<base href>` for us, rather than parsing `getAttribute('href')`. A fragment link (the skip link, a
+    // same-page "back to top", a table of contents) is left alone: `app.ts` gives the skip link its own
+    // focus-and-scrollIntoView, and a plain in-page fragment is the browser's to scroll, same as
+    // `navigation-scroll.e2e.ts` already checks.
+    const landOnSamePageLink = (event: MouseEvent): void => {
+      if (!event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+        return;
+      }
+
+      const target = event.target;
+      const anchor = target instanceof Element ? target.closest('a[href]') : null;
+
+      if (!(anchor instanceof HTMLAnchorElement) || anchor.target !== '' || anchor.hash !== '') {
+        return;
+      }
+
+      if (anchor.origin === loaded.origin && addressOf(anchor.pathname + anchor.search) === shownAddress) {
+        landAtTop();
+      }
+    };
+
     view?.addEventListener('scroll', track, { passive: true });
     view?.addEventListener('popstate', freeze);
+    view?.addEventListener('click', landOnSamePageLink);
     this.destroyRef.onDestroy(() => {
       view?.removeEventListener('scroll', track);
       view?.removeEventListener('popstate', freeze);
+      view?.removeEventListener('click', landOnSamePageLink);
+      this.cancelPendingRestore?.();
     });
 
     this.router.events.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((event) => {
@@ -129,11 +186,15 @@ export class NavigationScroll {
 
       frozen = false;
 
+      // Any navigation that actually ends retires a Back/Forward restore still waiting on an earlier page — the
+      // branches below either give it a new position to wait for or need no restore at all.
+      this.cancelPendingRestore?.();
+
       const page = pageOf(event.urlAfterRedirects);
       const address = addressOf(event.urlAfterRedirects);
 
       if (byTheShopper && page !== shownPage) {
-        this.viewport.scrollToPosition([0, 0]);
+        landAtTop();
       } else if (byHistory) {
         const saved = remembered.get(address);
 
@@ -156,8 +217,14 @@ export class NavigationScroll {
    * for no longer than `RESTORE_PATIENCE_MS`, when it scrolls as far as it can. A shopper who scrolls, taps, presses
    * a key or clicks in the meantime has taken over, and is left alone. Outside the zone, so the wait does not hold
    * the application unstable.
+   *
+   * Only one of these can be waiting at a time: starting a new one — or any navigation that ends, through
+   * `cancelPendingRestore` — stops an earlier one from ever scrolling, instead of leaving it to land a stale
+   * position on top of whatever page is on screen by the time its patience or its height check comes due.
    */
   private restoreOnceDrawn(position: [number, number]): void {
+    this.cancelPendingRestore?.();
+
     const view = this.document.defaultView;
     const root = this.document.documentElement;
     const gesture = ['wheel', 'touchstart', 'keydown', 'mousedown'] as const;
@@ -168,10 +235,15 @@ export class NavigationScroll {
 
       const finish = (): void => {
         finished = true;
+        if (this.cancelPendingRestore === finish) {
+          this.cancelPendingRestore = null;
+        }
         for (const type of gesture) {
           view?.removeEventListener(type, finish);
         }
       };
+
+      this.cancelPendingRestore = finish;
 
       for (const type of gesture) {
         view?.addEventListener(type, finish, { passive: true });

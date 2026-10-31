@@ -21,6 +21,13 @@ import { WhatsappButton } from './layout/whatsapp-button/whatsapp-button';
  * header.) The listener is on the document, from `host`, rather than on the link in the template, so the
  * server-rendered markup does not change: a listener on the link would add a `jsaction` attribute to it. A click
  * in the moments before the page hydrates, or with scripts off, still follows the `href`.
+ *
+ * **Known limitation, accepted rather than fixed: with scripts off, the skip link on any page but the home page
+ * still goes to the home page**, not to the content of the page the shopper is on. That full load of `/#main`
+ * is exactly the behaviour `<base href="/">` gives a plain `href="#main"`, described above, and there is no
+ * script running to take the click over the way it does here. Fixing it would mean giving the skip link a
+ * server-rendered, page-specific `href` (`/women/jeans#main` and so on) instead of `#main`, which is its own
+ * change; this fix only takes over the click once scripts run.
  */
 @Component({
   selector: 'sd-root',

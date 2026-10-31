@@ -589,6 +589,12 @@ export class SiteHeader {
    * tab or window, and swallowing those is one of the ways a single-page application quietly becomes
    * worse than a document. `button !== 0` never actually reaches a click handler for the middle button
    * in Chrome, but a stray `auxclick` mapping or a synthetic event would, and the check costs nothing.
+   *
+   * `stopPropagation` as well as `preventDefault`: this anchor's `href` is `/bag`, so clicking it while
+   * already on the bag page is, to anything listening for clicks bubbling past it, indistinguishable
+   * from a link to the page already shown — `NavigationScroll`'s own handler for that (#267) focused
+   * `main` underneath this drawer, which just opened on the very page `main` is in. This click is
+   * already fully taken over here, with nowhere else that needs to see it.
    */
   onBagClick(event: MouseEvent): void {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
@@ -596,6 +602,7 @@ export class SiteHeader {
     }
 
     event.preventDefault();
+    event.stopPropagation();
     this.bag.set(true);
   }
 

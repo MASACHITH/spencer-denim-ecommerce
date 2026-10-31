@@ -72,6 +72,39 @@ describe('NavigationScroll', () => {
   /** The restore waits up to its patience (40 ms here) for a page that jsdom never makes tall enough; a little more. */
   const drawn = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 250));
 
+  // The shell's own `#main`, which `app.ts` gives `tabindex="-1"` for the skip link and which this service focuses
+  // the same way. A real element, not a stub: `document.getElementById('main')` is what the service calls.
+  let main: HTMLElement;
+
+  beforeEach(() => {
+    main = document.createElement('main');
+    main.id = 'main';
+    main.tabIndex = -1;
+    document.body.appendChild(main);
+  });
+
+  afterEach(() => {
+    main.remove();
+  });
+
+  /**
+   * A link `RouterLink` took over: it calls `preventDefault()` itself, before the router decides the URL is one it
+   * can ignore, so a plain `dispatchEvent` has to do the same or the service's own `!event.defaultPrevented` guard
+   * would (rightly) ignore it, same as a plain, un-routed `<a>` or a modified click.
+   */
+  function clickLink(href: string, { preventDefault = true } = {}): void {
+    const anchor = document.createElement('a');
+    anchor.href = href;
+    document.body.appendChild(anchor);
+
+    if (preventDefault) {
+      anchor.addEventListener('click', (event) => event.preventDefault());
+    }
+
+    anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+    anchor.remove();
+  }
+
   it('does not scroll for the first navigation, which is the load itself', async () => {
     create();
 
@@ -256,6 +289,165 @@ describe('NavigationScroll', () => {
     await go('/men');
 
     expect(scrollToPosition).toHaveBeenCalledTimes(1);
+  });
+
+  describe('focus', () => {
+    it('moves into main when a link opens a different page, not just the scroll', async () => {
+      create();
+      await go('/women');
+      const footerLink = document.createElement('a');
+      document.body.appendChild(footerLink);
+      footerLink.focus(); // where keyboard activation of the link that caused this navigation left it
+
+      await go('/men');
+
+      expect(document.activeElement).toBe(main);
+      footerLink.remove();
+    });
+
+    it('does not move focus for Back or Forward, which give the position back, not the top', async () => {
+      create();
+      router.initialNavigation();
+      await go('/women');
+      await go('/men');
+      const elsewhere = document.createElement('button');
+      document.body.appendChild(elsewhere);
+      elsewhere.focus();
+
+      browserTraverses(0);
+      await history('back');
+      await drawn();
+
+      expect(document.activeElement).toBe(elsewhere);
+      elsewhere.remove();
+    });
+  });
+
+  describe('a link to the page already shown', () => {
+    it('scrolls to the top, even though the router ignores the navigation', async () => {
+      create();
+      await go('/women');
+
+      clickLink('/women');
+
+      expect(scrollToPosition).toHaveBeenCalledWith([0, 0]);
+    });
+
+    it('moves focus into main as well', async () => {
+      create();
+      await go('/women');
+      const elsewhere = document.createElement('button');
+      document.body.appendChild(elsewhere);
+      elsewhere.focus();
+
+      clickLink('/women');
+
+      expect(document.activeElement).toBe(main);
+      elsewhere.remove();
+    });
+
+    it('does nothing for a plain link the router was never given a chance to ignore', async () => {
+      // `preventDefault` not called: the stand-in for a link `RouterLink` did not take over, or scripts off — a
+      // full page load is already on its way, which lands at the top on its own.
+      create();
+      await go('/women');
+
+      clickLink('/women', { preventDefault: false });
+
+      expect(scrollToPosition).not.toHaveBeenCalled();
+    });
+
+    it('does nothing for a fragment link to the current page: the skip link and a same-page anchor are not this', async () => {
+      create();
+      await go('/women');
+
+      clickLink('/women#filters');
+
+      expect(scrollToPosition).not.toHaveBeenCalled();
+    });
+
+    it('does nothing for a modified click, which the browser is left to handle itself', async () => {
+      create();
+      await go('/women');
+      const anchor = document.createElement('a');
+      anchor.href = '/women';
+      document.body.appendChild(anchor);
+      anchor.addEventListener('click', (event) => event.preventDefault());
+
+      anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ctrlKey: true }));
+
+      expect(scrollToPosition).not.toHaveBeenCalled();
+      anchor.remove();
+    });
+
+    it('does nothing when the link opens a different page', async () => {
+      create();
+      await go('/women');
+
+      clickLink('/men');
+
+      expect(scrollToPosition).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a pending Back/Forward restore that never gets to fire', () => {
+    it('is cancelled by a second Back that starts before its patience is up', async () => {
+      create();
+      router.initialNavigation();
+      await go('/women');
+      scrolledTo(900);
+      await go('/men'); // leaves /women at 900
+      scrolledTo(40);
+      await go('/women/jeans'); // leaves /men at 40
+      scrollToPosition.mockClear();
+
+      browserTraverses(999);
+      await history('back'); // -> /men; a restore to 40 is now waiting, patience not yet up
+      browserTraverses(999);
+      await history('back'); // -> /women; a restore to 900 is now waiting; the one above must never fire
+
+      await drawn(); // long past both patience windows
+
+      expect(scrollToPosition).toHaveBeenCalledTimes(1);
+      expect(scrollToPosition).toHaveBeenLastCalledWith([0, 900]);
+    });
+
+    it('is cancelled by the shopper navigating on, instead of landing a stale position on the new page', async () => {
+      create();
+      router.initialNavigation();
+      await go('/women');
+      scrolledTo(900);
+      await go('/men'); // leaves /women at 900
+      browserTraverses(999);
+      await history('back'); // -> /women; a restore to 900 is now waiting
+      scrollToPosition.mockClear();
+
+      await go('/women/jeans'); // the shopper clicks a link before that restore ever fires
+
+      expect(scrollToPosition).toHaveBeenCalledTimes(1);
+      expect(scrollToPosition).toHaveBeenCalledWith([0, 0]);
+
+      await drawn(); // long past the restore's patience
+
+      expect(scrollToPosition).toHaveBeenCalledTimes(1);
+    });
+
+    it('is cancelled by a shopper gesture, which is left alone rather than overridden once the patience is up', async () => {
+      create();
+      router.initialNavigation();
+      await go('/women');
+      scrolledTo(900);
+      await go('/men'); // leaves /women at 900
+      browserTraverses(999);
+      await history('back'); // -> /women; a restore to 900 is now waiting, and jsdom is never tall enough for it
+      scrollToPosition.mockClear();
+
+      window.dispatchEvent(new Event('wheel'));
+
+      await drawn(); // long past the patience window the gesture should have pre-empted
+
+      expect(scrollToPosition).not.toHaveBeenCalled();
+    });
   });
 });
 

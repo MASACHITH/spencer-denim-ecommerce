@@ -495,7 +495,14 @@ test.describe('the "Skip to content" link keeps the shopper on the page', () => 
           headerBottom: Math.round(document.querySelector('header')?.getBoundingClientRect().bottom ?? 0),
         }));
 
+        // A band, not just a floor: `scrollIntoView({ block: 'start' })` lines `main`'s top up with `headerBottom`
+        // to within a pixel or two of layout rounding. A wider gap is `main` landing further down the viewport
+        // (the default `focus()` scroll, or a `block` other than `'start'`), which `toBeGreaterThanOrEqual` alone
+        // would still accept.
         expect(mainTop, 'the first of the content is hidden behind the header').toBeGreaterThanOrEqual(headerBottom - 1);
+        expect(mainTop, 'the first of the content should sit right under the header, not further down').toBeLessThanOrEqual(
+          headerBottom + 2,
+        );
         expect(await scrollY(page), 'the skip link did not leave the place it was pressed at').toBeLessThan(500);
       });
     }
@@ -734,3 +741,117 @@ test.describe('on the product page', () => {
     }
   });
 });
+
+test.describe('a link to the page already shown', () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  /**
+   * `onSameUrlNavigation` is left at the router's default `'ignore'`, so this click fires no router event at all —
+   * repro from the issue: a shopper scrolled to the bottom of a department page clicks that same department in
+   * the footer, expecting to land back at the top of it, same as any other link.
+   */
+  test('footer: Women, clicked from the Women listing itself', async ({ page }) => {
+    await page.goto('/women');
+    await loaded(page);
+    await scrollTo(page, 900);
+
+    await page.getByRole('contentinfo').getByRole('link', { name: 'Women', exact: true }).first().click();
+
+    await expect
+      .poll(() => scrollY(page), { message: 'a link to the page already shown should scroll to the top' })
+      .toBe(0);
+    await expect(page).toHaveURL(/\/women$/);
+  });
+});
+
+test.describe('focus after a keyboard navigation', () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  /**
+   * Repro from the issue: focus the footer's Sale link on the home page, press Enter, then Tab. Before this,
+   * focus stayed on the (now off-screen) Sale link after the page scrolled to the top under it, and the Tab
+   * landed on whatever comes after it in the footer — pulling the page straight back down to where it was.
+   */
+  test('Enter on a footer link moves focus into the new page, so Tab does not pull the page back down', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await loaded(page);
+    await scrollToEnd(page);
+
+    await page.getByRole('contentinfo').getByRole('link', { name: 'Sale', exact: true }).first().focus();
+    await page.keyboard.press('Enter');
+
+    await expect(page).toHaveURL(/\/sale/);
+    await expect.poll(() => scrollY(page)).toBe(0);
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('main');
+
+    await page.keyboard.press('Tab');
+    expect(await scrollY(page), 'Tab should carry on from the top of the new page, not jump back to the footer').toBeLessThan(
+      200,
+    );
+  });
+});
+
+test.describe('the Back/Forward restore waits for the real page, not just the first frame', () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  /**
+   * The unit tests (`navigation-scroll.spec.ts`) exercise `restoreOnceDrawn`'s wait against a page jsdom can never
+   * make tall enough, so they only ever reach it through the patience timeout. This needs the real thing: a page
+   * that is genuinely short when `popstate` fires and only grows later. **Not a delayed catalogue response** —
+   * the listing reserves its skeleton's height up front for CLS, so a slow response never actually leaves the
+   * page short; that was tried and the page was already tall before the response even mattered. **Not a
+   * `max-height`/`overflow` clamp on `main` either** — that changed the grid's own layout (sticky filters,
+   * container queries) enough to make the page *taller* than normal, for reasons that have nothing to do with
+   * this fix. Hiding every card but the first row, with a plain `display: none` that touches nothing about
+   * `main`'s own box, shortens the page the ordinary way — fewer rows. **Removed by the test itself once it has
+   * seen the short state, not by a `setTimeout` inside the page:** that raced `goBack()`'s own round trip and
+   * could fire before anything ever checked it, which is exactly what the first version of this test did and why
+   * it failed. Added before Back is pressed: this is one document throughout, the SPA never reloads it, so the
+   * rule is already there when the listing remounts.
+   */
+  test('Back to a listing three pages deep restores the saved offset even though most of its rows are still hidden when it first reappears', async ({
+    page,
+  }) => {
+    await page.goto(`${LISTING}?pages=3`);
+    await loaded(page);
+    await scrollTo(page, 3000);
+    const before = await scrollY(page);
+
+    await page.getByRole('contentinfo').getByRole('link', { name: 'Sale', exact: true }).first().click();
+    await expect.poll(() => scrollY(page)).toBe(0);
+
+    await page.evaluate(() => {
+      const style = document.createElement('style');
+      style.id = 'e2e-hide-rows';
+      style.textContent = '.product-grid > li:nth-child(n + 5) { display: none !important; }';
+      document.head.appendChild(style);
+    });
+
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(LISTING));
+
+    expect(
+      await scrollY(page),
+      'should still be short with most rows hidden straight after popstate, not already at `before`',
+    ).toBeLessThan(before - 400);
+
+    await page.evaluate(() => document.getElementById('e2e-hide-rows')?.remove());
+
+    await expect
+      .poll(() => scrollY(page), {
+        timeout: 3_000,
+        message: 'should reach the saved offset once the rows are back and the page is tall enough again',
+      })
+      .toBeGreaterThan(before - 10);
+  });
+});
+
+// A shopper gesture cancelling a pending restore (`restoreOnceDrawn`'s `gesture` listeners) is covered at the
+// unit level instead (`navigation-scroll.spec.ts`): three real-browser attempts at forcing the exact window
+// where a gesture must land before the restore does — a delayed catalogue response, a `main`-level CSS clamp,
+// and hiding the listing's own rows — each ran into real layout or timing behaviour of this specific page
+// (CLS-safe skeleton height, a tall sidebar, infinite-scroll-adjacent height growth) unrelated to the
+// cancellation logic itself, which is pre-existing and untouched by this fix. A jsdom gesture, dispatched while
+// `restoreOnceDrawn` is deliberately kept from ever becoming "reachable," pins the same behaviour deterministically.
