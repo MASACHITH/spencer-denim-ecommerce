@@ -37,6 +37,37 @@
   cursor: not-allowed;
 }
 
+/* ---- The sticky header's own controls are never "under the header" (#270) ----
+   `base.css` gives the document `scroll-padding-top: var(--header-height)`, so that anything
+   scrolled into view — an anchor, a focused field — lands below the sticky header instead of
+   behind it. A control *inside* that header is always within that band, so to the browser it is
+   permanently "hidden under the header": every scroll-into-view of one — keyboard focus, the
+   drawer handing focus back to the bag icon on close, the search field taking focus — scrolled
+   up to clear it, the header came along (it is sticky), and the page ended at the top. Measured
+   at 390 and 1280 px on /bag and /women: 400 px down, close the mini bag, and the page was at 0
+   (22 at 1280). Not specific to /bag or the drawer — any header control did it.
+
+   A negative top margin of exactly the header's height cancels the padding for these controls
+   and nothing else: their scroll area starts at or below the band, so "nearest" means "stay".
+   Excluded, because they are not in the band: the mega menu (`.mega`) and the search suggestions
+   (`.suggestions`), which hang below the header and the latter scrolls its own rows into view;
+   and both drawers (`sd-drawer`: the mini bag, the mobile menu), which are fixed overlays with
+   scrolling bodies of their own. Global rather than in `site-header`'s styles because the
+   controls belong to its child components, which emulated encapsulation would not reach.
+
+   **Text fields need the second rule** (found by #270's tester). Chromium's focus path for a text
+   field, and its keep-the-caret-visible scroll on every keystroke, ignore the field's own
+   `scroll-margin` but still apply the document's `scroll-padding`: Tab into the inline search box
+   at 1280+ took the page from 400 to 0-21, and typing in the panel's box below 1280 took it from 470
+   to 270 (that half was already so on main). So while a header field has focus the padding is
+   switched off: nothing in `main` is being scrolled to at that moment, and it comes back on blur. */
+sd-site-header :is(a[href], button, input, select, textarea, [tabindex]):not(.mega *, .suggestions *, sd-drawer *) {
+  scroll-margin-top: calc(-1 * var(--header-height));
+}
+html:has(sd-site-header :is(input, select, textarea):focus) {
+  scroll-padding-top: 0;
+}
+
 /* ---- Breadcrumb (PLP-01, PDP-01) ---- */
 .breadcrumb ol {
   display: flex;

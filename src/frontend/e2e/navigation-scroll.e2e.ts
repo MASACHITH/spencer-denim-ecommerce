@@ -764,6 +764,81 @@ test.describe('a link to the page already shown', () => {
   });
 });
 
+for (const viewport of VIEWPORTS) {
+  /**
+   * #270. `base.css` gives the document `scroll-padding-top` equal to the sticky header's height, and a control in
+   * that header is always inside the band it describes, so every scroll-into-view of one — keyboard focus, a drawer
+   * handing focus back, the search field taking it — scrolled up to "clear the header", the sticky header came along,
+   * and the page ended at the top (0 at 390 px, 22 at 1280, from 400). `focus()` is the browser's own
+   * scroll-into-view, the same one Tab and the drawer's focus return use; the fix is the `scroll-margin-top` rule in
+   * the storefront's `styles.css`. Each control is focused only if this width draws it.
+   */
+  test.describe(`focusing a header control leaves the page where it is, at ${viewport.name}`, () => {
+    test.use({ viewport: { width: viewport.width, height: viewport.height } });
+
+    test('the header’s own controls', async ({ page }) => {
+      await page.goto(LISTING);
+      await contentLoaded(page);
+
+      const controls = [
+        '[data-testid="menu-toggle"]',
+        '[data-testid="wordmark"]',
+        '[data-testid="search-toggle"]',
+        '[data-testid="account-link"]',
+        'a[href="/wishlist"]',
+        '[data-testid="bag-toggle"]',
+      ];
+      let checked = 0;
+      for (const selector of controls) {
+        const control = header(page).locator(selector).first();
+        if (!(await control.isVisible())) {
+          continue;
+        }
+        await scrollTo(page, 400);
+        const before = await scrollY(page);
+        await control.focus();
+        expect(await scrollY(page), `focusing ${selector} moved the page`).toBe(before);
+        checked++;
+      }
+      // Not vacuous: at least the wordmark, account, wishlist and bag are drawn at every width.
+      expect(checked).toBeGreaterThanOrEqual(4);
+    });
+
+    /**
+     * The search box, which needed a rule of its own: a text field's focus scroll, and the scroll that keeps the
+     * caret in view on every keystroke, ignore the field's `scroll-margin` and still apply the document's padding.
+     * Inline at 1280 and up; below that it lives in the panel the search toggle opens. Opening the panel makes the
+     * header taller and the browser's scroll anchoring moves the offset with it, so the panel case measures from
+     * after it is open: the content has not moved, and typing must not move it either.
+     */
+    test('the search box: taking focus and typing in it', async ({ page }) => {
+      await page.goto(LISTING);
+      await contentLoaded(page);
+      await scrollTo(page, 400);
+
+      const inline = header(page).locator('.site-header__search-inline input').first();
+      let field: Locator;
+      let before: number;
+      if (await inline.isVisible()) {
+        field = inline;
+        before = await scrollY(page);
+        await field.focus();
+        expect(await scrollY(page), 'focusing the search box moved the page').toBe(before);
+      } else {
+        await header(page).locator('[data-testid="search-toggle"]').evaluate((toggle: HTMLElement) => toggle.click());
+        field = page.locator('#header-search-panel input').first();
+        await expect(field).toBeFocused();
+        before = await scrollY(page);
+      }
+      expect(before, 'the page should still be scrolled down').toBeGreaterThan(300);
+
+      await page.keyboard.type('jean', { delay: 30 });
+      await expect(field).toHaveValue('jean');
+      expect(await scrollY(page), 'focusing or typing in the search box moved the page').toBe(before);
+    });
+  });
+}
+
 test.describe('focus after a keyboard navigation', () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
