@@ -417,6 +417,72 @@ public sealed class UserEndpointTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
+    /// The other half of "only grants-all can change an email": when one does, the new address is the one the staff user
+    /// signs in with and the old one stops working. Login resolves by the <i>normalised</i> email, so this fails if the
+    /// save (issue #250's changed-columns-only user store) writes the typed address and leaves the normalised column
+    /// behind: the user would be locked out of their own account by an administrator's edit.
+    /// </summary>
+    [Fact]
+    public async Task A_staff_users_new_email_address_signs_in_and_the_old_one_no_longer_does()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var grantsAllRoleId = await GetOrCreateGrantsAllRoleIdAsync(factory);
+        var (actorEmail, actorPassword) = UniqueCredentials("actor-email-signs-in");
+        var actorId = await CreateStaffUserWithRolesAsync(factory, actorEmail, actorPassword, [grantsAllRoleId]);
+
+        const string targetPassword = "Target-Pass-1!";
+        var oldEmail = UniqueEmail("old-address");
+        var newEmail = UniqueEmail("new-address");
+        var targetId = await CreateStaffUserWithRolesAsync(factory, oldEmail, targetPassword, []);
+
+        try
+        {
+            using var client = CreateClient(factory);
+            await LoginAsync(client, actorEmail, actorPassword);
+            var token = await GetAntiforgeryTokenAsync(client);
+
+            using var response = await PutJsonAsync(
+                client,
+                $"{UsersUrl}/{targetId}",
+                new { firstName = "Moved", lastName = "Address", email = newEmail },
+                token);
+            Assert.True(
+                response.IsSuccessStatusCode,
+                $"The email change was refused: {(int)response.StatusCode} {await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)}");
+
+            await using (var scope = factory.Services.CreateAsyncScope())
+            {
+                var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var stored = await dbContext.Users.AsNoTracking().SingleAsync(u => u.Id == targetId, TestContext.Current.CancellationToken);
+                Assert.Equal(newEmail, stored.Email);
+                Assert.True(
+                    string.Equals(stored.NormalizedEmail, userManager.NormalizeEmail(newEmail), StringComparison.Ordinal),
+                    $"NormalizedEmail was not written with the new address. It is '{stored.NormalizedEmail}'.");
+            }
+
+            using var newAddress = CreateClient(factory);
+            using var signedIn = await newAddress.PostAsJsonAsync(
+                LoginUrl, new { email = newEmail, password = targetPassword }, TestContext.Current.CancellationToken);
+            Assert.True(
+                signedIn.StatusCode == HttpStatusCode.OK,
+                $"The new address does not sign in: {(int)signedIn.StatusCode} {await signedIn.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)}");
+
+            using var oldAddress = CreateClient(factory);
+            using var refused = await oldAddress.PostAsJsonAsync(
+                LoginUrl, new { email = oldEmail, password = targetPassword }, TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+        }
+        finally
+        {
+            await RemoveFromGrantsAllRoleAsync(factory, actorId);
+        }
+    }
+
+    /// <summary>
     /// Review round 4, item 4. <c>UserName</c> mirrors <c>Email</c> and nothing checks the address's shape before
     /// Identity does, so an address a real staff name produces — a space in it, an accent in it — is refused by
     /// Identity's <c>InvalidUserName</c> rule. Every Identity failure used to come back as
