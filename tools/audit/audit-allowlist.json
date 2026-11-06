@@ -15,40 +15,7 @@
     "Only HIGH and CRITICAL advisories need an entry; the gate ignores the rest.",
     "A NuGet advisory also fails restore in the build jobs (warnings are errors). Accepting one needs a NuGetAuditSuppress item as well, which is a coordinated change to Directory.Build.props or Directory.Packages.props; the suppression alone does not satisfy this gate.",
     "The gate fails on an entry whose advisory is no longer reported. Delete it, do not leave it to pre-approve the next advisory.",
-    "Overrides in src/frontend/package.json (#226, 2026-10-21): \"@modelcontextprotocol/sdk\": \"1.32.1\" clears GHSA-22jm-h49p-29qw and GHSA-46jr-4wx8-v453, because @angular/cli 21.2.27 (newest 21.x) pins 1.31.0 and the SDK only serves the optional `ng mcp` command. Remove the override once an @angular/cli 21.x release depends on @modelcontextprotocol/sdk >=1.32.0 (check with `npm view @angular/cli@21 dependencies`).",
-    "vite is NOT overridden (#226): @angular/build 21.2.27 pins vite to exactly 7.3.6, and 7.3.7 also changes dev-server behaviour (safeModulePaths, transformIndexHtml), so forcing it would run Angular on a vite it was not released with. The vite entry below is accepted instead; delete it once an @angular/build 21.x release ships vite >=7.3.7, after bumping all @angular/* tooling packages in step."
+    "No overrides and no accepted npm advisories since #272 (2026-11-05). @angular/cli 21.2.29 depends on @modelcontextprotocol/sdk 1.32.1 itself, so the #226 override was removed; @angular/build 21.2.29 ships vite 7.3.7 and undici 7.30.1 (framework packages moved to 21.2.26 as a set, because npm resolves compiler-cli and the optional peers at 21.2.26, which pin the framework to that patch); node-gyp's undici and express's body-parser moved in range to 6.29.1 and 2.4.0. That made all three entries stale and they were deleted: vite GHSA-587h-7wmj-h5pm, undici GHSA-xjj6-f33q-929c and body-parser GHSA-27r3-jxmh-p828 (the last was described as extraneous, but it is express's dependency and ships in the SSR server bundle; not exploitable only because server.ts mounts no body parser). Check `npm view @angular/build@21 dependencies` and `npm view @angular/cli@21 dependencies` at every Angular tooling bump."
   ],
-  "entries": [
-    {
-      "ecosystem": "npm",
-      "advisory": "GHSA-xjj6-f33q-929c",
-      "package": "undici",
-      "severity": "high",
-      "reason": "Transitive dep of @angular/build (Angular CLI tooling). Used only in the dev server and test runner, never bundled into the deployed browser app. Forward fix requires downgrading from Angular 21 to 20 (breaking change). Waiting for @angular/build 21.x to ship undici >=7.31.0.",
-      "acceptedBy": "MASACHITH",
-      "acceptedOn": "2026-10-24",
-      "reviewBy": "2027-01-22"
-    },
-    {
-      "ecosystem": "npm",
-      "advisory": "GHSA-27r3-jxmh-p828",
-      "package": "body-parser",
-      "severity": "high",
-      "reason": "Extraneous package — present as a dev-tooling leftover in node_modules, not reachable from package.json. DoS is in HTTP server request parsing, irrelevant to a browser bundle. Will be removed by running npm ci after lockfile cleanup; fix is available via npm audit fix.",
-      "acceptedBy": "MASACHITH",
-      "acceptedOn": "2026-10-24",
-      "reviewBy": "2027-01-22"
-    },
-    {
-      "ecosystem": "npm",
-      "advisory": "GHSA-587h-7wmj-h5pm",
-      "package": "vite",
-      "severity": "high",
-      "reason": "Dev server only; launch-editor; not shipped. vite is used by @angular/build for `ng serve` and by Vitest for `ng test` (developer machines and CI), and never runs in the storefront, admin or API that shoppers and staff use. Waiting for an @angular/build 21.x release that ships vite >=7.3.7 (21.2.27 pins 7.3.6); Angular 22 is a major upgrade, planned separately.",
-      "acceptedBy": "MASACHITH",
-      "acceptedOn": "2026-10-21",
-      "reviewBy": "2026-11-20",
-      "issue": "https://github.com/MASACHITH/spencer-denim-ecommerce/issues/226"
-    }
-  ]
+  "entries": []
 }
