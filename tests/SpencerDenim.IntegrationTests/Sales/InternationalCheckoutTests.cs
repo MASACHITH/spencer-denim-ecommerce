@@ -460,6 +460,7 @@ public sealed class InternationalCheckoutTests(SqlServerDatabaseFixture sqlServe
     public async Task With_only_bank_transfer_switched_on_an_overseas_checkout_has_no_way_to_pay()
     {
         await SwitchProviderAsync(false);
+        await DisableStrayProvidersAsync();
         var variantId = await CheckoutVariantIdAsync();
         await SetStockAsync(variantId, 10);
         var (_, _, api) = await NewBagAsync(variantId);
@@ -476,6 +477,39 @@ public sealed class InternationalCheckoutTests(SqlServerDatabaseFixture sqlServe
 
         Assert.Contains(sriLanka!.PaymentMethods, method => method.Code == PaymentProviderCodes.BankTransfer);
         Assert.DoesNotContain(CheckoutBlocker.NoPaymentMethod, sriLanka.Blockers);
+    }
+
+    /// <summary>
+    /// Every Sales test leaves a uniquely-coded "Test provider" row behind in <c>sales.PaymentProviders</c>
+    /// (<c>SalesSchemaTestBase.ReferenceAsync</c> never deletes them, by design — doc 08 §1.6 forbids the
+    /// deletes that would clean them up). This test's whole point is a checkout with genuinely nothing to
+    /// pay with, so it switches off every provider but the two real ones first, and queues them back on in
+    /// <see cref="DisposeAsync"/> like every other shared-row change this class makes.
+    /// </summary>
+    private async Task DisableStrayProvidersAsync()
+    {
+        using var scope = CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var strayCodes = await db.PaymentProviders
+            .AsNoTracking()
+            .Where(provider => provider.IsEnabled
+                && provider.Code != PaymentProviderCodes.BankTransfer
+                && provider.Code != PaymentProviderCodes.PayPal)
+            .Select(provider => provider.Code)
+            .ToListAsync(Token);
+
+        if (strayCodes.Count == 0)
+        {
+            return;
+        }
+
+        await db.PaymentProviders
+            .Where(provider => strayCodes.Contains(provider.Code))
+            .ExecuteUpdateAsync(update => update.SetProperty(provider => provider.IsEnabled, false), Token);
+
+        _restore.Add(context => context.PaymentProviders
+            .Where(provider => strayCodes.Contains(provider.Code))
+            .ExecuteUpdateAsync(update => update.SetProperty(provider => provider.IsEnabled, true), CancellationToken.None));
     }
 
     // ------------------------------------------------------------------------------------------- helpers
