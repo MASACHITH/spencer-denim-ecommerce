@@ -243,6 +243,16 @@ public sealed class SubscribeToNewsletterCommandHandlerTests
             _calls.Add(new StoreCall(email, emailNormalized, source, utcNow, ipAddress));
             return Task.FromResult(Outcome);
         }
+
+        public Task<bool> UnsubscribeByTokenAsync(Guid token, DateTime utcNow, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<StaffUnsubscribeOutcome> UnsubscribeByStaffAsync(
+            int subscriberId,
+            SpencerDenim.Domain.Auditing.AuditLog audit,
+            DateTime utcNow,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     /// <summary>Records what it was asked about, which is the whole assertion for the ordering tests.</summary>

@@ -91,7 +91,8 @@ internal sealed class NewsletterSubscriberReader(AppDbContext dbContext) : INews
             .Select(subscriber => new NewsletterExportRow(
                 subscriber.Email,
                 subscriber.Source,
-                subscriber.ConsentAtUtc))
+                subscriber.ConsentAtUtc,
+                subscriber.UnsubscribeToken))
             .ToListAsync(cancellationToken);
     }
 

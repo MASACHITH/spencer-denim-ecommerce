@@ -78,11 +78,12 @@ type SignupPhase = 'idle' | 'sending' | 'done' | 'error';
 
             <!-- Issue #252 answers the TODO(GLB-10) that stood here: the privacy policy is linked once it is published,
                  and the sentence ends where it did before until then. The link stays in this tab: nothing typed here
-                 is lost by leaving. There is no self-service unsubscribe yet (the subscriber's UnsubscribeToken is used
-                 nowhere), so the sentence says to ask through the Contact page; change it when that feature ships. -->
+                 is lost by leaving. #262 built the self-service unsubscribe (/unsubscribe?token=..., the link the export
+                 carries for every address), so the sentence promises it again, and keeps the Contact page as the other way. -->
             <p class="signup__hint" [id]="hintId()">
               We use your address for {{ brand }} emails only, and record your IP address as
-              proof of consent. You can ask us to stop at any time through the Contact page.
+              proof of consent. You can unsubscribe at any time with the link in our emails, or ask us through the
+              Contact page.
               <sd-legal-links privacyLead="Read our" [privacy]="true" />
             </p>
 

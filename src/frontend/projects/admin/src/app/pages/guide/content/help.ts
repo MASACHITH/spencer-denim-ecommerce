@@ -73,7 +73,6 @@ export const HELP_SECTIONS: readonly GuideSection[] = [
           '**Roles:** they cannot be created, edited or deleted.',
           '**Staff passwords:** no forgot-password link, no reset by another user, no unlock button and no reset of two-factor authentication. No invitation email is sent to a new staff user.',
           '**Customers:** the Customers screen cannot edit, disable, unlock, annotate, delete or anonymise anyone, or export the list. (The Customers report under Reports can be downloaded.) See [Customer data](#data-privacy).',
-          '**Newsletter:** nobody can be unsubscribed from the admin, and no email carries an unsubscribe link.',
           '**Automatic clean-up** of the audit log, alerts, enquiries and IP addresses, and **automatic backups**, are not built yet. The technical owner takes backups by hand.',
         ],
       },

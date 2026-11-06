@@ -43,6 +43,7 @@ public static class ContentPageSlugRules
         "search",
         "bag",
         "wishlist",
+        "unsubscribe", // #262, the newsletter's unsubscribe link
         "checkout",
         "order",
         "new-arrivals",

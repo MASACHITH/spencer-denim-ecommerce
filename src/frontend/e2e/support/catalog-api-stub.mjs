@@ -2643,6 +2643,9 @@ let contentPagesState = 'none';
 /** Forced status for `/api/content/pages`, set through the test switch. 0 means answer normally. */
 let contentPagesStatus = 0;
 
+/** #262: every unsubscribe token the stub was sent, in order (see /__test__/newsletter-unsubscribes). */
+const newsletterUnsubscribes = [];
+
 /** What the Contact form has posted, for the honeypot assertion. */
 const contactSubmissions = [];
 
@@ -4483,6 +4486,30 @@ const server = createServer((request, response) => {
   // that a real submission was.
   if (url.pathname === '/__test__/contact-submissions') {
     response.end(JSON.stringify(contactSubmissions));
+    return;
+  }
+
+  // #262: the unsubscribe link's confirmation. Mirrors the endpoint: 204 for every token, live, dead or garbage, with
+  // nothing to tell them apart. The tokens it has seen are kept so a browser test can prove the page sent the one in
+  // its link, and sent nothing before the press.
+  if (url.pathname === '/__test__/newsletter-unsubscribes') {
+    response.end(JSON.stringify(newsletterUnsubscribes));
+    return;
+  }
+
+  if (url.pathname === '/api/content/newsletter/unsubscribe' && request.method === 'POST') {
+    let body = '';
+    request.on('data', (chunk) => (body += chunk));
+    request.on('end', () => {
+      try {
+        newsletterUnsubscribes.push(String(JSON.parse(body || '{}').token ?? ''));
+      } catch {
+        newsletterUnsubscribes.push('');
+      }
+      response.statusCode = 204;
+      response.setHeader('Cache-Control', 'no-store');
+      response.end();
+    });
     return;
   }
 

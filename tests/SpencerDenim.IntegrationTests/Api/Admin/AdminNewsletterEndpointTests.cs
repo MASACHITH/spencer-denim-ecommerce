@@ -321,11 +321,12 @@ public sealed class AdminNewsletterEndpointTests(SqlServerDatabaseFixture sqlSer
 
         var lines = file.Text.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
 
-        Assert.Equal("\"Email\",\"Source\",\"Consent given (Colombo time)\"", lines[0]);
+        Assert.Equal("\"Email\",\"Source\",\"Consent given (Colombo time)\",\"Unsubscribe link\"", lines[0]);
 
-        // Oldest consent first; 04:30 UTC is 10:00 in Colombo.
-        Assert.Equal($"\"{sinhala}\",\"{NewsletterSource.Footer}\",\"2026-10-01 10:00\"", lines[1]);
-        Assert.Equal($"\"{tamil}\",\"{NewsletterSource.Footer}\",\"2026-10-01 10:01\"", lines[2]);
+        // Oldest consent first; 04:30 UTC is 10:00 in Colombo. This host sets no Email:StorefrontBaseUrl, so the
+        // unsubscribe link cell (#262) is empty rather than a relative address no mail client could open.
+        Assert.Equal($"\"{sinhala}\",\"{NewsletterSource.Footer}\",\"2026-10-01 10:00\",\"\"", lines[1]);
+        Assert.Equal($"\"{tamil}\",\"{NewsletterSource.Footer}\",\"2026-10-01 10:01\",\"\"", lines[2]);
     }
 
     /// <summary>
@@ -405,6 +406,162 @@ public sealed class AdminNewsletterEndpointTests(SqlServerDatabaseFixture sqlSer
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Empty(await AuditRowsAfterAsync(before));
+    }
+
+    // ---- #262: the personal unsubscribe link and the staff action -------------------------------------------------
+
+    private const string PublicUnsubscribeUrl = "/api/content/newsletter/unsubscribe";
+
+    /// <summary>
+    /// Doc 11 P15 step 3. The link's token withdraws the consent once; a second press (a double click, a second tab,
+    /// a link scanner) gets the same answer and keeps the original time. And the export stops carrying the address.
+    /// </summary>
+    [Fact]
+    public async Task The_personal_link_unsubscribes_once_and_keeps_the_first_time()
+    {
+        await using var host = await StartAsync();
+        var id = await AddSubscriberAsync($"{Marker}-link@example.com", NewsletterSubscriberStatus.Subscribed, DateTime.UtcNow.AddDays(-3));
+        var token = (await RowAsync(id)).UnsubscribeToken;
+        using var visitor = host.CreateAnonymousClient();
+
+        using (var first = await visitor.PostAsJsonAsync(PublicUnsubscribeUrl, new { token }, Token))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, first.StatusCode);
+            Assert.Contains("no-store", first.Headers.CacheControl?.ToString() ?? string.Empty, StringComparison.Ordinal);
+        }
+
+        var after = await RowAsync(id);
+        Assert.Equal(NewsletterSubscriberStatus.Unsubscribed, after.Status);
+        Assert.NotNull(after.UnsubscribedAtUtc);
+
+        using (var again = await visitor.PostAsJsonAsync(PublicUnsubscribeUrl, new { token = token.ToString("D").ToUpperInvariant() }, Token))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, again.StatusCode);
+        }
+
+        Assert.Equal(after.UnsubscribedAtUtc, (await RowAsync(id)).UnsubscribedAtUtc);
+
+        using var exporter = await host.SignInAsync(Permissions.Newsletter.Export);
+        Assert.DoesNotContain($"{Marker}-link@", (await ExportAsync(exporter, $"?search={Marker}")).Text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The same 204 for a token that matches nobody, for something that is not a token, and for no token at all, and
+    /// nothing changes: the answer cannot be used to tell a live link from a dead one.
+    /// </summary>
+    [Fact]
+    public async Task A_wrong_or_malformed_token_gets_the_same_answer_and_changes_nothing()
+    {
+        await using var host = await StartAsync();
+        var id = await AddSubscriberAsync($"{Marker}-stays@example.com", NewsletterSubscriberStatus.Subscribed, DateTime.UtcNow.AddDays(-1));
+        using var visitor = host.CreateAnonymousClient();
+
+        object[] bodies =
+        [
+            new { token = Guid.NewGuid() },
+            new { token = "not-a-token" },
+            new { token = "" },
+            new { token = Guid.Empty },
+            new { },
+        ];
+
+        foreach (var body in bodies)
+        {
+            using var response = await visitor.PostAsJsonAsync(PublicUnsubscribeUrl, body, Token);
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        }
+
+        Assert.Equal(NewsletterSubscriberStatus.Subscribed, (await RowAsync(id)).Status);
+    }
+
+    /// <summary>
+    /// Doc 11 §7 G-25's staff action. <c>Newsletter.Export</c>, not <c>View</c>; the change and its audit row commit
+    /// together, and the row names the subscriber by id, never by address.
+    /// </summary>
+    [Fact]
+    public async Task Staff_unsubscribe_needs_Newsletter_Export_and_is_audited_by_id()
+    {
+        await using var host = await StartAsync();
+        var id = await AddSubscriberAsync($"{Marker}-asked@example.com", NewsletterSubscriberStatus.Subscribed, DateTime.UtcNow.AddDays(-5));
+        var url = new Uri($"{ListUrl}/{id}/unsubscribe", UriKind.Relative);
+
+        using var viewer = await host.SignInAsync(Permissions.Newsletter.View);
+        using (var refused = await viewer.PostAsync(url, null, Token))
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        }
+
+        Assert.Equal(NewsletterSubscriberStatus.Subscribed, (await RowAsync(id)).Status);
+
+        using var keeper = await host.SignInAsync(Permissions.Newsletter.Export);
+        var me = await GetJsonAsync(keeper, "/api/admin/auth/whoami");
+        var before = await LastAuditIdAsync();
+
+        using (var done = await keeper.PostAsync(url, null, Token))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, done.StatusCode);
+        }
+
+        var row = await RowAsync(id);
+        Assert.Equal(NewsletterSubscriberStatus.Unsubscribed, row.Status);
+        Assert.NotNull(row.UnsubscribedAtUtc);
+
+        var audit = Assert.Single(await AuditRowsAfterAsync(before));
+        Assert.Equal(AuditActions.StatusChange, audit.Action);
+        Assert.Equal(id.ToString(System.Globalization.CultureInfo.InvariantCulture), audit.EntityId);
+        Assert.Equal(me.GetProperty("userId").GetInt32(), audit.UserId);
+        foreach (var column in typeof(AuditLog).GetProperties().Where(property => property.PropertyType == typeof(string)))
+        {
+            Assert.DoesNotContain(Marker, (string?)column.GetValue(audit) ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public async Task Staff_unsubscribe_of_an_unsubscribed_or_missing_subscriber_writes_nothing()
+    {
+        await using var host = await StartAsync();
+        var gone = DateTime.UtcNow.AddDays(-2);
+        var id = await AddSubscriberAsync($"{Marker}-already@example.com", NewsletterSubscriberStatus.Unsubscribed, DateTime.UtcNow.AddDays(-9), gone);
+        using var keeper = await host.SignInAsync(Permissions.Newsletter.Export);
+        var before = await LastAuditIdAsync();
+
+        using (var already = await keeper.PostAsync(new Uri($"{ListUrl}/{id}/unsubscribe", UriKind.Relative), null, Token))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, already.StatusCode);
+        }
+
+        using (var missing = await keeper.PostAsync(new Uri($"{ListUrl}/{int.MaxValue}/unsubscribe", UriKind.Relative), null, Token))
+        {
+            Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        }
+
+        Assert.Empty(await AuditRowsAfterAsync(before));
+        Assert.Equal(gone, (await RowAsync(id)).UnsubscribedAtUtc!.Value, TimeSpan.FromMilliseconds(5));
+    }
+
+    [Fact]
+    public async Task Staff_unsubscribe_without_the_antiforgery_token_is_refused_and_changes_nothing()
+    {
+        await using var host = await StartAsync();
+        var id = await AddSubscriberAsync($"{Marker}-forged@example.com", NewsletterSubscriberStatus.Subscribed, DateTime.UtcNow.AddDays(-1));
+        using var keeper = await host.SignInAsync(Permissions.Newsletter.Export);
+        keeper.DefaultRequestHeaders.Remove(MediaTestHost.AntiforgeryHeader);
+        var before = await LastAuditIdAsync();
+
+        using var response = await keeper.PostAsync(new Uri($"{ListUrl}/{id}/unsubscribe", UriKind.Relative), null, Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(NewsletterSubscriberStatus.Subscribed, (await RowAsync(id)).Status);
+        Assert.Empty(await AuditRowsAfterAsync(before));
+    }
+
+    private async Task<NewsletterSubscriber> RowAsync(int id)
+    {
+        using var scope = SqlServer.CreateScope();
+
+        return await scope.ServiceProvider.GetRequiredService<AppDbContext>().NewsletterSubscribers
+            .AsNoTracking()
+            .SingleAsync(row => row.Id == id, Token);
     }
 
     public async ValueTask DisposeAsync()

@@ -127,6 +127,17 @@ internal static class ContentEndpoints
             .ProducesProblem(StatusCodes.Status429TooManyRequests)
             .ProducesValidationProblem();
 
+        content.MapPost("/newsletter/unsubscribe", UnsubscribeAsync)
+            .WithName("UnsubscribeFromNewsletter")
+            .WithSummary("Unsubscribe from the newsletter with the personal link's token.")
+            .WithDescription(
+                "Doc 11 P15 step 3, #262. The body carries the token from the subscriber's own link "
+                + "(/unsubscribe?token=...). **204 for every token**, whether it named a subscribed address, an "
+                + "already-unsubscribed one, nobody, or was not a token at all, so the answer cannot be used to test "
+                + "tokens (a body that is not JSON gets the 400/415 every endpoint gives, whatever it holds); and a POST "
+                + "rather than a GET so a mail scanner that opens the link changes nothing.")
+            .Produces(StatusCodes.Status204NoContent);
+
         return endpoints;
     }
 
@@ -316,6 +327,23 @@ internal static class ContentEndpoints
     }
 
     /// <summary>
+    /// The unsubscribe link's confirmation (#262). One answer, see the endpoint's description; the handler holds it to
+    /// the signup's time floor.
+    /// </summary>
+    private static async Task<NoContent> UnsubscribeAsync(
+        [FromBody] NewsletterUnsubscribeRequest? request,
+        ICommandHandler<UnsubscribeFromNewsletterCommand, bool> handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        httpContext.Response.Headers.CacheControl = "no-store";
+
+        await handler.HandleAsync(new UnsubscribeFromNewsletterCommand(request?.Token), cancellationToken);
+
+        return TypedResults.NoContent();
+    }
+
+    /// <summary>
     /// Which form the address came from, from a fixed list.
     ///
     /// <para>
@@ -372,6 +400,9 @@ public sealed record ContactEnquiryResponse(string Message);
 /// Which form it was: <c>homepage</c> or <c>footer</c>. Anything else is read as the homepage.
 /// </param>
 public sealed record NewsletterSignupRequest(string? Email, string? Source);
+
+/// <summary>The body of <c>POST /api/content/newsletter/unsubscribe</c> (#262): the token from the personal link.</summary>
+public sealed record NewsletterUnsubscribeRequest(string? Token);
 
 /// <summary>
 /// What the storefront shows after a signup. One sentence, identical for a new address and one that

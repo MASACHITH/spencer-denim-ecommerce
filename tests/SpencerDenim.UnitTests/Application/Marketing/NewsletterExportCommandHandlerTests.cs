@@ -3,6 +3,7 @@ using System.Text.Json;
 using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Marketing.Newsletter.Admin;
+using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Marketing;
 
@@ -75,7 +76,11 @@ public sealed class NewsletterExportCommandHandlerTests
     {
         var handler = Handler(
             new RecordingAuditLog(),
-            new NewsletterExportRow("=1+2@example.com", NewsletterSource.Homepage, new DateTime(2026, 10, 1, 18, 45, 0, DateTimeKind.Utc)));
+            new NewsletterExportRow(
+                "=1+2@example.com",
+                NewsletterSource.Homepage,
+                new DateTime(2026, 10, 1, 18, 45, 0, DateTimeKind.Utc),
+                Guid.Parse("0f8fad5b-d9cb-469f-a165-70867728950e")));
 
         var file = await handler.HandleAsync(
             new ExportNewsletterSubscribersCommand(new NewsletterSubscriberFilter(null, null, null, null), Actor),
@@ -85,9 +90,45 @@ public sealed class NewsletterExportCommandHandlerTests
 
         var text = new UTF8Encoding(false).GetString(file.Content, 3, file.Content.Length - 3);
         Assert.Equal(
-            "\"Email\",\"Source\",\"Consent given (Colombo time)\"\r\n"
-            + "\"'=1+2@example.com\",\"homepage\",\"2026-10-02 00:15\"\r\n",
+            "\"Email\",\"Source\",\"Consent given (Colombo time)\",\"Unsubscribe link\"\r\n"
+            + "\"'=1+2@example.com\",\"homepage\",\"2026-10-02 00:15\","
+            + "\"https://shop.test/unsubscribe?token=0f8fad5b-d9cb-469f-a165-70867728950e\"\r\n",
             text);
+    }
+
+    /// <summary>
+    /// #262: with no storefront address configured there is no link to give, and an empty cell is more honest than a
+    /// relative address no mail client could open.
+    /// </summary>
+    [Fact]
+    public async Task Without_a_storefront_address_the_link_cell_is_empty()
+    {
+        var handler = new ExportNewsletterSubscribersCommandHandler(
+            new StubReader([Row("a@example.com")]),
+            new RecordingAuditLog(),
+            new FixedClock(Now),
+            new EmailOptions());
+
+        var file = await handler.HandleAsync(
+            new ExportNewsletterSubscribersCommand(new NewsletterSubscriberFilter(null, null, null, null), Actor),
+            CancellationToken.None);
+
+        var text = new UTF8Encoding(false).GetString(file.Content, 3, file.Content.Length - 3);
+        Assert.EndsWith(",\"\"\r\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("unsubscribe", text.Split("\r\n")[1], StringComparison.Ordinal);
+    }
+
+    /// <summary>The token is in the file for the mail merge, and never in the audit row.</summary>
+    [Fact]
+    public async Task The_token_never_reaches_the_audit_row()
+    {
+        var audit = new RecordingAuditLog();
+
+        await Handler(audit, Row("a@example.com")).HandleAsync(
+            new ExportNewsletterSubscribersCommand(new NewsletterSubscriberFilter(null, null, null, null), Actor),
+            CancellationToken.None);
+
+        Assert.DoesNotContain(RowToken.ToString("D"), Assert.Single(audit.Written).AfterJson!, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -107,10 +148,12 @@ public sealed class NewsletterExportCommandHandlerTests
         Assert.Equal(expected, new NewsletterSubscriberFilter(search, null, null, null).NormalisedSearch);
 
     private static ExportNewsletterSubscribersCommandHandler Handler(IAuditLogWriter audit, params NewsletterExportRow[] rows) =>
-        new(new StubReader(rows), audit, new FixedClock(Now));
+        new(new StubReader(rows), audit, new FixedClock(Now), new EmailOptions { StorefrontBaseUrl = "https://shop.test/" });
+
+    private static readonly Guid RowToken = Guid.Parse("6f9619ff-8b86-d011-b42d-00c04fc964ff");
 
     private static NewsletterExportRow Row(string email) =>
-        new(email, NewsletterSource.Footer, new DateTime(2026, 10, 1, 4, 30, 0, DateTimeKind.Utc));
+        new(email, NewsletterSource.Footer, new DateTime(2026, 10, 1, 4, 30, 0, DateTimeKind.Utc), RowToken);
 
     private sealed class FixedClock(DateTimeOffset now) : IClock
     {

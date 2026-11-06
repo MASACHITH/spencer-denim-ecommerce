@@ -208,7 +208,7 @@ export const MARKETING_SECTIONS: readonly GuideSection[] = [
       {
         kind: 'callout',
         tone: 'note',
-        text: 'Permissions: **Newsletter View** to see the list and **Newsletter Export** to download it (Store Manager). With View only you see "Your role can see subscribers but not export them."',
+        text: 'Permissions: **Newsletter View** to see the list and **Newsletter Export** to download it and to unsubscribe someone (Store Manager). With View only you see "Your role can see subscribers but not export them."',
       },
       {
         kind: 'text',
@@ -220,7 +220,7 @@ export const MARKETING_SECTIONS: readonly GuideSection[] = [
         items: [
           'Open **Newsletter subscribers**. The line under the heading shows "N subscribed - N unsubscribed" for the whole list.',
           'Use **Email address contains** (up to 100 characters), **Status**, and **Consent from** / **Consent to** (Colombo days, both included), then press **Apply filters**. Rows show the email, status, consent date and where they signed up ("Homepage" or "Footer"), 25 per page.',
-          'Press **Export CSV**. It downloads `newsletter-subscribers-` and the date `.csv` with subscribed addresses only, matching the search and dates you last applied. Columns: Email, Source, Consent given (Colombo time).',
+          'Press **Export CSV**. It downloads `newsletter-subscribers-` and the date `.csv` with subscribed addresses only, matching the search and dates you last applied. Columns: Email, Source, Consent given (Colombo time), Unsubscribe link.',
         ],
       },
       {
@@ -233,8 +233,17 @@ export const MARKETING_SECTIONS: readonly GuideSection[] = [
       },
       {
         kind: 'callout',
-        tone: 'warning',
-        text: 'Known gap: there is **no way to unsubscribe anyone**. No button on this screen, no unsubscribe link in any email, and nothing in the system sets the "Unsubscribed" status, so that counter normally shows 0. If someone asks to be removed, keep your own list of removals in your email tool and never email them. The sign-up form promises "Unsubscribe from any email", so tell the owner about this gap.',
+        tone: 'note',
+        text: '**Put each person\'s Unsubscribe link in every newsletter you send.** The export\'s last column is that person\'s own link; in your email tool, merge it into the email (for example as "Unsubscribe" in the footer). The sign-up form promises it. Opening the link shows a page with an **Unsubscribe** button; pressing it marks them Unsubscribed, and they are left out of every export after that. **Before every mailing, replace the list in your email tool with a fresh export; never add to the old one**, or people who have unsubscribed since are mailed again. If the column is empty, the shop\'s web address is not set up yet: ask your developer (it is the same setting the order emails use).',
+      },
+      {
+        kind: 'steps',
+        title: 'Unsubscribe someone who asked you',
+        items: [
+          'For a person who asked by phone, email or the Contact page. Find them with **Email address contains**.',
+          'Press **Unsubscribe** on their row, check the address in the question, then press **Yes, unsubscribe** (or **Cancel**).',
+          'The row shows Unsubscribed with today\'s date, and they are left out of every export from now on. It is recorded in the audit log against your name. Download a fresh export before your next mailing.',
+        ],
       },
     ],
   },

@@ -246,6 +246,9 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<SubscribeToNewsletterCommand, NewsletterSubscriptionOutcome>,
             SubscribeToNewsletterCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<UnsubscribeFromNewsletterCommand, bool>,
+            UnsubscribeFromNewsletterCommandHandler>();
 
         // Content pages and the contact enquiry (W2-11, GLB-10).
         //
@@ -541,6 +544,11 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<ExportNewsletterSubscribersCommand, NewsletterExportFile>,
             ExportNewsletterSubscribersCommandHandler>();
+
+        // #262: a staff member marks a subscriber unsubscribed (doc 11 §7 G-25), audited.
+        services.AddScoped<
+            ICommandHandler<UnsubscribeNewsletterSubscriberCommand, StaffUnsubscribeOutcome>,
+            UnsubscribeNewsletterSubscriberCommandHandler>();
 
         // The dashboard and the reports (W4-02: ADM-04, ADM-05, ADM-07, ADM-08, ADM-19; doc 11 P16). Read only,
         // bar the three exports, which write an Export audit row each.

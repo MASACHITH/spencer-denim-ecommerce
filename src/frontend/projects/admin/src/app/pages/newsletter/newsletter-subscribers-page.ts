@@ -15,6 +15,7 @@ import {
   NEWSLETTER_STATUSES,
   NewsletterFilter,
   NewsletterSubscriberPage,
+  NewsletterSubscriberRow,
   NewsletterSubscriberStatus,
 } from '../../core/newsletter/newsletter.model';
 import { colomboDate } from '../../core/orders/order-formatting';
@@ -189,6 +190,50 @@ const NO_FILTER: NewsletterFilter = { search: '', status: null, from: '', to: ''
                 <dd>{{ day(row.unsubscribedAtUtc) }}</dd>
               }
             </dl>
+
+            <!-- #262, doc 11 §7 G-25: for someone who asked by phone, email or the Contact page. Two steps, so a
+                 stray press does not withdraw someone's consent; the keeper of the list is the exporter. -->
+            @if (row.status === 'Subscribed' && canExport() === true) {
+              @if (confirming() === row.subscriberId) {
+                <div class="newsletter-row__confirm" [attr.data-testid]="'unsubscribe-confirm-' + row.subscriberId">
+                  <p class="newsletter-row__question" [id]="'unsubscribe-question-' + row.subscriberId">
+                    Unsubscribe {{ row.email }}? They will not be in the next export.
+                  </p>
+                  <div class="adm-actions">
+                    <button
+                      class="adm-btn adm-btn--danger"
+                      type="button"
+                      [attr.data-testid]="'unsubscribe-yes-' + row.subscriberId"
+                      [attr.aria-describedby]="'unsubscribe-question-' + row.subscriberId"
+                      [attr.aria-disabled]="unsubscribing() ? 'true' : null"
+                      (click)="unsubscribe(row)"
+                    >
+                      {{ unsubscribing() ? 'Unsubscribing…' : 'Yes, unsubscribe' }}
+                    </button>
+                    <button
+                      class="adm-btn"
+                      type="button"
+                      [attr.data-testid]="'unsubscribe-cancel-' + row.subscriberId"
+                      (click)="cancelUnsubscribe(row.subscriberId)"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              } @else {
+                <div class="adm-actions">
+                  <button
+                    class="adm-btn"
+                    type="button"
+                    [attr.data-testid]="'unsubscribe-' + row.subscriberId"
+                    [attr.aria-label]="'Unsubscribe ' + row.email"
+                    (click)="askUnsubscribe(row.subscriberId)"
+                  >
+                    Unsubscribe
+                  </button>
+                </div>
+              }
+            }
           </li>
         }
       </ul>
@@ -268,6 +313,14 @@ const NO_FILTER: NewsletterFilter = { search: '', status: null, from: '', to: ''
     .newsletter-paging {
       align-items: center;
     }
+    .newsletter-row__confirm {
+      display: grid;
+      gap: var(--space-1);
+    }
+    .newsletter-row__question {
+      margin: 0;
+      overflow-wrap: anywhere;
+    }
   `,
 })
 export class NewsletterSubscribersPage {
@@ -297,6 +350,10 @@ export class NewsletterSubscribersPage {
    */
   protected readonly canExport = signal<boolean | null>(null);
   protected readonly said = signal('');
+
+  /** The row whose Unsubscribe is waiting for its "Yes" (#262), or null. */
+  protected readonly confirming = signal<number | null>(null);
+  protected readonly unsubscribing = signal(false);
 
   protected readonly subscribedCount = computed(() => this.page()?.subscribedCount ?? 0);
   protected readonly unsubscribedCount = computed(() => this.page()?.unsubscribedCount ?? 0);
@@ -422,6 +479,58 @@ export class NewsletterSubscribersPage {
     });
   }
 
+  /** First step: the row asks "Unsubscribe …?", and focus moves to its Yes button. */
+  protected askUnsubscribe(subscriberId: number): void {
+    this.confirming.set(subscriberId);
+    this.focusAfterRender(`[data-testid="unsubscribe-yes-${subscriberId}"]`);
+  }
+
+  /** Back to the plain button, with focus on it. */
+  protected cancelUnsubscribe(subscriberId: number): void {
+    this.confirming.set(null);
+    this.focusAfterRender(`[data-testid="unsubscribe-${subscriberId}"]`);
+  }
+
+  /**
+   * Second step. The list reloads afterwards, so the row shows its new status from the server rather than one this
+   * page guessed; the row's button is gone then, and `load` moves focus to the status message.
+   */
+  protected unsubscribe(row: NewsletterSubscriberRow): void {
+    if (this.unsubscribing()) {
+      return;
+    }
+
+    this.unsubscribing.set(true);
+
+    this.api.unsubscribe(row.subscriberId).subscribe({
+      next: () => {
+        this.unsubscribing.set(false);
+        this.confirming.set(null);
+        this.load(this.page()?.page ?? 1, undefined, `${row.email} is unsubscribed and will not be in the next export.`);
+      },
+      error: (error: unknown) => {
+        this.unsubscribing.set(false);
+        const failure = toCatalogFailure(error);
+
+        if (failure.kind === 'notFound') {
+          // Gone since the list was read (anonymised, say): close the question and show the list as it is now.
+          this.confirming.set(null);
+          this.load(this.page()?.page ?? 1, undefined, 'That subscriber is no longer on the list.');
+          return;
+        }
+
+        this.announce(`Could not unsubscribe ${row.email}. ${failure.message}`);
+      },
+    });
+  }
+
+  private focusAfterRender(selector: string): void {
+    afterNextRender(
+      () => this.document.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true }),
+      { injector: this.injector },
+    );
+  }
+
   private save(blob: Blob, fileName: string): void {
     const view = this.document.defaultView;
 
@@ -441,7 +550,12 @@ export class NewsletterSubscribersPage {
     view.setTimeout(() => view.URL.revokeObjectURL(href), 0);
   }
 
-  private load(page: number, announcement?: string): void {
+  /**
+   * @param announcement Said when the read starts.
+   * @param outcome Said when the read succeeds, **instead of** the count — so the result of an action survives the
+   *   reload that shows it (#262 tester: the count used to overwrite "… is unsubscribed" at once).
+   */
+  private load(page: number, announcement?: string, outcome?: string): void {
     const focused = this.document.activeElement as HTMLElement | null;
 
     this.isLoading.set(true);
@@ -456,10 +570,10 @@ export class NewsletterSubscribersPage {
         this.page.set(answered);
         this.isLoading.set(false);
         this.announce(
-          answered.totalCount === 0
+          outcome ?? (answered.totalCount === 0
             ? this.emptyMessage()
             : `${answered.totalCount} ${answered.totalCount === 1 ? 'subscriber' : 'subscribers'}, `
-              + `most recent first. Showing ${this.firstOnPage()} to ${this.lastOnPage()}.`,
+              + `most recent first. Showing ${this.firstOnPage()} to ${this.lastOnPage()}.`),
         );
         this.rehomeFocusIfLost(focused);
       },

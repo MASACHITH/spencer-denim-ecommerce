@@ -336,16 +336,26 @@ public sealed partial class StorePagesCopyTests
     }
 
     /// <summary>
-    /// <b>Nothing in the shop implements unsubscribing</b>: the subscriber's <c>UnsubscribeToken</c> is generated and
-    /// used nowhere, no endpoint sets <c>UnsubscribedAtUtc</c>, no link exists. So no page may promise a self-service
-    /// way out. The Privacy policy says to ask through the Contact page and that staff remove the address (an
-    /// operational promise on the owner's list). When the unsubscribe feature ships this test changes with the copy.
+    /// <b>The unsubscribe link exists since #262</b> (<c>/unsubscribe?token=...</c>, carried for every address in the
+    /// newsletter export), so the Privacy policy names it — in exactly one sentence, the lint's permitted fragment — and
+    /// keeps the Contact page as the other way. About and Terms still say nothing about it: a page that is not about
+    /// consent has no business promising a mechanism.
     /// </summary>
     [Theory]
     [MemberData(nameof(Pages))]
-    public void No_page_promises_a_self_service_unsubscribe_the_shop_does_not_have(string key)
+    public void Only_the_privacy_policy_mentions_unsubscribing_and_only_in_its_one_sentence(string key)
     {
-        Assert.DoesNotMatch(new Regex("unsubscrib", RegexOptions.IgnoreCase), TextOf(key));
+        var mentions = new Regex("unsubscrib", RegexOptions.IgnoreCase).Count(TextOf(key));
+
+        Assert.Equal(key == ContentPageKeys.Privacy ? 1 : 0, mentions);
+
+        if (key == ContentPageKeys.Privacy)
+        {
+            Assert.Contains(
+                "To stop receiving the newsletter, use the unsubscribe link in any newsletter email. You can also write to us, as below.",
+                TextOf(key),
+                StringComparison.Ordinal);
+        }
     }
 
     [Fact]
