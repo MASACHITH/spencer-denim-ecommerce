@@ -1,6 +1,8 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Marketing.Newsletter;
+using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Infrastructure.Persistence;
 
@@ -9,7 +11,7 @@ namespace SpencerDenim.Infrastructure.Marketing;
 /// <summary>
 /// Writes newsletter signups to <c>marketing.NewsletterSubscribers</c> (HOME-10, doc 08 §3.6).
 /// </summary>
-internal sealed class NewsletterSubscriptions(AppDbContext dbContext) : INewsletterSubscriptions
+internal sealed class NewsletterSubscriptions(AppDbContext dbContext, IAuditLogWriter auditLog) : INewsletterSubscriptions
 {
     /// <summary>SQL Server's errors for a unique index and a unique constraint violation.</summary>
     private const int DuplicateKeyError = 2601;
@@ -91,6 +93,76 @@ internal sealed class NewsletterSubscriptions(AppDbContext dbContext) : INewslet
         return NewsletterSubscriptionOutcome.Resubscribed;
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// A conditional <c>ExecuteUpdate</c> on <c>UX_NewsletterSubscribers_UnsubscribeToken</c>: the row is found by the
+    /// unique index, and the status is part of the predicate, so the first request writes and every later one —
+    /// a double click, a second tab, a link scanner — changes nothing and keeps the original time.
+    /// </remarks>
+    public async Task<bool> UnsubscribeByTokenAsync(Guid token, DateTime utcNow, CancellationToken cancellationToken)
+    {
+        var changed = await dbContext.NewsletterSubscribers
+            .Where(subscriber =>
+                subscriber.UnsubscribeToken == token && subscriber.Status == NewsletterSubscriberStatus.Subscribed)
+            .ExecuteUpdateAsync(
+                update => update
+                    .SetProperty(subscriber => subscriber.Status, NewsletterSubscriberStatus.Unsubscribed)
+                    .SetProperty(subscriber => subscriber.UnsubscribedAtUtc, utcNow),
+                cancellationToken);
+
+        return changed == 1;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <b>A conditional UPDATE and the audit row, in one transaction</b> (#262 tester). The status is in the UPDATE's
+    /// predicate, so a subscriber who uses their own link between a read and a write cannot be "unsubscribed again" with
+    /// a new time and an audit row for a change that had already happened: the UPDATE matches no row, nothing is
+    /// written, and the answer is AlreadyUnsubscribed. The audit row is added only when the UPDATE changed the row, and
+    /// commits with it (<see cref="IAuditLogWriter.Enlist"/>, #59). <c>EnableRetryOnFailure</c> refuses a user
+    /// transaction outside its strategy, so the whole attempt is what retries, from a clean change tracker.
+    /// </remarks>
+    public async Task<StaffUnsubscribeOutcome> UnsubscribeByStaffAsync(
+        int subscriberId,
+        AuditLog audit,
+        DateTime utcNow,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(audit);
+
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+
+        return await strategy.ExecuteAsync(async token =>
+        {
+            dbContext.ChangeTracker.Clear();
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(token);
+
+            var changed = await dbContext.NewsletterSubscribers
+                .Where(subscriber =>
+                    subscriber.Id == subscriberId && subscriber.Status == NewsletterSubscriberStatus.Subscribed)
+                .ExecuteUpdateAsync(
+                    update => update
+                        .SetProperty(subscriber => subscriber.Status, NewsletterSubscriberStatus.Unsubscribed)
+                        .SetProperty(subscriber => subscriber.UnsubscribedAtUtc, utcNow),
+                    token);
+
+            if (changed == 0)
+            {
+                var exists = await dbContext.NewsletterSubscribers
+                    .AnyAsync(subscriber => subscriber.Id == subscriberId, token);
+
+                await transaction.RollbackAsync(token);
+
+                return exists ? StaffUnsubscribeOutcome.AlreadyUnsubscribed : StaffUnsubscribeOutcome.NotFound;
+            }
+
+            auditLog.Enlist(audit);
+            await dbContext.SaveChangesAsync(token);
+            await transaction.CommitAsync(token);
+
+            return StaffUnsubscribeOutcome.Unsubscribed;
+        }, cancellationToken);
+    }
     private static bool IsDuplicate(DbUpdateException exception) =>
         exception.InnerException is SqlException sql
         && sql.Number is DuplicateKeyError or UniqueConstraintError;

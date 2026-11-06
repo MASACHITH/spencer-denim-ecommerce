@@ -90,14 +90,13 @@ export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
             unconditional link would be a 404 beside a consent statement on every page of the shop,
             which is a worse answer to "where is your privacy policy" than no link at all.
 
-            **There is no self-service unsubscribe yet** (issue #252 review): the subscriber row carries an
-            UnsubscribeToken that nothing uses, and no endpoint sets UnsubscribedAtUtc. So
-            this line must not promise one. It says to ask through the Contact page, which staff then act on by
-            hand. Replace the wording when the unsubscribe feature ships.
+            **The unsubscribe link exists since #262** (/unsubscribe?token=..., carried for every address in the
+            newsletter export), so this line promises it again; the Contact page stays as the other way, and staff can
+            mark someone unsubscribed in the admin.
           -->
           <p class="t-small muted">
-            We record your IP address as proof of consent. You can ask us to stop at any time through the Contact
-            page.
+            We record your IP address as proof of consent. You can unsubscribe at any time with the link in our
+            emails, or ask us through the Contact page.
             @if (privacyPage(); as page) {
               <a class="site-footer__inline-link" [routerLink]="'/' + page.slug">{{ page.title }}</a>
             }

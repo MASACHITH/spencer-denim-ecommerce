@@ -40,6 +40,16 @@ export class ContentApi {
   subscribe(email: string, source: NewsletterSource = 'homepage'): Observable<NewsletterSignupResponse> {
     return this.http.post<NewsletterSignupResponse>('/api/content/newsletter', { email, source });
   }
+
+  /**
+   * Withdraws a newsletter consent with the token from the subscriber's own link (#262, doc 11 P15 step 3).
+   *
+   * The API answers 204 whatever the token was, so success here means only "the request arrived": the page says
+   * the same thing to everyone, which is the point.
+   */
+  unsubscribe(token: string): Observable<void> {
+    return this.http.post<void>('/api/content/newsletter/unsubscribe', { token });
+  }
 }
 
 /**

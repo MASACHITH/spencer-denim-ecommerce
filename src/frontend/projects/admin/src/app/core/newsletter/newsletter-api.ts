@@ -53,6 +53,19 @@ export class NewsletterApi {
       );
   }
 
+  /**
+   * Marks one subscriber unsubscribed — someone who asked by phone, email or the Contact page (#262, doc 11 §7 G-25).
+   * `Newsletter.Export`, with the antiforgery token: the server audits it. 204 when done or when they already were;
+   * 404 when the subscriber has gone.
+   */
+  unsubscribe(subscriberId: number): Observable<void> {
+    return this.auth.withAntiforgeryToken((token) =>
+      this.http.post<void>(`${NewsletterApi.url}/${subscriberId}/unsubscribe`, null, {
+        headers: { 'X-XSRF-TOKEN': token },
+      }),
+    );
+  }
+
   private static filterParams(filter: NewsletterFilter): HttpParams {
     let params = new HttpParams();
 

@@ -318,6 +318,8 @@ public static class PolicyPageContent
         + "<li>complain to the Data Protection Authority of Sri Lanka if you think we have handled your data "
         + "wrongly.</li>"
         + "</ul>"
+        + "<p>To stop receiving the newsletter, use the unsubscribe link in any newsletter email. You can also "
+        + "write to us, as below.</p>"
         + "<p>To use any of these rights, to stop receiving the newsletter or to withdraw any other consent, write "
         + "to us through the Contact page with your name, the email address on your order or account and what you "
         + "would like us to do. When you ask us to stop the newsletter, we remove you from the list. We may ask you "

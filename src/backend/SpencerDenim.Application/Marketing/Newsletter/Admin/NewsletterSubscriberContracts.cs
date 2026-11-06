@@ -48,4 +48,8 @@ public sealed record NewsletterSubscriberRow(
 /// <summary>
 /// One subscriber as the export writes it. Subscribed addresses only, so there is no status column.
 /// </summary>
-public sealed record NewsletterExportRow(string Email, string Source, DateTime ConsentAtUtc);
+/// <param name="UnsubscribeToken">
+/// The token behind the subscriber's own unsubscribe link (#262), which the export turns into a full link for a mail
+/// merge. Never shown on screen and never in the audit row.
+/// </param>
+public sealed record NewsletterExportRow(string Email, string Source, DateTime ConsentAtUtc, Guid UnsubscribeToken);

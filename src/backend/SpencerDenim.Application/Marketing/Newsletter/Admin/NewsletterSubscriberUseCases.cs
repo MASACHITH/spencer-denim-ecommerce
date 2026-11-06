@@ -4,6 +4,7 @@ using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Admin.Exports;
+using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Common;
 
@@ -65,22 +66,33 @@ public sealed record NewsletterExportFile(byte[] Content, string FileName, int R
 /// address typed into a search box. Nor, for the same reason, any address in the file.
 /// </para>
 /// <para>
-/// <b>Columns:</b> the address, where it was given, and when the current consent was given in Colombo time.
-/// Not the consent IP (proof of consent, purged at 90 days, of no use to a mail tool) and not the status
-/// (every row is subscribed).
+/// <b>Columns:</b> the address, where it was given, when the current consent was given in Colombo time, and the
+/// subscriber's own <b>unsubscribe link</b> (#262) for a mail merge — every email sent from this list should carry
+/// it (doc 11 §7 G-25). The link is built from <c>Email:StorefrontBaseUrl</c>; with that unset the cell is empty
+/// rather than a relative address no mail client could open. Not the consent IP (proof of consent, purged at 90
+/// days, of no use to a mail tool) and not the status (every row is subscribed).
 /// </para>
 /// </remarks>
 public sealed class ExportNewsletterSubscribersCommandHandler(
     INewsletterSubscriberReader reader,
     IAuditLogWriter auditLog,
-    IClock clock)
+    IClock clock,
+    EmailOptions emailOptions)
     : ICommandHandler<ExportNewsletterSubscribersCommand, NewsletterExportFile>
 {
     /// <summary><c>ops.AuditLogs.EntityType</c> for this export.</summary>
     public const string EntityType = "NewsletterSubscriber";
 
     /// <summary>The header row, in column order.</summary>
-    public static readonly IReadOnlyList<string> Header = ["Email", "Source", "Consent given (Colombo time)"];
+    public static readonly IReadOnlyList<string> Header =
+        ["Email", "Source", "Consent given (Colombo time)", "Unsubscribe link"];
+
+    /// <summary>
+    /// The storefront page a subscriber's link opens (#262). The token travels in the query string, which every log
+    /// and traffic record in this system drops by construction (<c>RequestPathRedaction</c>, <c>PagePath</c>).
+    /// </summary>
+    public static string UnsubscribeLink(string storefrontOrigin, Guid token) =>
+        $"{storefrontOrigin}/unsubscribe?token={token:D}";
 
     public async Task<NewsletterExportFile> HandleAsync(
         ExportNewsletterSubscribersCommand command,
@@ -115,6 +127,7 @@ public sealed class ExportNewsletterSubscribersCommandHandler(
             cancellationToken);
 
         var csv = new CsvDocument().Row([.. Header]);
+        var origin = emailOptions.NormalisedStorefrontBaseUrl;
 
         foreach (var row in rows)
         {
@@ -122,7 +135,8 @@ public sealed class ExportNewsletterSubscribersCommandHandler(
                 row.Email,
                 row.Source,
                 ColomboTime.ToLocal(new DateTimeOffset(DateTime.SpecifyKind(row.ConsentAtUtc, DateTimeKind.Utc)))
-                    .ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
+                    .ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
+                origin is null ? string.Empty : UnsubscribeLink(origin, row.UnsubscribeToken));
         }
 
         var day = ColomboTime.ToLocal(now).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);

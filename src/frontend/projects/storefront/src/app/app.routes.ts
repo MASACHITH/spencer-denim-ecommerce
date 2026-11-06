@@ -28,6 +28,9 @@ const bagPage = () => import('./pages/bag/bag-page').then((m) => m.BagPage);
 /** The wishlist page (WISH-01). */
 const wishlistPage = () => import('./pages/wishlist/wishlist-page').then((m) => m.WishlistPage);
 
+/** #262: the newsletter's unsubscribe link lands here. */
+const unsubscribePage = () => import('./pages/unsubscribe/unsubscribe-page').then((m) => m.UnsubscribePage);
+
 /** Checkout (CHK-01..03). */
 const checkoutPage = () =>
   import('./pages/checkout/checkout-page').then((m) => m.CheckoutPage);
@@ -142,6 +145,12 @@ export const routes: Routes = [
   // unlike `/bag` it renders **no list on the server at all**, because a guest's wishlist is in their own
   // browser (doc 08 §1.7) and the server has nothing to render it from. See the component.
   { path: 'wishlist', loadComponent: wishlistPage },
+
+  // The newsletter's unsubscribe link (#262, doc 11 P15 step 3). A single-segment route, so **ahead of
+  // `:department`** like `search` and `bag`. The token is in the query string (`/unsubscribe?token=...`), not
+  // the path: every log and traffic record drops a query string by construction (`RequestPathRedaction`,
+  // `PagePath`), where a path segment would need a credential route in three implementations.
+  { path: 'unsubscribe', loadComponent: unsubscribePage },
 
   // My account (W3-01, ACC-01, ACC-02). Listed **ahead of `:department`**, which matches any single
   // segment, and its `UNBUILT_PATHS` entry is removed in this change — the rule that list states for

@@ -6,6 +6,7 @@ using SpencerDenim.Api.Http;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Admin.Exports;
+using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Marketing.Newsletter.Admin;
 using SpencerDenim.Domain.Identity;
 using SpencerDenim.Domain.Marketing;
@@ -55,6 +56,19 @@ internal static class AdminNewsletterEndpoints
                 + "quote. Every export writes an Export row to the audit log before the file is sent.")
             .Produces(StatusCodes.Status200OK, contentType: "text/csv")
             .ProducesValidationProblem()
+            .Produces(StatusCodes.Status403Forbidden);
+
+        api.MapPost("/{subscriberId:int}/unsubscribe", UnsubscribeAsync)
+            .RequirePermission(Permissions.Newsletter.Export)
+            .WithName("AdminUnsubscribeNewsletterSubscriber")
+            .WithSummary("Mark a subscriber unsubscribed (#262, doc 11 §7 G-25).")
+            .WithDescription(
+                "For someone who asked by phone, email or the Contact page. Audited in the same transaction as the "
+                + "change. **Newsletter.Export**, because the list's keeper is the person who sends it to a mail tool "
+                + "(doc 08 §9 has no newsletter write permission). 204 when it was done, 204 too when the subscriber "
+                + "was already unsubscribed (nothing written), 404 when there is no such subscriber.")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status403Forbidden);
 
         return endpoints;
@@ -110,6 +124,32 @@ internal static class AdminNewsletterEndpoints
             cancellationToken);
 
         return TypedResults.File(file.Content, CsvDocument.ContentType, file.FileName);
+    }
+
+    private static async Task<IResult> UnsubscribeAsync(
+        HttpContext httpContext,
+        IAntiforgery antiforgery,
+        ICommandHandler<UnsubscribeNewsletterSubscriberCommand, StaffUnsubscribeOutcome> handler,
+        int subscriberId,
+        CancellationToken cancellationToken)
+    {
+        NoStore(httpContext.Response);
+
+        if (await AdminWriteRequest.ValidateAntiforgeryAsync(httpContext, antiforgery) is { } forged)
+        {
+            return forged;
+        }
+
+        var outcome = await handler.HandleAsync(
+            new UnsubscribeNewsletterSubscriberCommand(subscriberId, AdminWriteRequest.Actor(httpContext)),
+            cancellationToken);
+
+        return outcome == StaffUnsubscribeOutcome.NotFound
+            ? TypedResults.Problem(
+                title: "Subscriber not found",
+                detail: "That subscriber is no longer on the list.",
+                statusCode: StatusCodes.Status404NotFound)
+            : TypedResults.NoContent();
     }
 
     private static ValidationProblem? ReadFilter(

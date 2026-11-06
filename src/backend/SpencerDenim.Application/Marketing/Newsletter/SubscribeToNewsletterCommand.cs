@@ -168,4 +168,34 @@ public interface INewsletterSubscriptions
         DateTime utcNow,
         string? ipAddress,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The subscriber's own unsubscribe link (#262): withdraws the consent of the row holding
+    /// <paramref name="token"/>, if it is subscribed. One conditional UPDATE, so a double click or two tabs cannot
+    /// race it, and true only when this call made the change.
+    /// </summary>
+    Task<bool> UnsubscribeByTokenAsync(Guid token, DateTime utcNow, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// A staff member marks a subscriber unsubscribed (#262, doc 11 §7 G-25), with the audit row in the same
+    /// transaction as the change. Nothing is written for a row that is already unsubscribed or does not exist.
+    /// </summary>
+    Task<StaffUnsubscribeOutcome> UnsubscribeByStaffAsync(
+        int subscriberId,
+        Domain.Auditing.AuditLog audit,
+        DateTime utcNow,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>What a staff member's Unsubscribe did.</summary>
+public enum StaffUnsubscribeOutcome
+{
+    /// <summary>The subscriber was subscribed and is now unsubscribed; the audit row was written with it.</summary>
+    Unsubscribed = 1,
+
+    /// <summary>Already unsubscribed (by their own link or by someone else). Nothing was written.</summary>
+    AlreadyUnsubscribed = 2,
+
+    /// <summary>No such subscriber (anonymised, or a wrong id). Nothing was written.</summary>
+    NotFound = 3,
 }

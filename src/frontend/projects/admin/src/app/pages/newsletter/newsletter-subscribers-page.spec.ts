@@ -241,6 +241,104 @@ describe('NewsletterSubscribersPage (ADM-21)', () => {
     expect(fileNameFrom(null)).toBe('newsletter-subscribers.csv');
   });
 
+  /**
+   * #262, doc 11 §7 G-25: the staff Unsubscribe. Only on subscribed rows, only for the list's keeper (the exporter),
+   * and in two steps so a stray press withdraws nobody's consent.
+   */
+  describe('the staff Unsubscribe (#262)', () => {
+    function unsubscribeRequest() {
+      return http.expectOne(
+        (candidate) =>
+          candidate.url === `${NewsletterApi.url}/3/unsubscribe` && candidate.method === 'POST',
+      );
+    }
+
+    it('is offered on a subscribed row only, and only to a role that may export', async () => {
+      await open();
+
+      expect(byTestId('unsubscribe-3')).not.toBeNull();
+      expect(byTestId('unsubscribe-3').getAttribute('aria-label')).toBe('Unsubscribe nimali@example.com');
+      expect(byTestId('unsubscribe-4')).toBeNull();
+    });
+
+    it('is not offered to a role that can only view', async () => {
+      await open(page(), { grantsAllPermissions: false, permissions: ['Newsletter.View'] });
+
+      expect(byTestId('unsubscribe-3')).toBeNull();
+    });
+
+    it('asks first, sends nothing until the Yes, and Cancel puts focus back', async () => {
+      await open();
+
+      byTestId('unsubscribe-3').click();
+      await settle();
+
+      expect(byTestId('unsubscribe-confirm-3').textContent).toContain('Unsubscribe nimali@example.com?');
+      // A screen reader on the Yes button hears whose address it is.
+      const question = byTestId('unsubscribe-yes-3').getAttribute('aria-describedby')!;
+      expect(element.querySelector(`#${question}`)?.textContent).toContain('nimali@example.com');
+      expect(document.activeElement).toBe(byTestId('unsubscribe-yes-3'));
+      http.expectNone(`${NewsletterApi.url}/3/unsubscribe`);
+
+      byTestId('unsubscribe-cancel-3').click();
+      await settle();
+
+      expect(byTestId('unsubscribe-confirm-3')).toBeNull();
+      expect(document.activeElement).toBe(byTestId('unsubscribe-3'));
+    });
+
+    it('posts with the antiforgery token, reloads the list and says what happened', async () => {
+      await open();
+
+      byTestId('unsubscribe-3').click();
+      await settle();
+      byTestId('unsubscribe-yes-3').click();
+      await settle();
+
+      http.expectOne(ANTIFORGERY).flush({ token: 'the-token' });
+      const request = unsubscribeRequest();
+      expect(request.request.headers.get('X-XSRF-TOKEN')).toBe('the-token');
+      request.flush(null, { status: 204, statusText: 'No Content' });
+      await settle();
+
+      http.expectOne(`${NewsletterApi.url}?page=1&pageSize=25`).flush(
+        page({
+          rows: [
+            { ...page().rows[0], status: 'Unsubscribed', unsubscribedAtUtc: '2026-11-06T04:00:00Z' },
+            page().rows[1],
+          ],
+        }),
+      );
+      await settle();
+
+      expect(byTestId('unsubscribe-3')).toBeNull();
+      // The outcome survives the reload that shows it, rather than being replaced by the count.
+      expect(byTestId('newsletter-status-message').textContent).toBe(
+        'nimali@example.com is unsubscribed and will not be in the next export.',
+      );
+    });
+
+    it('says plainly when the subscriber has gone', async () => {
+      await open();
+
+      byTestId('unsubscribe-3').click();
+      await settle();
+      byTestId('unsubscribe-yes-3').click();
+      await settle();
+
+      http.expectOne(ANTIFORGERY).flush({ token: 't' });
+      unsubscribeRequest().flush({ title: 'Subscriber not found' }, { status: 404, statusText: 'Not Found' });
+      await settle();
+
+      // The question closes and the list is read again, so the screen shows what is there now.
+      expect(byTestId('unsubscribe-confirm-3')).toBeNull();
+      http.expectOne(`${NewsletterApi.url}?page=1&pageSize=25`).flush(page({ rows: [page().rows[1]], totalCount: 1 }));
+      await settle();
+
+      expect(byTestId('newsletter-status-message').textContent).toBe('That subscriber is no longer on the list.');
+    });
+  });
+
   it('keeps headings in order: one h1, then h2s', async () => {
     await open();
 

@@ -232,18 +232,18 @@ describe('SiteFooter (GLB-07)', () => {
   });
 
   /**
-   * Issue #252 review: the sign-up wording must not promise a self-service unsubscribe the shop does not have. The
-   * subscriber's `UnsubscribeToken` is generated and used nowhere, no endpoint sets `UnsubscribedAtUtc` and no link
-   * exists, so the line says to ask through the Contact page, which staff act on by hand. When the unsubscribe feature
-   * ships, this test is the one to change with the wording.
+   * Issue #252 review held this line to the Contact page while no self-service unsubscribe existed. #262 shipped one
+   * (`/unsubscribe?token=...`, the link the export carries for every address), so the line promises it again and keeps
+   * the Contact page as the other way.
    */
-  it('does not promise an unsubscribe link: it says to ask through the Contact page', () => {
+  it('promises the unsubscribe link in our emails, and the Contact page as the other way', () => {
     const text = (element.querySelector('.newsletter')?.textContent ?? element.textContent ?? '')
       .replace(/\s+/g, ' ')
       .trim();
 
-    expect(text).toContain('You can ask us to stop at any time through the Contact page.');
-    expect(text).not.toMatch(/unsubscribe/i);
+    expect(text).toContain(
+      'You can unsubscribe at any time with the link in our emails, or ask us through the Contact page.',
+    );
   });
 
   /**

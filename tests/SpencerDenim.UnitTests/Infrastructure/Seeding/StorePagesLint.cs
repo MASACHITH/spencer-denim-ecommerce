@@ -68,6 +68,7 @@ internal static partial class StorePagesLint
         "We never show your email address",
         "We never see or store your card details",
         "our best estimate",
+        "use the unsubscribe link in any newsletter email",
     ];
 
     /// <summary>

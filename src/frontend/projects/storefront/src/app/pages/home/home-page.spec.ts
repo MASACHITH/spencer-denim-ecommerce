@@ -711,7 +711,8 @@ describe('HomePage', () => {
 
       expect(hint.textContent?.replace(/\s+/g, ' ').trim()).toBe(
         'We use your address for Colombo Wardrobe emails only, and record your IP address as proof of consent. ' +
-          'You can ask us to stop at any time through the Contact page. Read our privacy policy.',
+          'You can unsubscribe at any time with the link in our emails, or ask us through the Contact page. ' +
+          'Read our privacy policy.',
       );
       expect(hint.querySelector('a')?.getAttribute('href')).toBe('/privacy-policy');
       // Leaving the homepage loses nothing, so this link keeps the same tab and says nothing about a new one.
@@ -728,7 +729,7 @@ describe('HomePage', () => {
 
       expect(hint.textContent?.replace(/\s+/g, ' ').trim()).toBe(
         'We use your address for Colombo Wardrobe emails only, and record your IP address as proof of consent. ' +
-          'You can ask us to stop at any time through the Contact page.',
+          'You can unsubscribe at any time with the link in our emails, or ask us through the Contact page.',
       );
       expect(hint.querySelector('a')).toBeNull();
     });
