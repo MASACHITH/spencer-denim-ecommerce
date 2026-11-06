@@ -8,6 +8,7 @@ import {
   BankDetailValues,
   InvoiceAndFulfilmentValues,
   ContactAndSocialValues,
+  CurrencyRateValues,
   PayPalValues,
   SmtpTestResponse,
   SmtpTextValues,
@@ -32,6 +33,7 @@ export class AdminSettingsApi {
   static readonly invoiceAndFulfilmentUrl = '/api/admin/settings/invoice-and-fulfilment';
   static readonly payPalUrl = '/api/admin/settings/paypal';
   static readonly trafficUrl = '/api/admin/settings/traffic';
+  static readonly currencyRatesUrl = '/api/admin/settings/currency-rates';
   static readonly reviewsUrl = '/api/admin/settings/reviews';
   static readonly smtpUrl = '/api/admin/settings/email-smtp';
   static readonly smtpTestUrl = '/api/admin/settings/email-smtp/test';
@@ -139,6 +141,14 @@ export class AdminSettingsApi {
    */
   updateTraffic(values: TrafficValues, rowVersion: string): Observable<void> {
     return this.put(AdminSettingsApi.trafficUrl, { ...values, rowVersion });
+  }
+
+  /**
+   * The display-currency rates (issue #248). **Only the fields that changed**, the bank group's rule: an absent
+   * field is left alone, an empty string clears that rate. Display only: nothing here changes what PayPal charges.
+   */
+  updateCurrencyRates(values: CurrencyRateValues, rowVersion: string): Observable<void> {
+    return this.put(AdminSettingsApi.currencyRatesUrl, { ...values, rowVersion });
   }
 
   /** Whether reviews wait for approval (issue #189): a JSON true or false, never null. */

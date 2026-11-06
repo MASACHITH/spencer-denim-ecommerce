@@ -537,6 +537,9 @@ test.describe('the settings screen is usable and accessible', () => {
       // Issue #189: whether customers' reviews wait for approval.
       'h2:Reviews',
 
+      // Issue #248: the five exchange rates a shopper's chosen currency is converted at (Settings.Edit).
+      'h2:Display currencies',
+
       // ADM-22 (2026-10-21): the mail account, for a Super Admin (the stub's user holds GrantsAll).
       'h2:Email account',
     ]);
