@@ -72,7 +72,7 @@ export const SETTINGS_SECTIONS: readonly GuideSection[] = [
       {
         kind: 'list',
         items: [
-          '**Payment methods:** a switch each for "Bank or online transfer" and "PayPal". A new shop starts with both **off**. PayPal can only be switched on once it is ready (below). Switching off is always allowed, even the last method, but then "Checkout will refuse every order until a payment method is switched on and ready." Orders already placed are not affected. A change raises a security alert (see [Alerts](#admin-alerts)).',
+          '**Payment methods:** a switch each for "Bank or online transfer" and "PayPal". A new shop starts with both **off**. Bank transfer, when on, is offered for deliveries within Sri Lanka only; PayPal for every country. PayPal can only be switched on once it is ready (below). Switching off is always allowed, even the last method, but then "Checkout will refuse every order until a payment method is switched on and ready." Orders already placed are not affected. A change raises a security alert (see [Alerts](#admin-alerts)).',
           '**Bank transfer:** **Bank name**, **Account name** and **Account number** are required before customers see anything (otherwise their order page says the details are being confirmed). **Branch (optional)** up to 120 characters. The account number takes digits, spaces and dashes only, up to 40. **Extra instructions (optional)** up to 600 characters. The owner should type these in the live admin themselves, never in a message.',
         ],
       },

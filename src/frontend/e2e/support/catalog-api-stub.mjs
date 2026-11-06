@@ -2954,6 +2954,35 @@ const CHECKOUT_PAYMENT_METHODS = [
 ];
 
 /**
+ * PayPal, as the seeded row reads. **Off unless a test asks for it** with an `x-e2e-paypal: on` header on the
+ * browser's routed calls (`route.fetch({ headers })`): every other suite places Sri Lankan orders by the one
+ * method the page picks for the shopper, and a second radio would change all of them. Per request rather than a
+ * switch, because the suite is fullyParallel and a shared switch would race (see `sizedProduct` in bag.e2e.ts).
+ */
+const PAYPAL_PAYMENT_METHOD = {
+  code: 'PayPal',
+  displayName: 'PayPal',
+  checkoutDescription: 'Pay by card or with your PayPal balance. You will be taken to PayPal to pay.',
+};
+
+/** #253: `IPaymentProvider.DomesticDeliveriesOnly` — bank transfer is for Sri Lankan deliveries only. */
+const SRI_LANKA_ONLY_PAYMENT_CODES = new Set(['BankTransfer']);
+
+/** What the shop has switched on, for this request (see `PAYPAL_PAYMENT_METHOD`). */
+function enabledPaymentMethods(request) {
+  return request.headers['x-e2e-paypal'] === 'on'
+    ? [...CHECKOUT_PAYMENT_METHODS, PAYPAL_PAYMENT_METHOD]
+    : CHECKOUT_PAYMENT_METHODS;
+}
+
+/** `DestinationRules.PaymentMethodsFor`: every enabled method for Sri Lanka, none of the Sri Lanka-only ones abroad. */
+function paymentMethodsFor(enabled, country) {
+  return country && !country.isDomestic
+    ? enabled.filter((method) => !SRI_LANKA_ONLY_PAYMENT_CODES.has(method.code))
+    : enabled;
+}
+
+/**
  * Test-only: makes the next Place order answer doc 08 §5.4 step 3's OUT_OF_STOCK refusal.
  *
  * **Why a switch is the only way.** Both the real API and this stub re-read the bag immediately before
@@ -3183,7 +3212,7 @@ function checkoutAllocate(lines, amount) {
   return lines.map((line, index) => ({ ...line, promoDiscountAllocated: shares[index] }));
 }
 
-function checkoutBlockers(lines, districtId, options, country = null) {
+function checkoutBlockers(lines, districtId, options, country = null, paymentMethods = CHECKOUT_PAYMENT_METHODS) {
   const blockers = [];
 
   if (lines.length === 0) {
@@ -3200,7 +3229,7 @@ function checkoutBlockers(lines, districtId, options, country = null) {
     blockers.push('NoDeliveryMethod');
   }
 
-  if (CHECKOUT_PAYMENT_METHODS.length === 0) {
+  if (paymentMethods.length === 0) {
     blockers.push('NoPaymentMethod');
   }
 
@@ -3214,10 +3243,17 @@ function overseasRate(country) {
     : null;
 }
 
-function checkoutSession(token, districtId, deliveryMethodId, promoCode, countryCode = 'LK') {
+function checkoutSession(
+  token,
+  districtId,
+  deliveryMethodId,
+  promoCode,
+  countryCode = 'LK',
+  enabledPayments = CHECKOUT_PAYMENT_METHODS,
+) {
   const country = findCountry(countryCode);
   if (country && !country.isDomestic) {
-    return overseasSession(token, deliveryMethodId, promoCode, country);
+    return overseasSession(token, deliveryMethodId, promoCode, country, paymentMethodsFor(enabledPayments, country));
   }
 
   const lines = checkoutLines(token);
@@ -3268,13 +3304,13 @@ function checkoutSession(token, districtId, deliveryMethodId, promoCode, country
     districts: CHECKOUT_DISTRICTS,
     deliveryOptions: options,
     pickupLocations: [],
-    paymentMethods: CHECKOUT_PAYMENT_METHODS,
+    paymentMethods: enabledPayments,
     selectedDistrictId: district ? district.id : null,
     selectedDeliveryMethodId: selected ? selected.id : null,
     appliedPromoCode: promo.applied,
     promoRefusal: promo.refusal,
     promoMinimumSpend: promo.minimumSpend,
-    blockers: checkoutBlockers(lines, district ? district.id : null, options),
+    blockers: checkoutBlockers(lines, district ? district.id : null, options, null, enabledPayments),
     selectedCountryCode: country ? country.code : null,
     promoFreeDeliveryIgnored: false,
   };
@@ -3284,7 +3320,7 @@ function checkoutSession(token, districtId, deliveryMethodId, promoCode, country
  * `GetCheckoutQueryHandler` for an overseas country: no district, the one International option at the
  * country's fee, and a free-delivery code that does not cover it (`CheckoutQuote.ForDestination`).
  */
-function overseasSession(token, deliveryMethodId, promoCode, country) {
+function overseasSession(token, deliveryMethodId, promoCode, country, paymentMethods) {
   const lines = checkoutLines(token);
   const grossSubtotal = checkoutTotals(lines, null, null).itemsSubtotal;
   const promo = checkoutPromo(promoCode, grossSubtotal);
@@ -3316,13 +3352,13 @@ function overseasSession(token, deliveryMethodId, promoCode, country) {
     districts: CHECKOUT_DISTRICTS,
     deliveryOptions: options,
     pickupLocations: [],
-    paymentMethods: CHECKOUT_PAYMENT_METHODS,
+    paymentMethods,
     selectedDistrictId: null,
     selectedDeliveryMethodId: selected ? INTERNATIONAL_METHOD.id : null,
     appliedPromoCode: promo.applied,
     promoRefusal: promo.refusal,
     promoMinimumSpend: promo.minimumSpend,
-    blockers: checkoutBlockers(lines, null, options, country),
+    blockers: checkoutBlockers(lines, null, options, country, paymentMethods),
     selectedCountryCode: country.code,
     promoFreeDeliveryIgnored: promo.freeDelivery === true,
   };
@@ -3385,7 +3421,14 @@ function handleCheckoutRead(request, response, url) {
 
   response.end(
     JSON.stringify(
-      checkoutSession(token && carts.has(token) ? token : null, districtId, methodId, promoCode, countryCode),
+      checkoutSession(
+        token && carts.has(token) ? token : null,
+        districtId,
+        methodId,
+        promoCode,
+        countryCode,
+        enabledPaymentMethods(request),
+      ),
     ),
   );
 }
@@ -3444,8 +3487,18 @@ function handlePlaceOrder(request, response) {
         : ['Choose how you would like your order delivered.'];
     }
 
-    if (!CHECKOUT_PAYMENT_METHODS.some((candidate) => candidate.code === trimmed(body.paymentMethodCode))) {
-      errors['paymentMethodCode'] = trimmed(body.paymentMethodCode)
+    // #253: as `PlaceOrderCommandHandler.ResolvePaymentProviderAsync` — a Sri Lanka-only method named for an
+    // overseas order is refused by name; anything not enabled is "not available".
+    const enabledPayments = enabledPaymentMethods(request);
+    const paymentCode = trimmed(body.paymentMethodCode);
+    const paymentMethod = enabledPayments.find((candidate) => candidate.code === paymentCode) ?? null;
+    if (paymentMethod && overseas && SRI_LANKA_ONLY_PAYMENT_CODES.has(paymentMethod.code)) {
+      errors['paymentMethodCode'] = [
+        `${paymentMethod.displayName} is only available for deliveries within Sri Lanka. `
+          + `Choose another way to pay for delivery to ${country.name}.`,
+      ];
+    } else if (!paymentMethod) {
+      errors['paymentMethodCode'] = paymentCode
         ? ['That payment method is not available. Choose another.']
         : ['Choose how you would like to pay.'];
     }
@@ -3672,8 +3725,8 @@ function handlePlaceOrder(request, response) {
       deliveryDiscountAmount: totals.deliveryDiscountAmount,
       grandTotal: totals.grandTotal,
       currency: 'LKR',
-      paymentMethodCode: 'BankTransfer',
-      paymentMethodName: 'Bank or online transfer',
+      paymentMethodCode: paymentMethod.code,
+      paymentMethodName: paymentMethod.displayName,
       customerNote: trimmed(body.customerNote),
       placedAtUtc: placedAt.toISOString(),
       paymentDueAtUtc: dueAt.toISOString(),
@@ -3694,9 +3747,12 @@ function handlePlaceOrder(request, response) {
     // After the order exists, because the instructions carry its number — and the first version called a
     // helper that read it back out of `placedOrders` one line before the order was put there, so the
     // reference was null.
-    order.payment = order.bankDetailsSet
-      ? bankInstructions(order.orderNumber, dueAt, totals.grandTotal)
-      : null;
+    order.payment =
+      paymentMethod.code === PAYPAL_PAYMENT_METHOD.code
+        ? payPalInstructions(publicId, order.orderNumber, dueAt, totals.grandTotal)
+        : order.bankDetailsSet
+          ? bankInstructions(order.orderNumber, dueAt, totals.grandTotal)
+          : null;
 
     placedOrders.set(publicId, order);
     placedByCheckoutKey.set(checkoutKey, publicId);
@@ -3850,6 +3906,24 @@ function bankInstructions(reference, dueAt, amount) {
     notes: 'Cash-machine deposits can take a working day to appear.',
     redirectUrl: null,
     acceptsProof: true,
+  };
+}
+
+/**
+ * What `PayPalProvider.DescribeAsync` answers on the order page: no fields to copy and no proof to upload, only the
+ * way on to PayPal (`/api/payments/paypal/start/{publicId}`, `PayPalEndpoints`). The stub has no PayPal, so the
+ * link goes nowhere useful; a test that needs the hand-off is a backend one (`PayPalInternationalTests`).
+ */
+function payPalInstructions(publicId, reference, dueAt, amount) {
+  return {
+    providerCode: 'PayPal',
+    reference,
+    amountLkr: amount,
+    dueAtUtc: dueAt.toISOString(),
+    fields: [],
+    notes: null,
+    redirectUrl: `/api/payments/paypal/start/${publicId}`,
+    acceptsProof: false,
   };
 }
 

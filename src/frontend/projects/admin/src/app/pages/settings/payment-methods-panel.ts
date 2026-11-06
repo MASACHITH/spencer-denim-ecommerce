@@ -9,7 +9,8 @@ import {
 
 /**
  * The Payment methods panel (owner decision 2026-10-21: bank transfer off, PayPal the only payment method,
- * "block only for now").
+ * "block only for now"; refined 2026-10-24, #253: bank transfer may be switched on again, and is then offered for
+ * Sri Lankan deliveries only — checkout enforces that, this panel only says so).
  *
  * **It fetches for itself and draws nothing for an admin the API refuses** — `Settings.Payments` is a Super
  * Admin's alone, and the settings page shows it only where it already shows the bank panel (the same
@@ -27,7 +28,8 @@ import {
       <section class="adm-panel" aria-labelledby="payment-methods-title" data-testid="payment-methods-panel">
         <h2 class="adm-panel__title" id="payment-methods-title">Payment methods</h2>
         <p class="adm-panel__hint">
-          Which payment methods checkout offers. A method that is switched on but not ready (for PayPal: its
+          Which payment methods checkout offers. Bank transfer is offered for deliveries within Sri Lanka only;
+          overseas orders pay by PayPal. A method that is switched on but not ready (for PayPal: its
           credentials and today's exchange rate) is not offered. Switching a method off does not change orders
           already placed.
         </p>

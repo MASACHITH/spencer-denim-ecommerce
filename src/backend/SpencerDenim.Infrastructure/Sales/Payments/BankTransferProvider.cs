@@ -26,6 +26,10 @@ internal sealed partial class BankTransferProvider(
 {
     public string Code => PaymentProviderCodes.BankTransfer;
 
+    /// <summary>#253, owner decision 2026-10-24: the money goes into a Sri Lankan bank account, so bank transfer is
+    /// offered for Sri Lankan deliveries only. Overseas orders pay by PayPal.</summary>
+    public bool DomesticDeliveriesOnly => true;
+
     /// <summary>
     /// Doc 08 §4.1's bank-transfer placement effects: an open <see cref="PaymentStatus.Pending"/> row in
     /// LKR, due at placement + <c>Orders.BankTransferExpiryHours</c> (48).

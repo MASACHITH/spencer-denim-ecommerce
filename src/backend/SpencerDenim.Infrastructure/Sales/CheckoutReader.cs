@@ -346,13 +346,17 @@ internal sealed class CheckoutReader(
 
         foreach (var method in enabled)
         {
-            if (paymentProviders.Find(method.Code) is { } provider
-                && !await provider.IsAvailableAsync(cancellationToken))
+            var provider = paymentProviders.Find(method.Code);
+            if (provider is not null && !await provider.IsAvailableAsync(cancellationToken))
             {
                 continue;
             }
 
-            offered.Add(method);
+            // #253: whether the method is for Sri Lankan deliveries only is the provider's fact, carried on the
+            // row so the page and the placement handler filter one list the same way (DestinationRules).
+            offered.Add(provider is { DomesticDeliveriesOnly: true }
+                ? method with { DomesticDeliveriesOnly = true }
+                : method);
         }
 
         return offered;

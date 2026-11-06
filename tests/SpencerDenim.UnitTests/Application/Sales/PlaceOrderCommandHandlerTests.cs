@@ -302,6 +302,118 @@ public sealed class PlaceOrderCommandHandlerTests
         Assert.Equal(1, throttle.Calls);
     }
 
+    /// <summary>The United Kingdom, served at Standard. #253's overseas destination.</summary>
+    private static CheckoutCountry UnitedKingdom { get; } =
+        new("GB", "United Kingdom", false, true, false,
+            StandardQuote: new OverseasQuote(OverseasRefusal.None, 9_500m, 7, 14),
+            ExpressQuote: new OverseasQuote(OverseasRefusal.ExpressNotPriced, 0m, 0, 0));
+
+    private static CheckoutPaymentMethod BankTransferMethod { get; } =
+        new(PaymentProviderCodes.BankTransfer, "Bank transfer", null, DomesticDeliveriesOnly: true);
+
+    private static CheckoutPaymentMethod PayPalMethod { get; } = new(PaymentProviderCodes.PayPal, "PayPal", null);
+
+    /// <summary>
+    /// #253, the server half: the page never offers bank transfer for an overseas order, so naming it is a stale
+    /// form or a crafted request, and it is refused <b>by name</b> before anything is reserved, numbered or written.
+    /// </summary>
+    [Fact]
+    public async Task An_overseas_order_naming_a_Sri_Lanka_only_method_is_refused_by_name()
+    {
+        var reader = new RacingCheckoutReader
+        {
+            Lines = [Line(CartLineStatus.Buyable)],
+            WinnerExists = false,
+            Overseas = UnitedKingdom,
+            PaymentMethods = [BankTransferMethod, PayPalMethod],
+        };
+        var placements = new StubPlacementStore(OrderPlacementResult.DuplicateSubmission);
+        var throttle = new RecordingThrottle(allow: true);
+
+        var result = await HandleAsync(reader, placements, throttle: throttle, countryCode: "GB");
+
+        Assert.Equal(PlaceOrderStatus.Invalid, result.Status);
+        var error = Assert.Single(result.Errors);
+        Assert.Equal("paymentMethodCode", error.Field);
+        Assert.Contains("Bank transfer is only available for deliveries within Sri Lanka", error.Message, StringComparison.Ordinal);
+        Assert.Contains("United Kingdom", error.Message, StringComparison.Ordinal);
+        Assert.Equal(0, placements.Calls);
+        Assert.Equal(0, throttle.Calls);
+        Assert.Equal(0, reader.CartReads);
+    }
+
+    /// <summary>
+    /// Refused by name even when it is the only method switched on: "which method, and why" is more use to the
+    /// shopper than "no payment method is available".
+    /// </summary>
+    [Fact]
+    public async Task The_named_refusal_wins_when_the_Sri_Lanka_only_method_is_the_only_one_enabled()
+    {
+        var reader = new RacingCheckoutReader { Overseas = UnitedKingdom, WinnerExists = false };
+
+        var result = await HandleAsync(reader, countryCode: "GB");
+
+        Assert.Equal(PlaceOrderStatus.Invalid, result.Status);
+        Assert.Equal("paymentMethodCode", Assert.Single(result.Errors).Field);
+    }
+
+    /// <summary>
+    /// An overseas order naming any other method, when only a Sri Lanka-only one is switched on, meets the shop's
+    /// state: there is no way for this shopper to pay, which is the page's own NoPaymentMethod blocker.
+    /// </summary>
+    [Fact]
+    public async Task An_overseas_order_with_no_method_for_its_destination_is_blocked_as_no_payment_method()
+    {
+        var reader = new RacingCheckoutReader { Overseas = UnitedKingdom, WinnerExists = false };
+
+        var result = await HandleAsync(reader, countryCode: "GB", paymentMethodCode: PaymentProviderCodes.PayPal);
+
+        Assert.Equal(PlaceOrderStatus.Blocked, result.Status);
+        Assert.Equal([CheckoutBlocker.NoPaymentMethod], result.Blockers);
+    }
+
+    /// <summary>
+    /// The counterpart: PayPal for the same overseas order gets past payment and on to the bag (empty here, so the
+    /// refusal is the bag's — proof that payment did not refuse it).
+    /// </summary>
+    [Fact]
+    public async Task An_overseas_order_paying_by_a_worldwide_method_gets_past_payment()
+    {
+        var reader = new RacingCheckoutReader
+        {
+            Lines = [],
+            WinnerExists = false,
+            Overseas = UnitedKingdom,
+            PaymentMethods = [BankTransferMethod, PayPalMethod],
+        };
+
+        var result = await HandleAsync(
+            reader,
+            provider: new StubPaymentProvider(PaymentProviderCodes.PayPal),
+            countryCode: "GB",
+            paymentMethodCode: PaymentProviderCodes.PayPal);
+
+        Assert.Equal(PlaceOrderStatus.Blocked, result.Status);
+        Assert.Equal([CheckoutBlocker.EmptyBag], result.Blockers);
+    }
+
+    /// <summary>And a Sri Lankan order still pays by bank transfer: the restriction is on overseas orders only.</summary>
+    [Fact]
+    public async Task A_Sri_Lankan_order_still_pays_by_bank_transfer()
+    {
+        var reader = new RacingCheckoutReader
+        {
+            Lines = [],
+            WinnerExists = false,
+            PaymentMethods = [BankTransferMethod, PayPalMethod],
+        };
+
+        var result = await HandleAsync(reader);
+
+        Assert.Equal(PlaceOrderStatus.Blocked, result.Status);
+        Assert.Equal([CheckoutBlocker.EmptyBag], result.Blockers);
+    }
+
     private static Task<PlaceOrderResult> HandleAsync(
         RacingCheckoutReader reader,
         IOrderPlacementStore? placements = null,
@@ -310,8 +422,13 @@ public sealed class PlaceOrderCommandHandlerTests
         INumberSeriesAllocator? numbers = null,
         string? firstName = "Nimali",
         decimal? expectedGrandTotal = 1350m,
-        string? ipAddress = null)
+        string? ipAddress = null,
+        string? countryCode = null,
+        string paymentMethodCode = PaymentProviderCodes.BankTransfer)
     {
+        // #253: an overseas order has no district and an address written for its country.
+        var overseas = countryCode is not null;
+
         var handler = new PlaceOrderCommandHandler(
             new StubCartStore(),
             reader,
@@ -337,22 +454,34 @@ public sealed class PlaceOrderCommandHandlerTests
                 "nimali@example.com",
                 "0771234567",
                 DeliveryMethodId,
-                DistrictId,
+                overseas ? null : DistrictId,
                 null,
-                new CheckoutAddressInput(
-                    "Nimali Perera",
-                    "0771234567",
-                    "14 Galle Road",
-                    null,
-                    "Kollupitiya",
-                    "00300",
-                    null),
-                PaymentProviderCodes.BankTransfer,
+                overseas
+                    ? new CheckoutAddressInput(
+                        "Amelia Hart",
+                        "+44 20 7946 0958",
+                        "10 Downing Street",
+                        null,
+                        "London",
+                        "SW1A 2AA",
+                        null)
+                    : new CheckoutAddressInput(
+                        "Nimali Perera",
+                        "0771234567",
+                        "14 Galle Road",
+                        null,
+                        "Kollupitiya",
+                        "00300",
+                        null),
+                paymentMethodCode,
 
                 // One buyable unit at Rs. 1,000 plus a Rs. 350 fee, so G-10 agrees when a line is priced.
                 expectedGrandTotal,
                 null,
-                ipAddress),
+                ipAddress)
+            {
+                CountryCode = countryCode,
+            },
             TestContext.Current.CancellationToken);
     }
 
@@ -432,29 +561,47 @@ public sealed class PlaceOrderCommandHandlerTests
             return Task.FromResult(Lines);
         }
 
+        /// <summary>
+        /// #253: an overseas destination the shop serves, or null for the Sri Lankan-only tests. When set, the
+        /// delivery method is International, as it must be for an order going abroad.
+        /// </summary>
+        public CheckoutCountry? Overseas { get; init; }
+
+        /// <summary>What the shop has switched on, as the real reader reports it (bank transfer is domestic-only).</summary>
+        public IReadOnlyList<CheckoutPaymentMethod> PaymentMethods { get; init; } =
+            [new CheckoutPaymentMethod(PaymentProviderCodes.BankTransfer, "Bank transfer", null, DomesticDeliveriesOnly: true)];
+
         public Task<CheckoutDeliveryMethod?> FindEnabledDeliveryMethodAsync(
             int deliveryMethodId,
             CancellationToken cancellationToken) =>
             Task.FromResult<CheckoutDeliveryMethod?>(
-                new CheckoutDeliveryMethod(
-                    DeliveryMethodId,
-                    DeliveryMethod.StandardCode,
-                    "Standard delivery",
-                    null,
-                    RequiresAddress: true,
-                    Rate));
+                Overseas is null
+                    ? new CheckoutDeliveryMethod(
+                        DeliveryMethodId,
+                        DeliveryMethod.StandardCode,
+                        "Standard delivery",
+                        null,
+                        RequiresAddress: true,
+                        Rate)
+                    : new CheckoutDeliveryMethod(
+                        DeliveryMethodId,
+                        DeliveryMethod.InternationalCode,
+                        "International delivery",
+                        null,
+                        RequiresAddress: true,
+                        Rate));
 
         public Task<IReadOnlyList<CheckoutPaymentMethod>> EnabledPaymentMethodsAsync(
             CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<CheckoutPaymentMethod>>(
-                [new CheckoutPaymentMethod(PaymentProviderCodes.BankTransfer, "Bank transfer", null)]);
+            Task.FromResult(PaymentMethods);
 
-        // Owner decision 2026-10-21: every request in these tests is a Sri Lankan one.
+        // Owner decision 2026-10-21: Sri Lanka, plus the one overseas country a #253 test names.
         public Task<IReadOnlyList<CheckoutCountry>> CountriesAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<CheckoutCountry>>([SriLanka]);
+            Task.FromResult<IReadOnlyList<CheckoutCountry>>(Overseas is null ? [SriLanka] : [SriLanka, Overseas]);
 
         public Task<CheckoutCountry?> FindCountryAsync(string countryCode, CancellationToken cancellationToken) =>
-            Task.FromResult<CheckoutCountry?>(countryCode == "LK" ? SriLanka : null);
+            Task.FromResult<CheckoutCountry?>(
+                countryCode == "LK" ? SriLanka : countryCode == Overseas?.Code ? Overseas : null);
 
         public Task<CheckoutDeliveryMethod?> InternationalMethodAsync(CancellationToken cancellationToken) =>
             Task.FromResult<CheckoutDeliveryMethod?>(null);

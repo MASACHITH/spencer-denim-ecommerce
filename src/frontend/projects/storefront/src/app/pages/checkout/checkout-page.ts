@@ -819,7 +819,11 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
 
               @if (session().paymentMethods.length === 0) {
                 <p class="checkout__muted" role="status">
-                  No payment method is available at the moment.
+                  @if (country()?.isDomestic === false) {
+                    No payment method is available for delivery to {{ country()?.name }} at the moment.
+                  } @else {
+                    No payment method is available at the moment.
+                  }
                 </p>
               }
 
@@ -1786,7 +1790,8 @@ export class CheckoutPage {
   }
 
   protected blockerMessage(blocker: CheckoutSessionDto['blockers'][number]): string {
-    return checkoutBlockerMessage(blocker, this.country()?.name ?? null);
+    const country = this.country();
+    return checkoutBlockerMessage(blocker, country?.name ?? null, country?.isDomestic === false);
   }
 
   /** What a summary line says about itself, or null. */
@@ -2540,6 +2545,13 @@ export class CheckoutPage {
     }
 
     this.applyPromoEcho(session);
+
+    // #253: the list depends on the country (bank transfer is for Sri Lankan deliveries only), so a choice the new
+    // list no longer offers is cleared rather than left checked on nothing — the server would refuse it anyway.
+    const chosen = this.chosenPaymentMethodCode();
+    if (chosen !== null && !session.paymentMethods.some((method) => method.code === chosen)) {
+      this.chosenPaymentMethodCode.set(null);
+    }
 
     // One enabled provider is the ordinary case today (bank transfer; doc 08 §9 seeds PayPal disabled),
     // and making the shopper press a radio with one option is a step for nothing.

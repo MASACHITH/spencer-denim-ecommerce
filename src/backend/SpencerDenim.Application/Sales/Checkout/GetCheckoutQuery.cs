@@ -93,6 +93,10 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
         var country = countryCode is null ? null : await reader.FindCountryAsync(countryCode, cancellationToken);
         var overseas = country is { IsDomestic: false };
 
+        // #253: bank transfer is for Sri Lankan deliveries only, so the list depends on the country — and an overseas
+        // shop with nothing but bank transfer switched on has no way for this shopper to pay (NoPaymentMethod).
+        var offeredPayments = DestinationRules.PaymentMethodsFor(paymentMethods, country);
+
         var district = !overseas && query.DistrictId is { } districtId
             ? await reader.FindActiveDistrictAsync(districtId, cancellationToken)
             : null;
@@ -136,13 +140,13 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
             districts.Select(ToDistrict).ToList().AsReadOnly(),
             DeliveryOptions(methods, subtotalAfterPromo, charge?.FreeDelivery ?? false),
             pickupLocations.Select(ToPickupLocation).ToList().AsReadOnly(),
-            paymentMethods.Select(ToPaymentMethod).ToList().AsReadOnly(),
+            offeredPayments.Select(ToPaymentMethod).ToList().AsReadOnly(),
             district?.Id,
             selectedMethod is { IsAvailable: true } ? selectedMethod.Id : null,
             promo.AppliedCode,
             promo.Refusal,
             promo.MinimumSpend,
-            Blockers(lines, district, methods, paymentMethods, country),
+            Blockers(lines, district, methods, offeredPayments, country),
             country?.Code,
             overseas && promo.Charge is { FreeDelivery: true });
 

@@ -92,7 +92,16 @@ public sealed record CheckoutPickupLocation(
     string? OpeningHours);
 
 /// <summary>One enabled <c>sales.PaymentProviders</c> row.</summary>
-public sealed record CheckoutPaymentMethod(string Code, string DisplayName, string? CheckoutDescription);
+/// <param name="DomesticDeliveriesOnly">
+/// The provider's own answer to <c>IPaymentProvider.DomesticDeliveriesOnly</c> (#253): offered only when the order
+/// goes to an address in Sri Lanka. False for a row with no implementation in this build, which placement refuses
+/// on its own terms anyway.
+/// </param>
+public sealed record CheckoutPaymentMethod(
+    string Code,
+    string DisplayName,
+    string? CheckoutDescription,
+    bool DomesticDeliveriesOnly = false);
 
 /// <summary>
 /// One bag line with everything <c>sales.OrderLines</c> snapshots, plus whether it can be bought at all.
