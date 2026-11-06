@@ -36,6 +36,9 @@ public static class AuditActions
     public const string EmailChanged = "EmailChanged";
     public const string AdminPasswordReset = "AdminPasswordReset";
     public const string TwoFactorReset = "TwoFactorReset";
+
+    /// <summary>A Super Admin cleared a staff member's lockout (#254).</summary>
+    public const string StaffUnlocked = "StaffUnlocked";
     public const string RoleAssigned = "RoleAssigned";
     public const string RoleUnassigned = "RoleUnassigned";
     public const string BreakGlass = "BreakGlass";

@@ -1477,12 +1477,12 @@ sequenceDiagram
 2. **[System]** An **unknown email**, a **customer account** and a **deactivated staff account** all get exactly the same reply: HTTP **401** with the generic message *"Invalid email or password."* The sign-in endpoint is therefore no use for discovering which addresses exist. After **5** failures the account is locked for **15 minutes** (applies to everyone, including the last Super Admin; it always expires) and the reply becomes HTTP **423 Locked** carrying the **lockout end time**, so the admin app can say when to try again.
 3. **[System]** Super Admins must pass **two-factor authentication**; a Super Admin who has not enrolled can only reach the 2FA enrolment page. A user flagged "must change password" must change it first. **Both are a later build slice — see the footnote under the business rules.**
 4. **[System]** Loads permissions from the user's roles (never from the cookie) and shows only permitted menus and buttons; the API checks every action again. Permission changes take effect within 1 minute.
-5. **[Staff]** Forgot password → `/admin/forgot-password` (staff accounts only), or asks a Super Admin to reset it.
+5. **[Staff]** Forgot password → asks a Super Admin to reset it (#254: a temporary password handed over in person or by phone, never emailed; the staff member must replace it at their next sign-in). There is no `/admin/forgot-password` page in this build.
 
 *B. Create and manage staff (ADM-02)*
 6. **[Super Admin or `Users.Manage`]** Opens **Users & Roles → Users → Add**: first name, last name, email, roles. **[System]** Sends the **Staff invite** email to set a password.
-7. **[Actor]** Edits a staff user: roles, deactivate/reactivate, reset password, reset 2FA. Only a Super Admin can change a staff member's email; when a Super Admin's email changes, both old and new addresses are notified.
-8. **[System]** Applies the **subset rule** for non-Super-Admin actors (see rules) and the **last Super Admin guard**, then writes a security audit entry (`RoleAssigned`, `StaffDeactivated`, `AdminPasswordReset`, `TwoFactorReset`, `EmailChanged`…).
+7. **[Actor]** Edits a staff user: roles, deactivate/reactivate; **a Super Admin only** (#254) also resets a password, unlocks a locked account, or resets 2FA — never their own, never a protected account, and a guarded account only from a protected one. Only a Super Admin can change a staff member's email; when a Super Admin's email changes, both old and new addresses are notified.
+8. **[System]** Applies the **subset rule** for non-Super-Admin actors (see rules) and the **last Super Admin guard**, then writes a security audit entry (`RoleAssigned`, `StaffDeactivated`, `AdminPasswordReset`, `StaffUnlocked`, `TwoFactorReset`, `EmailChanged`…).
 
 *C. Roles (Super Admin only)*
 9. **[Super Admin]** Creates or edits a role: name, description, tick permissions per module (View, Create, Edit, Delete, Approve, Export) plus special permissions (`Orders.Refund`, `Settings.Payments`, `Users.Manage`). `Settings.Security` cannot be ticked for any role.
@@ -1542,7 +1542,8 @@ sequenceDiagram
 | Screen | Permission |
 |---|---|
 | Users list and staff user detail (read-only) | `Users.View` |
-| Users add, edit, assign roles, deactivate, reset password / 2FA | `Users.Manage` (subset rule) or Super Admin |
+| Users add, edit, assign roles, deactivate | `Users.Manage` (subset rule) or Super Admin |
+| Users reset password, unlock, reset 2FA (#254) | Super Admin only (with `Users.Manage`) |
 | Roles and permissions | Super Admin only |
 | Settings by group | `Settings.View/Edit`, `Settings.Payments`, `Settings.Security` |
 | Audit log | `AuditLog.View` |
@@ -1793,7 +1794,7 @@ All emails go through the transactional outbox: written in the same transaction 
 - A dead message is **not retried from a screen** in v1. Staff fix the cause and trigger a **fresh** message from wherever it came from: an order email is resent from the order (§7 G-42), and a customer asks for a new password-reset or confirmation link themselves. An SMTP outage needs no action beyond fixing the server — the next message goes out normally.
 - A **wrong recipient address cannot be corrected on a placed order** (only the courier, the tracking number and the internal note are editable after placement, P9), so resending reaches the same dead address: those customers are contacted by phone or WhatsApp, and the customer corrects the address on their own account (P11 step 10) — no screen lets staff change it for them. A guest order simply gets the details by phone.
 - **Security alert emails** (`SensitiveSettingsChanged`, `BreakGlassUsed`, `StaffEmailChanged`) are the exception to any "clear the queue" action: they **can only be retried, never cancelled or deleted**, by anyone, through any screen or API (08 §3.8 R5). A Super Admin who can silence their own security alerts is not an audit trail. In v1 there is no retry screen, so a dead security alert email is covered by its dashboard banner, which an email failure does not clear (08 §3.8).
-- `Welcome`, `EmailConfirmation`, `AccountExists`, `PasswordReset` and `StaffInvite` have **no order to open** (`RelatedEntityType`/`RelatedEntityId` are generic and nullable, 08 §3.8), so the alert gives staff the outbox row and nothing to resend from. Nor would resending help a `PasswordReset` or `EmailConfirmation`: the token in the stored body has usually expired by the time anyone notices. Staff ask the customer to request a fresh link; for a dead `StaffInvite`, a Super Admin resets that user's password, which sends a fresh set-password link (P14 step 7, 08 §3.1 `AdminPasswordReset`).
+- `Welcome`, `EmailConfirmation`, `AccountExists`, `PasswordReset` and `StaffInvite` have **no order to open** (`RelatedEntityType`/`RelatedEntityId` are generic and nullable, 08 §3.8), so the alert gives staff the outbox row and nothing to resend from. Nor would resending help a `PasswordReset` or `EmailConfirmation`: the token in the stored body has usually expired by the time anyone notices. Staff ask the customer to request a fresh link; for a dead `StaffInvite`, a Super Admin resets that user's password to a temporary one handed over in person or by phone (P14 step 7, #254; no link is emailed).
 
 ### 4.1 Customer emails
 

@@ -1,15 +1,30 @@
 using System.Globalization;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Application.Admin.Account;
 using SpencerDenim.Domain.Identity;
+using SpencerDenim.Infrastructure.Persistence;
 
 namespace SpencerDenim.Infrastructure.Identity;
 
 /// <summary>
 /// Changes a staff user's own password (issue #17) through <see cref="UserManager{TUser}"/>, which rehashes the
 /// password and rotates the <c>SecurityStamp</c> in the same update that clears <c>MustChangePassword</c>.
+/// <para>
+/// <b>Under the per-user lock, from a fresh read (#254 tester).</b> A Super Admin's reset of this account and the
+/// member's own change used to race: the change read the row, the reset committed a temporary password, and the change
+/// then saved over it — so a password chosen with the old, possibly compromised one survived while the admin was told
+/// the reset had worked. Both now take <see cref="StaffUserLocks"/> inside their transaction before they read, so the
+/// second waits for the first and then sees its result (here, the current password no longer matches).
+/// <c>EnableRetryOnFailure</c> requires the transaction inside the execution strategy, and each attempt starts from a
+/// clean tracker: the authorization gates load this user through <see cref="UserManager{TUser}"/> earlier in the
+/// request, and that tracked copy is exactly the stale read this exists to avoid.
+/// </para>
 /// </summary>
-public sealed class AdminPasswordChanger(UserManager<AppUser> userManager, StaffAccountLockout lockout) : IAdminPasswordChanger
+public sealed class AdminPasswordChanger(
+    UserManager<AppUser> userManager,
+    StaffAccountLockout lockout,
+    AppDbContext dbContext) : IAdminPasswordChanger
 {
     public async Task<AdminPasswordChangeOutcome> ChangePasswordAsync(
         int userId,
@@ -23,6 +38,23 @@ public sealed class AdminPasswordChanger(UserManager<AppUser> userManager, Staff
         // UserManager methods take no CancellationToken; checking once up front matches AdminAuthenticator.
         cancellationToken.ThrowIfCancellationRequested();
 
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            dbContext.ChangeTracker.Clear();
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+            await StaffUserLocks.AcquireAsync(dbContext, userId, cancellationToken);
+
+            // Committed whatever the outcome: a wrong current password is a failed attempt that must count towards the
+            // lockout, and that write happens inside this transaction.
+            var outcome = await ChangeLockedAsync(userId, currentPassword, newPassword);
+            await transaction.CommitAsync(cancellationToken);
+            return outcome;
+        });
+    }
+
+    private async Task<AdminPasswordChangeOutcome> ChangeLockedAsync(int userId, string currentPassword, string newPassword)
+    {
         var user = await userManager.FindByIdAsync(userId.ToString(CultureInfo.InvariantCulture));
         if (user is null || user.UserType != UserType.Staff || !user.IsActive)
         {

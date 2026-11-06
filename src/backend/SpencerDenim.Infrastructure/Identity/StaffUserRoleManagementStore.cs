@@ -520,6 +520,155 @@ internal sealed class StaffUserRoleManagementStore(
         return new UpdateProfileStoreResult.IdentityErrors([.. result.Errors.Select(e => e.Description)]);
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// <b>The same skeleton as every write here</b>: inside the execution strategy, a clean tracker, a transaction, the
+    /// per-user application lock, a fresh read of the row, the change through <see cref="UserManager{TUser}"/> (whose
+    /// saves enlist in the transaction), the audit row enlisted, one commit. Never a wholesale <c>Update(user)</c> of a
+    /// row read elsewhere (#250).
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>
+    /// <b>Reset password</b> leaves a <i>known</i> temporary password, not none: the forced change
+    /// (<c>AdminPasswordChanger</c>) asks for the current one. Remove + add runs the password policy, so a short one is
+    /// <see cref="RecoverAccountStoreResult.PasswordRejected"/> and nothing is written. <c>MustChangePassword</c> is set,
+    /// the lockout is cleared (or the temporary password could not be used for 15 minutes), and the security stamp
+    /// rotates, which ends every session the member had at their next request.
+    /// </description></item>
+    /// <item><description>
+    /// <b>Unlock</b> clears <c>LockoutEnd</c> and <c>AccessFailedCount</c>; only when the account is locked now.
+    /// </description></item>
+    /// <item><description>
+    /// <b>Reset two-factor</b> is <c>AdminTwoFactorManager.DisableAsync</c>'s recipe: the flag off, the authenticator
+    /// key <i>replaced</i> (setup resumes an existing key, so leaving it would show the lost phone's key again), and no
+    /// recovery codes. The stamp rotates. A Super Admin is then confined to setting it up again at their next sign-in
+    /// (<c>TwoFactorEnrolmentCompletedHandler</c>).
+    /// </description></item>
+    /// </list>
+    /// </remarks>
+    public async Task<RecoverAccountStoreResult> RecoverAccountAsync(
+        int targetUserId,
+        StaffAccountRecovery operation,
+        string? temporaryPassword,
+        DateTimeOffset now,
+        Func<AuditLog> audit,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(audit);
+
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            dbContext.ChangeTracker.Clear();
+
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+            await AcquireUserLockAsync(targetUserId, cancellationToken);
+
+            var user = await dbContext.Users.FirstOrDefaultAsync(
+                u => u.Id == targetUserId && u.UserType == UserType.Staff,
+                cancellationToken);
+            if (user is null)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return (RecoverAccountStoreResult)new RecoverAccountStoreResult.TargetNotFound();
+            }
+
+            var lockedOut = user.LockoutEnabled && user.LockoutEnd is { } end && end > now;
+
+            switch (operation)
+            {
+                case StaffAccountRecovery.ResetPassword:
+                {
+                    if (await userManager.HasPasswordAsync(user))
+                    {
+                        Ensure(await userManager.RemovePasswordAsync(user));
+                    }
+
+                    var added = await userManager.AddPasswordAsync(user, temporaryPassword ?? string.Empty);
+                    if (!added.Succeeded)
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        return added.Errors.All(IsPasswordIdentity)
+                            ? new RecoverAccountStoreResult.PasswordRejected([.. added.Errors.Select(e => e.Description)])
+                            : throw new InvalidOperationException(
+                                "Setting a temporary password failed for a reason that is not about the password: "
+                                + string.Join(", ", added.Errors.Select(e => e.Code)));
+                    }
+
+                    user.MustChangePassword = true;
+                    await ClearLockoutAsync(user);
+                    Ensure(await userManager.UpdateSecurityStampAsync(user));
+                    break;
+                }
+
+                case StaffAccountRecovery.Unlock:
+                {
+                    if (!lockedOut)
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        return new RecoverAccountStoreResult.NothingToDo();
+                    }
+
+                    await ClearLockoutAsync(user);
+                    break;
+                }
+
+                case StaffAccountRecovery.ResetTwoFactor:
+                {
+                    var hasKey = !string.IsNullOrEmpty(await userManager.GetAuthenticatorKeyAsync(user));
+                    if (!user.TwoFactorEnabled && !hasKey)
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        return new RecoverAccountStoreResult.NothingToDo();
+                    }
+
+                    Ensure(await userManager.SetTwoFactorEnabledAsync(user, false));
+                    Ensure(await userManager.ResetAuthenticatorKeyAsync(user));
+                    await userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 0);
+                    Ensure(await userManager.UpdateSecurityStampAsync(user));
+                    break;
+                }
+
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(operation));
+            }
+
+            auditLog.Enlist(audit());
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            return (RecoverAccountStoreResult)new RecoverAccountStoreResult.Applied();
+        });
+    }
+
+    /// <summary>
+    /// Clears a lockout and the failed-attempt count through <see cref="UserManager{TUser}"/>, so the tracked row and
+    /// the database agree. <c>SetLockoutEndDateAsync</c> refuses a user whose lockout is disabled, which no staff user
+    /// is (<c>AllowedForNewUsers</c>), but a row edited by hand could be; then there is no lockout to clear.
+    /// </summary>
+    private async Task ClearLockoutAsync(AppUser user)
+    {
+        if (user.LockoutEnabled && user.LockoutEnd is not null)
+        {
+            Ensure(await userManager.SetLockoutEndDateAsync(user, null));
+        }
+
+        if (user.AccessFailedCount != 0)
+        {
+            Ensure(await userManager.ResetAccessFailedCountAsync(user));
+        }
+    }
+
+    private static void Ensure(IdentityResult result)
+    {
+        if (!result.Succeeded)
+        {
+            throw new InvalidOperationException(
+                "An account recovery step failed: " + string.Join(", ", result.Errors.Select(e => e.Code)));
+        }
+    }
+
     /// <summary>
     /// Doc 08 §3.1 DB4 rule 4. Called with the app lock already held, inside the caller's transaction, so this
     /// count reflects every such transaction that has committed before this one acquired the lock — including
@@ -554,12 +703,7 @@ internal sealed class StaffUserRoleManagementStore(
     /// <see cref="AcquireGrantsAllLockAsync"/>.
     /// </summary>
     private Task<int> AcquireUserLockAsync(int targetUserId, CancellationToken cancellationToken) =>
-        dbContext.Database.ExecuteSqlInterpolatedAsync(
-            $"EXEC sp_getapplock @Resource = {UserLockResource(targetUserId)}, @LockMode = N'Exclusive', @LockOwner = N'Transaction';",
-            cancellationToken);
-
-    private static string UserLockResource(int targetUserId) =>
-        string.Create(CultureInfo.InvariantCulture, $"rbac:manage-user:{targetUserId}");
+        StaffUserLocks.AcquireAsync(dbContext, targetUserId, cancellationToken);
 
     /// <summary>
     /// Tester-round-1 fix (defect 2): the target's CURRENT GrantsAll/permission state, read fresh inside the

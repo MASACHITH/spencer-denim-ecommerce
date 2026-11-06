@@ -96,3 +96,19 @@ public abstract record UpdateProfileStoreResult
     /// <summary>See <see cref="ReplaceRolesStoreResult.AuthorizationStale"/>.</summary>
     public sealed record AuthorizationStale : UpdateProfileStoreResult;
 }
+
+/// <summary>What <see cref="IStaffUserRoleManagementStore.RecoverAccountAsync"/> did (#254).</summary>
+public abstract record RecoverAccountStoreResult
+{
+    private RecoverAccountStoreResult()
+    {
+    }
+
+    public sealed record Applied : RecoverAccountStoreResult;
+
+    public sealed record NothingToDo : RecoverAccountStoreResult;
+
+    public sealed record TargetNotFound : RecoverAccountStoreResult;
+
+    public sealed record PasswordRejected(IReadOnlyList<string> Errors) : RecoverAccountStoreResult;
+}

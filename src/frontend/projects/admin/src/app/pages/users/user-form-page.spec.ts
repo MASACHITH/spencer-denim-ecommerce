@@ -493,3 +493,270 @@ describe('UserFormPage (edit mode)', () => {
     expect((fixture.nativeElement as HTMLElement).textContent).toContain('no active Super Admin');
   });
 });
+
+/**
+ * #254 staff account recovery on the user's page: offered to a Super Admin only, never on their own page or for a
+ * protected or locked account; each action posts with the antiforgery token, says what happened and leaves focus on
+ * something that still exists.
+ */
+describe('UserFormPage (account recovery, #254)', () => {
+  let controller: HttpTestingController;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      imports: [UserFormPage],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+        { provide: ActivatedRoute, useValue: activatedRouteWithId('7') },
+      ],
+    });
+    controller = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => controller.verify());
+
+  interface Options {
+    grantsAll?: boolean;
+    isProtected?: boolean;
+    lockedForViewer?: boolean;
+    viewerId?: number;
+    lockedOutUntilUtc?: string | null;
+    twoFactorEnabled?: boolean;
+  }
+
+  async function open(options: Options = {}): Promise<{ fixture: ComponentFixture<UserFormPage>; root: HTMLElement }> {
+    const fixture = TestBed.createComponent(UserFormPage);
+    document.body.appendChild(fixture.nativeElement as HTMLElement);
+    fixture.detectChanges();
+
+    const grantsAll = options.grantsAll ?? true;
+    controller.expectOne(AdminAuthApi.whoAmIUrl).flush({
+      userId: options.viewerId ?? 1,
+      email: 'viewer@example.com',
+      firstName: 'Viewer',
+      lastName: null,
+      grantsAllPermissions: grantsAll,
+      permissions: grantsAll ? [] : ['Users.Manage', 'Users.View'],
+      mustChangePassword: false,
+    });
+    controller.expectOne(UsersApi.rolesUrl).flush(oneRole);
+    controller.expectOne(`${UsersApi.usersUrl}/7`).flush({
+      id: 7,
+      email: 'member@example.com',
+      firstName: 'Member',
+      lastName: null,
+      isActive: true,
+      mustChangePassword: false,
+      lastLoginAtUtc: null,
+      createdAtUtc: '2026-09-01T00:00:00Z',
+      grantsAllPermissions: false,
+      roles: [{ id: 5, name: 'Order Staff', grantsAllPermissions: false }],
+      effectivePermissions: ['Orders.View'],
+      isProtected: options.isProtected ?? false,
+      lockedForViewer: options.lockedForViewer ?? false,
+      lockedOutUntilUtc: options.lockedOutUntilUtc ?? null,
+      twoFactorEnabled: options.twoFactorEnabled ?? false,
+    });
+    controller.expectOne(`${UsersApi.rolesUrl}/5`).flush({
+      id: 5,
+      name: 'Order Staff',
+      description: null,
+      isSystem: true,
+      grantsAllPermissions: false,
+      permissions: ['Orders.View'],
+      userCount: 1,
+    });
+
+    await fixture.whenStable();
+    fixture.detectChanges();
+    return { fixture, root: fixture.nativeElement as HTMLElement };
+  }
+
+  function byTestId(root: HTMLElement, id: string): HTMLElement | null {
+    return root.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+  }
+
+  async function settle(fixture: ComponentFixture<UserFormPage>): Promise<void> {
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+  }
+
+  it('is offered to a Super Admin on someone else\'s page', async () => {
+    const { root } = await open();
+
+    expect(byTestId(root, 'account-recovery')).not.toBeNull();
+    expect(byTestId(root, 'not-locked')?.textContent).toContain('Not locked');
+    expect(byTestId(root, 'two-factor-off')?.textContent).toContain('Not set up');
+  });
+
+  it('is not offered to a member who is not a Super Admin, on your own page, or for a protected or locked account', async () => {
+    for (const options of [{ grantsAll: false }, { viewerId: 7 }, { isProtected: true }, { lockedForViewer: true }] as Options[]) {
+      TestBed.resetTestingModule();
+      TestBed.configureTestingModule({
+        imports: [UserFormPage],
+        providers: [provideHttpClient(), provideHttpClientTesting(), provideRouter([]), { provide: ActivatedRoute, useValue: activatedRouteWithId('7') }],
+      });
+      controller = TestBed.inject(HttpTestingController);
+
+      const { root } = await open(options);
+      expect(byTestId(root, 'account-recovery')).toBeNull();
+      controller.verify();
+    }
+  });
+
+  it('sets a temporary password, empties the box, and says the sessions have ended', async () => {
+    const { fixture, root } = await open();
+
+    byTestId(root, 'reset-password')!.click();
+    await settle(fixture);
+    expect(document.activeElement?.id).toBe('temporary-password');
+
+    const box = byTestId(root, 'temporary-password') as HTMLInputElement;
+    box.value = 'Temporary-Pass-2!';
+    box.dispatchEvent(new Event('input'));
+    byTestId(root, 'reset-password-confirm')!.click();
+    await settle(fixture);
+
+    flushAntiforgery(controller);
+    const request = controller.expectOne(`${UsersApi.usersUrl}/7/reset-password`);
+    expect(request.request.body).toEqual({ temporaryPassword: 'Temporary-Pass-2!' });
+    expect(request.request.headers.get('X-XSRF-TOKEN')).toBe('test-token');
+    request.flush({ id: 7, operation: 'ResetPassword', changed: true });
+    await settle(fixture);
+
+    expect(byTestId(root, 'temporary-password')).toBeNull();
+    expect(byTestId(root, 'recovery-status')?.textContent).toContain('Temporary password set for member@example.com');
+    expect(byTestId(root, 'recovery-status')?.textContent).toContain('open sessions have ended');
+  });
+
+  it('shows the password policy\'s refusal on the box and keeps it open', async () => {
+    const { fixture, root } = await open();
+
+    byTestId(root, 'reset-password')!.click();
+    await settle(fixture);
+    const box = byTestId(root, 'temporary-password') as HTMLInputElement;
+    box.value = 'short';
+    box.dispatchEvent(new Event('input'));
+    byTestId(root, 'reset-password-confirm')!.click();
+    await settle(fixture);
+
+    flushAntiforgery(controller);
+    controller
+      .expectOne(`${UsersApi.usersUrl}/7/reset-password`)
+      .flush(
+        { title: 'That temporary password cannot be used.', errors: { temporaryPassword: ['Passwords must be at least 10 characters.'] } },
+        { status: 400, statusText: 'Bad Request' },
+      );
+    await settle(fixture);
+
+    expect(root.querySelector('#temporary-password-error')?.textContent).toContain('at least 10 characters');
+    expect(byTestId(root, 'temporary-password')?.getAttribute('aria-invalid')).toBe('true');
+  });
+
+  it('sets the temporary password on Enter, and can show it before it is read out', async () => {
+    const { fixture, root } = await open();
+
+    byTestId(root, 'reset-password')!.click();
+    await settle(fixture);
+
+    const box = byTestId(root, 'temporary-password') as HTMLInputElement;
+    expect(box.type).toBe('password');
+    (byTestId(root, 'show-temporary-password') as HTMLInputElement).click();
+    await settle(fixture);
+    expect((byTestId(root, 'temporary-password') as HTMLInputElement).type).toBe('text');
+
+    box.value = 'Temporary-Pass-2!';
+    box.dispatchEvent(new Event('input'));
+    box.closest('form')!.dispatchEvent(new Event('submit', { cancelable: true }));
+    await settle(fixture);
+
+    flushAntiforgery(controller);
+    controller
+      .expectOne(`${UsersApi.usersUrl}/7/reset-password`)
+      .flush({ id: 7, operation: 'ResetPassword', changed: true });
+    await settle(fixture);
+
+    expect(byTestId(root, 'recovery-status')?.textContent).toContain('Temporary password set');
+  });
+
+  it('asks for a temporary password before sending anything', async () => {
+    const { fixture, root } = await open();
+
+    byTestId(root, 'reset-password')!.click();
+    await settle(fixture);
+    byTestId(root, 'reset-password-confirm')!.click();
+    await settle(fixture);
+
+    expect(root.querySelector('#temporary-password-error')?.textContent).toContain('Type a temporary password.');
+  });
+
+  it('unlocks a locked account and says so', async () => {
+    const { fixture, root } = await open({ lockedOutUntilUtc: '2026-11-06T04:15:00Z' });
+
+    expect(byTestId(root, 'locked-out')?.textContent).toContain('Locked after too many wrong passwords');
+    byTestId(root, 'unlock')!.click();
+    await settle(fixture);
+
+    flushAntiforgery(controller);
+    controller.expectOne(`${UsersApi.usersUrl}/7/unlock`).flush({ id: 7, operation: 'Unlock', changed: true });
+    await settle(fixture);
+
+    expect(byTestId(root, 'unlock')).toBeNull();
+    expect(byTestId(root, 'recovery-status')?.textContent).toContain('member@example.com is unlocked');
+    expect(document.activeElement).toBe(byTestId(root, 'recovery-status'));
+  });
+
+  it('asks before resetting two-factor, names whose it is, and Cancel puts focus back', async () => {
+    const { fixture, root } = await open({ twoFactorEnabled: true });
+
+    byTestId(root, 'reset-two-factor')!.click();
+    await settle(fixture);
+
+    expect(byTestId(root, 'reset-two-factor-question')?.textContent).toContain('member@example.com');
+    expect(byTestId(root, 'reset-two-factor-yes')?.getAttribute('aria-describedby')).toBe('reset-two-factor-question');
+    expect(document.activeElement).toBe(byTestId(root, 'reset-two-factor-yes'));
+
+    byTestId(root, 'reset-two-factor-cancel')!.click();
+    await settle(fixture);
+    expect(document.activeElement).toBe(byTestId(root, 'reset-two-factor'));
+  });
+
+  it('resets two-factor after the Yes and shows it as not set up', async () => {
+    const { fixture, root } = await open({ twoFactorEnabled: true });
+
+    byTestId(root, 'reset-two-factor')!.click();
+    await settle(fixture);
+    byTestId(root, 'reset-two-factor-yes')!.click();
+    await settle(fixture);
+
+    flushAntiforgery(controller);
+    controller.expectOne(`${UsersApi.usersUrl}/7/reset-two-factor`).flush({ id: 7, operation: 'ResetTwoFactor', changed: true });
+    await settle(fixture);
+
+    expect(byTestId(root, 'two-factor-off')).not.toBeNull();
+    expect(byTestId(root, 'recovery-status')?.textContent).toContain('Two-factor authentication is reset');
+  });
+
+  it('shows the server\'s own sentence for a refusal', async () => {
+    const { fixture, root } = await open({ twoFactorEnabled: true });
+
+    byTestId(root, 'reset-two-factor')!.click();
+    await settle(fixture);
+    byTestId(root, 'reset-two-factor-yes')!.click();
+    await settle(fixture);
+
+    flushAntiforgery(controller);
+    controller
+      .expectOne(`${UsersApi.usersUrl}/7/reset-two-factor`)
+      .flush(
+        { error: 'guarded_account', detail: "Only the technical owner's account can reset this account's password or two-factor authentication, or unlock it." },
+        { status: 403, statusText: 'Forbidden' },
+      );
+    await settle(fixture);
+
+    expect(byTestId(root, 'recovery-error')?.textContent).toContain("Only the technical owner's account");
+  });
+});

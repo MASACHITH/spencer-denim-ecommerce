@@ -91,6 +91,49 @@ internal static class UserEndpoints
             .Produces(403)
             .Produces(404);
 
+        // #254: staff account recovery. Users.Manage at the route, as every staff write; the handler then requires a
+        // Super Admin, before it reads the target.
+        api.MapPost("/{userId:int}/reset-password", ResetPasswordAsync)
+            .RequirePermission(Permissions.Users.Manage)
+            .WithName("ResetStaffUserPassword")
+            .WithSummary("Set a temporary password the staff member must replace at their next sign-in (#254).")
+            .WithDescription(
+                "Super Admin only. The temporary password is typed by the Super Admin and handed over in person or by "
+                + "phone; it is never emailed. The member's sessions end, their lockout is cleared, and they must choose "
+                + "a new password when they sign in. Refused on yourself, on a protected account, and on a guarded "
+                + "account unless you are a protected account. Audited (AdminPasswordReset), never with the password.")
+            .Produces<StaffAccountRecoveryResponse>()
+            .ProducesValidationProblem()
+            .Produces(401)
+            .Produces(403)
+            .Produces(404)
+            .Produces(409);
+
+        api.MapPost("/{userId:int}/unlock", UnlockAsync)
+            .RequirePermission(Permissions.Users.Manage)
+            .WithName("UnlockStaffUser")
+            .WithSummary("Clear a staff member's lockout and failed-attempt count (#254).")
+            .WithDescription("Super Admin only; same refusals as reset-password. changed=false when the account was not locked.")
+            .Produces<StaffAccountRecoveryResponse>()
+            .Produces(401)
+            .Produces(403)
+            .Produces(404)
+            .Produces(409);
+
+        api.MapPost("/{userId:int}/reset-two-factor", ResetTwoFactorAsync)
+            .RequirePermission(Permissions.Users.Manage)
+            .WithName("ResetStaffUserTwoFactor")
+            .WithSummary("Remove a staff member's authenticator and recovery codes, for a lost phone (#254).")
+            .WithDescription(
+                "Super Admin only; same refusals as reset-password. The member's sessions end; a Super Admin must set "
+                + "two-factor up again at their next sign-in. changed=false when there was no authenticator. Audited "
+                + "(TwoFactorReset), never with the key or the codes.")
+            .Produces<StaffAccountRecoveryResponse>()
+            .Produces(401)
+            .Produces(403)
+            .Produces(404)
+            .Produces(409);
+
         return endpoints;
     }
 
@@ -326,6 +369,86 @@ internal static class UserEndpoints
         };
     }
 
+    private static Task<IResult> ResetPasswordAsync(
+        int userId,
+        ResetStaffPasswordRequest? request,
+        ClaimsPrincipal principal,
+        HttpContext httpContext,
+        IAntiforgery antiforgery,
+        ICommandHandler<RecoverStaffAccountCommand, RecoverStaffAccountResult> handler,
+        CancellationToken cancellationToken) =>
+        RecoverAsync(userId, StaffAccountRecovery.ResetPassword, request?.TemporaryPassword, principal, httpContext, antiforgery, handler, cancellationToken);
+
+    private static Task<IResult> UnlockAsync(
+        int userId,
+        ClaimsPrincipal principal,
+        HttpContext httpContext,
+        IAntiforgery antiforgery,
+        ICommandHandler<RecoverStaffAccountCommand, RecoverStaffAccountResult> handler,
+        CancellationToken cancellationToken) =>
+        RecoverAsync(userId, StaffAccountRecovery.Unlock, null, principal, httpContext, antiforgery, handler, cancellationToken);
+
+    private static Task<IResult> ResetTwoFactorAsync(
+        int userId,
+        ClaimsPrincipal principal,
+        HttpContext httpContext,
+        IAntiforgery antiforgery,
+        ICommandHandler<RecoverStaffAccountCommand, RecoverStaffAccountResult> handler,
+        CancellationToken cancellationToken) =>
+        RecoverAsync(userId, StaffAccountRecovery.ResetTwoFactor, null, principal, httpContext, antiforgery, handler, cancellationToken);
+
+    private static async Task<IResult> RecoverAsync(
+        int userId,
+        StaffAccountRecovery operation,
+        string? temporaryPassword,
+        ClaimsPrincipal principal,
+        HttpContext httpContext,
+        IAntiforgery antiforgery,
+        ICommandHandler<RecoverStaffAccountCommand, RecoverStaffAccountResult> handler,
+        CancellationToken cancellationToken)
+    {
+        httpContext.Response.Headers.CacheControl = "no-store";
+
+        if (await AdminWriteRequest.ValidateAntiforgeryAsync(httpContext, antiforgery) is { } forged)
+        {
+            return forged;
+        }
+
+        if (!TryGetActorId(principal, out var actorId))
+        {
+            return TypedResults.Unauthorized();
+        }
+
+        var result = await handler.HandleAsync(
+            new RecoverStaffAccountCommand(
+                actorId,
+                userId,
+                operation,
+                temporaryPassword,
+                httpContext.Connection.RemoteIpAddress?.ToString(),
+                httpContext.Request.Headers.UserAgent.ToString()),
+            cancellationToken);
+
+        return result switch
+        {
+            RecoverStaffAccountResult.Success success => TypedResults.Ok(
+                new StaffAccountRecoveryResponse(success.UserId, success.Operation.ToString(), success.Changed)),
+            RecoverStaffAccountResult.TargetNotFound => TypedResults.NotFound(),
+            RecoverStaffAccountResult.SelfNotAllowed => ToProblem(
+                RbacDenialReason.SelfEditNotAllowed,
+                "You cannot do this to your own account. Use Security in your own menu instead."),
+            RecoverStaffAccountResult.Forbidden forbidden => ToProblem(RbacDenialReason.NotAuthorized, forbidden.Message),
+            RecoverStaffAccountResult.ProtectedAccount => ProtectedAccountProblem(
+                "This account is protected. Its owner recovers it with the break-glass tool, not from the admin."),
+            RecoverStaffAccountResult.GuardedAccount => GuardedAccountProblem(
+                "Only the technical owner's account can reset this account's password or two-factor authentication, or unlock it."),
+            RecoverStaffAccountResult.PasswordRejected rejected => TypedResults.ValidationProblem(
+                new Dictionary<string, string[]>(StringComparer.Ordinal) { ["temporaryPassword"] = [.. rejected.Errors] },
+                title: "That temporary password cannot be used."),
+            _ => throw new InvalidOperationException($"Unhandled {nameof(RecoverStaffAccountResult)}: {result.GetType().Name}"),
+        };
+    }
+
     private static bool TryGetActorId(ClaimsPrincipal principal, out int actorId) =>
         AdminSessionCookies.TryGetUserId(principal, out actorId);
 
@@ -395,3 +518,12 @@ public sealed record StaffUserResponse(int Id, string Email, string FirstName, s
 public sealed record StaffUserRolesResponse(int Id, bool GrantsAllPermissions, IReadOnlyList<RoleRefDto> Roles);
 
 public sealed record StaffUserActiveResponse(int Id, bool IsActive);
+
+/// <summary>The body of <c>POST /api/admin/users/{id}/reset-password</c> (#254).</summary>
+public sealed record ResetStaffPasswordRequest(string? TemporaryPassword);
+
+/// <summary>
+/// What a recovery did (#254). <paramref name="Operation"/> is <c>ResetPassword</c>, <c>Unlock</c> or
+/// <c>ResetTwoFactor</c>; <paramref name="Changed"/> is false when there was nothing to do.
+/// </summary>
+public sealed record StaffAccountRecoveryResponse(int Id, string Operation, bool Changed);

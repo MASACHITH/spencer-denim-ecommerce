@@ -114,6 +114,30 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
 
     public RbacActorContext? LastActorContext { get; private set; }
 
+    /// <summary>#254: what the next <see cref="RecoverAccountAsync"/> answers; Applied unless a test says otherwise.</summary>
+    public RecoverAccountStoreResult NextRecoverResult { get; set; } = new RecoverAccountStoreResult.Applied();
+
+    public (int TargetUserId, StaffAccountRecovery Operation, string? TemporaryPassword)? RecoverCall { get; private set; }
+
+    public Task<RecoverAccountStoreResult> RecoverAccountAsync(
+        int targetUserId,
+        StaffAccountRecovery operation,
+        string? temporaryPassword,
+        DateTimeOffset now,
+        Func<AuditLog> audit,
+        CancellationToken cancellationToken)
+    {
+        RecoverCall = (targetUserId, operation, temporaryPassword);
+        LastAuditRowOffered = audit();
+
+        if (NextRecoverResult is RecoverAccountStoreResult.Applied)
+        {
+            AuditWriter?.Enlist(LastAuditRowOffered);
+        }
+
+        return Task.FromResult(NextRecoverResult);
+    }
+
     public Task<StaffUserSnapshot?> GetStaffUserSnapshotAsync(int userId, CancellationToken cancellationToken) =>
         Task.FromResult(Users.TryGetValue(userId, out var user) ? user : null);
 

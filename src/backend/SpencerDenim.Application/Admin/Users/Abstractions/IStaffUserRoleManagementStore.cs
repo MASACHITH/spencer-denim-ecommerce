@@ -86,4 +86,18 @@ public interface IStaffUserRoleManagementStore
         RbacActorContext actor,
         Func<AuditLog> audit,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// #254: reset a password, unlock, or reset two-factor authentication, under the per-user lock and in one
+    /// transaction with the audit row. The caller has already decided the actor is a Super Admin and the target is
+    /// neither protected nor guarded against them. <see cref="RecoverAccountStoreResult.NothingToDo"/> (no write, no
+    /// audit row) when the account is not locked, or has no authenticator.
+    /// </summary>
+    Task<RecoverAccountStoreResult> RecoverAccountAsync(
+        int targetUserId,
+        StaffAccountRecovery operation,
+        string? temporaryPassword,
+        DateTimeOffset now,
+        Func<AuditLog> audit,
+        CancellationToken cancellationToken);
 }

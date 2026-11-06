@@ -33,7 +33,7 @@ export const HELP_SECTIONS: readonly GuideSection[] = [
           ['I changed the homepage but the shop looks the same.', 'You did not press the block\'s own Save button, or you are looking at an old page.', 'Press **Save (block name)** and reload the shop. Product rows can take 5 minutes.'],
           ['"Somebody else changed this while you were editing it."', 'A colleague saved first.', 'Reload the page, look at their change, repeat yours.'],
           ['I can see a menu item but the page says "You do not have permission to do that."', 'Your role does not include that permission.', 'See [Roles and permissions](#staff-roles). Roles cannot be edited: ask a Super Admin to give you a role that has it.'],
-          ['I am locked out.', 'Five wrong passwords or codes.', 'Wait 15 minutes. If you forgot your password or lost your phone, ask your developer.'],
+          ['I am locked out.', 'Five wrong passwords or codes.', 'Wait 15 minutes, or ask a Super Admin to unlock you. If you forgot your password or lost your phone, a Super Admin can reset it (see [Staff users](#staff-users)); if you are the only Super Admin, ask your developer.'],
           ['I cannot find Contact enquiries.', 'It has no menu link.', 'Open [Contact enquiries](#enquiries).'],
           ['The dashboard\'s revenue does not drop after a refund.', 'Refunds are not recorded in the system.', 'This is expected. See [Refunds](#refunds).'],
         ],
@@ -71,7 +71,7 @@ export const HELP_SECTIONS: readonly GuideSection[] = [
         kind: 'list',
         items: [
           '**Roles:** they cannot be created, edited or deleted.',
-          '**Staff passwords:** no forgot-password link, no reset by another user, no unlock button and no reset of two-factor authentication. No invitation email is sent to a new staff user.',
+          '**Staff passwords:** no forgot-password link for staff (a Super Admin resets it instead), and no invitation email is sent to a new staff user.',
           '**Customers:** the Customers screen cannot edit, disable, unlock, annotate, delete or anonymise anyone, or export the list. (The Customers report under Reports can be downloaded.) See [Customer data](#data-privacy).',
           '**Automatic clean-up** of the audit log, alerts, enquiries and IP addresses, and **automatic backups**, are not built yet. The technical owner takes backups by hand.',
         ],

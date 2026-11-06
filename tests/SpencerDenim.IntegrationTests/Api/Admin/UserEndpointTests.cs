@@ -1212,6 +1212,408 @@ public sealed class UserEndpointTests(SqlServerDatabaseFixture sqlServer)
         }
     }
 
+    // ---- #254: staff account recovery (reset password, unlock, reset two-factor) ----------------------------------
+
+    /// <summary>
+    /// The whole reset, against real Identity: the member's open session ends, the old password stops working, the
+    /// temporary one signs in with "must change password", the stamp rotates, and the audit row never carries the
+    /// temporary password.
+    /// </summary>
+    [Fact]
+    public async Task A_Super_Admin_resets_a_password_and_the_member_must_change_it_at_sign_in()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var grantsAllRoleId = await GetOrCreateGrantsAllRoleIdAsync(factory);
+        var narrowRoleId = await CreateRoleAsync(factory, UniqueName("reset-target-role"), [Permissions.Orders.View]);
+
+        var (actorEmail, actorPassword) = UniqueCredentials("reset-actor");
+        var actorId = await CreateStaffUserWithRolesAsync(factory, actorEmail, actorPassword, [grantsAllRoleId]);
+        var memberEmail = UniqueEmail("reset-member");
+        var memberId = await CreateStaffUserWithRolesAsync(factory, memberEmail, "Member-Pass-1!", [narrowRoleId]);
+
+        try
+        {
+            using var memberSession = CreateClient(factory);
+            await LoginAsync(memberSession, memberEmail, "Member-Pass-1!");
+            var stampBefore = await GetSecurityStampAsync(factory, memberId);
+
+            using var admin = CreateClient(factory);
+            await LoginAsync(admin, actorEmail, actorPassword);
+            using var reset = await PostJsonAsync(
+                admin,
+                $"{UsersUrl}/{memberId}/reset-password",
+                new { temporaryPassword = "Temporary-Pass-2!" },
+                await GetAntiforgeryTokenAsync(admin));
+
+            Assert.Equal(HttpStatusCode.OK, reset.StatusCode);
+            var body = await reset.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+            Assert.Equal(("ResetPassword", true), (body.GetProperty("operation").GetString(), body.GetProperty("changed").GetBoolean()));
+            Assert.NotEqual(stampBefore, await GetSecurityStampAsync(factory, memberId));
+
+            // The member's open session has ended.
+            using (var stale = await memberSession.GetAsync(new Uri("/api/admin/auth/whoami", UriKind.Relative), TestContext.Current.CancellationToken))
+            {
+                Assert.Equal(HttpStatusCode.Unauthorized, stale.StatusCode);
+            }
+
+            // The old password no longer signs in; the temporary one does, and must be changed.
+            using (var old = CreateClient(factory))
+            using (var refused = await old.PostAsJsonAsync(LoginUrl, new { email = memberEmail, password = "Member-Pass-1!" }, TestContext.Current.CancellationToken))
+            {
+                Assert.NotEqual(HttpStatusCode.OK, refused.StatusCode);
+            }
+
+            using (var fresh = CreateClient(factory))
+            using (var signedIn = await fresh.PostAsJsonAsync(LoginUrl, new { email = memberEmail, password = "Temporary-Pass-2!" }, TestContext.Current.CancellationToken))
+            {
+                Assert.Equal(HttpStatusCode.OK, signedIn.StatusCode);
+                var login = await signedIn.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+                Assert.True(login.GetProperty("mustChangePassword").GetBoolean());
+            }
+
+            await AssertAuditActionWrittenAsync(factory, actorEmail, AuditActions.AdminPasswordReset);
+            await using var scope = factory.Services.CreateAsyncScope();
+            var rows = await scope.ServiceProvider.GetRequiredService<AppDbContext>().AuditLogs.AsNoTracking()
+                .Where(row => row.Action == AuditActions.AdminPasswordReset && row.EntityId == memberId.ToString(CultureInfo.InvariantCulture))
+                .ToListAsync(TestContext.Current.CancellationToken);
+            var row = Assert.Single(rows);
+            Assert.Equal(actorId, row.UserId);
+            foreach (var column in typeof(AuditLog).GetProperties().Where(property => property.PropertyType == typeof(string)))
+            {
+                Assert.DoesNotContain("Temporary-Pass-2!", (string?)column.GetValue(row) ?? string.Empty, StringComparison.Ordinal);
+            }
+
+            AssertNoRedactedColumn(row.AfterJson);
+        }
+        finally
+        {
+            await RemoveFromGrantsAllRoleAsync(factory, actorId);
+        }
+    }
+
+    /// <summary>A temporary password the policy refuses changes nothing: the member's own password still works.</summary>
+    [Fact]
+    public async Task A_temporary_password_the_policy_refuses_changes_nothing()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var grantsAllRoleId = await GetOrCreateGrantsAllRoleIdAsync(factory);
+        var (actorEmail, actorPassword) = UniqueCredentials("reset-short-actor");
+        var actorId = await CreateStaffUserWithRolesAsync(factory, actorEmail, actorPassword, [grantsAllRoleId]);
+        var memberEmail = UniqueEmail("reset-short-member");
+        var memberId = await CreateStaffUserWithRolesAsync(factory, memberEmail, "Member-Pass-1!", []);
+        var stampBefore = await GetSecurityStampAsync(factory, memberId);
+
+        try
+        {
+            using var admin = CreateClient(factory);
+            await LoginAsync(admin, actorEmail, actorPassword);
+            using var refused = await PostJsonAsync(
+                admin,
+                $"{UsersUrl}/{memberId}/reset-password",
+                new { temporaryPassword = "short" },
+                await GetAntiforgeryTokenAsync(admin));
+
+            Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+            var problem = await refused.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+            Assert.True(problem.GetProperty("errors").TryGetProperty("temporaryPassword", out _));
+            Assert.Equal(stampBefore, await GetSecurityStampAsync(factory, memberId));
+
+            using var member = CreateClient(factory);
+            using var signedIn = await member.PostAsJsonAsync(LoginUrl, new { email = memberEmail, password = "Member-Pass-1!" }, TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.OK, signedIn.StatusCode);
+        }
+        finally
+        {
+            await RemoveFromGrantsAllRoleAsync(factory, actorId);
+        }
+    }
+
+    [Fact]
+    public async Task Unlock_clears_a_lockout_and_says_when_there_was_nothing_to_clear()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var grantsAllRoleId = await GetOrCreateGrantsAllRoleIdAsync(factory);
+        var (actorEmail, actorPassword) = UniqueCredentials("unlock-actor");
+        var actorId = await CreateStaffUserWithRolesAsync(factory, actorEmail, actorPassword, [grantsAllRoleId]);
+        var memberEmail = UniqueEmail("unlock-member");
+        var memberId = await CreateStaffUserWithRolesAsync(factory, memberEmail, "Member-Pass-1!", []);
+        await LockOutDirectlyAsync(factory, memberId);
+
+        try
+        {
+            using var admin = CreateClient(factory);
+            await LoginAsync(admin, actorEmail, actorPassword);
+
+            var detail = await admin.GetFromJsonAsync<JsonElement>($"{UsersUrl}/{memberId}", TestContext.Current.CancellationToken);
+            Assert.Equal(JsonValueKind.String, detail.GetProperty("lockedOutUntilUtc").ValueKind);
+
+            using (var unlocked = await PostAsync(admin, $"{UsersUrl}/{memberId}/unlock", await GetAntiforgeryTokenAsync(admin)))
+            {
+                Assert.Equal(HttpStatusCode.OK, unlocked.StatusCode);
+                Assert.True((await unlocked.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("changed").GetBoolean());
+            }
+
+            await using (var scope = factory.Services.CreateAsyncScope())
+            {
+                var row = await scope.ServiceProvider.GetRequiredService<AppDbContext>().Users.AsNoTracking()
+                    .SingleAsync(user => user.Id == memberId, TestContext.Current.CancellationToken);
+                Assert.Null(row.LockoutEnd);
+                Assert.Equal(0, row.AccessFailedCount);
+            }
+
+            detail = await admin.GetFromJsonAsync<JsonElement>($"{UsersUrl}/{memberId}", TestContext.Current.CancellationToken);
+            Assert.Equal(JsonValueKind.Null, detail.GetProperty("lockedOutUntilUtc").ValueKind);
+
+            using (var member = CreateClient(factory))
+            using (var signedIn = await member.PostAsJsonAsync(LoginUrl, new { email = memberEmail, password = "Member-Pass-1!" }, TestContext.Current.CancellationToken))
+            {
+                Assert.Equal(HttpStatusCode.OK, signedIn.StatusCode);
+            }
+
+            await AssertAuditActionWrittenAsync(factory, actorEmail, AuditActions.StaffUnlocked);
+
+            using var again = await PostAsync(admin, $"{UsersUrl}/{memberId}/unlock", await GetAntiforgeryTokenAsync(admin));
+            Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+            Assert.False((await again.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("changed").GetBoolean());
+        }
+        finally
+        {
+            await RemoveFromGrantsAllRoleAsync(factory, actorId);
+        }
+    }
+
+    /// <summary>
+    /// A lost phone: the authenticator is <b>replaced</b>, not just switched off (setup would otherwise show the lost
+    /// phone's key again), the recovery codes are gone, and a Super Admin is made to set it up again at sign-in.
+    /// </summary>
+    [Fact]
+    public async Task Reset_two_factor_replaces_the_authenticator_and_a_Super_Admin_must_set_it_up_again()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var grantsAllRoleId = await GetOrCreateGrantsAllRoleIdAsync(factory);
+        var (actorEmail, actorPassword) = UniqueCredentials("2fa-reset-actor");
+        var actorId = await CreateStaffUserWithRolesAsync(factory, actorEmail, actorPassword, [grantsAllRoleId]);
+        var (memberEmail, memberPassword) = UniqueCredentials("2fa-reset-member");
+        var memberId = await CreateStaffUserWithRolesAsync(factory, memberEmail, memberPassword, [grantsAllRoleId]);
+
+        try
+        {
+            using (var member = CreateClient(factory))
+            {
+                await LoginAsync(member, memberEmail, memberPassword); // enrols, as the product makes a Super Admin
+            }
+
+            var keyBefore = await AuthenticatorKeyAsync(factory, memberId);
+            Assert.NotNull(keyBefore);
+
+            using var admin = CreateClient(factory);
+            await LoginAsync(admin, actorEmail, actorPassword);
+            using (var reset = await PostAsync(admin, $"{UsersUrl}/{memberId}/reset-two-factor", await GetAntiforgeryTokenAsync(admin)))
+            {
+                Assert.Equal(HttpStatusCode.OK, reset.StatusCode);
+                Assert.True((await reset.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("changed").GetBoolean());
+            }
+
+            Assert.NotEqual(keyBefore, await AuthenticatorKeyAsync(factory, memberId));
+            await using (var scope = factory.Services.CreateAsyncScope())
+            {
+                var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+                var user = (await userManager.FindByIdAsync(memberId.ToString(CultureInfo.InvariantCulture)))!;
+                Assert.False(user.TwoFactorEnabled);
+                Assert.Equal(0, await userManager.CountRecoveryCodesAsync(user));
+            }
+
+            var detail = await admin.GetFromJsonAsync<JsonElement>($"{UsersUrl}/{memberId}", TestContext.Current.CancellationToken);
+            Assert.False(detail.GetProperty("twoFactorEnabled").GetBoolean());
+
+            using (var member = CreateClient(factory))
+            using (var signedIn = await member.PostAsJsonAsync(LoginUrl, new { email = memberEmail, password = memberPassword }, TestContext.Current.CancellationToken))
+            {
+                Assert.Equal(HttpStatusCode.OK, signedIn.StatusCode);
+                var login = await signedIn.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+                Assert.True(login.GetProperty("twoFactorEnrolmentRequired").GetBoolean());
+            }
+
+            await AssertAuditActionWrittenAsync(factory, actorEmail, AuditActions.TwoFactorReset);
+        }
+        finally
+        {
+            await RemoveFromGrantsAllRoleAsync(factory, actorId, memberId);
+        }
+    }
+
+    /// <summary>
+    /// Who may: a Super Admin only, decided before the target is read — so a Users.Manage holder gets one identical
+    /// answer for a real member and an id that does not exist — never on oneself, and never on a protected account.
+    /// </summary>
+    [Fact]
+    public async Task Recovery_is_for_a_Super_Admin_never_on_oneself_and_never_on_a_protected_account()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        var protectedEmail = UniqueEmail("recovery-protected");
+        await using var factory = new ApiFactory(
+            sqlServer.ConnectionString,
+            additionalConfiguration: new Dictionary<string, string?> { ["AdminSecurity:ProtectedStaffEmails"] = protectedEmail });
+
+        var grantsAllRoleId = await GetOrCreateGrantsAllRoleIdAsync(factory);
+        var managerRoleId = await CreateRoleAsync(factory, UniqueName("recovery-manager"), [Permissions.Users.View, Permissions.Users.Manage, Permissions.Orders.View]);
+        var narrowRoleId = await CreateRoleAsync(factory, UniqueName("recovery-narrow"), [Permissions.Orders.View]);
+
+        var (managerEmail, managerPassword) = UniqueCredentials("recovery-manager");
+        await CreateStaffUserWithRolesAsync(factory, managerEmail, managerPassword, [managerRoleId]);
+        var (adminEmail, adminPassword) = UniqueCredentials("recovery-admin");
+        var adminId = await CreateStaffUserWithRolesAsync(factory, adminEmail, adminPassword, [grantsAllRoleId]);
+        var memberId = await CreateStaffUserWithRolesAsync(factory, UniqueEmail("recovery-member"), "Member-Pass-1!", [narrowRoleId]);
+        var protectedId = await CreateStaffUserWithRolesAsync(factory, protectedEmail, "Member-Pass-1!", [narrowRoleId]);
+
+        try
+        {
+            using var manager = CreateClient(factory);
+            await LoginAsync(manager, managerEmail, managerPassword);
+            var token = await GetAntiforgeryTokenAsync(manager);
+
+            using var real = await PostAsync(manager, $"{UsersUrl}/{memberId}/unlock", token);
+            using var missing = await PostAsync(manager, $"{UsersUrl}/{int.MaxValue}/unlock", token);
+            Assert.Equal(HttpStatusCode.Forbidden, real.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, missing.StatusCode);
+            Assert.Equal(await BodyWithoutTraceIdAsync(real), await BodyWithoutTraceIdAsync(missing));
+
+            using var admin = CreateClient(factory);
+            await LoginAsync(admin, adminEmail, adminPassword);
+            var adminToken = await GetAntiforgeryTokenAsync(admin);
+
+            using (var self = await PostAsync(admin, $"{UsersUrl}/{adminId}/reset-two-factor", adminToken))
+            {
+                Assert.Equal(HttpStatusCode.Forbidden, self.StatusCode);
+                var problem = await self.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+                Assert.Equal(nameof(RbacDenialReasonMirror.SelfEditNotAllowed), problem.GetProperty("error").GetString());
+            }
+
+            using (var guarded = await PostJsonAsync(admin, $"{UsersUrl}/{protectedId}/reset-password", new { temporaryPassword = "Temporary-Pass-3!" }, adminToken))
+            {
+                Assert.Equal(HttpStatusCode.Conflict, guarded.StatusCode);
+                var problem = await guarded.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+                Assert.Equal("protected_account", problem.GetProperty("error").GetString());
+            }
+
+            using var unknown = await PostAsync(admin, $"{UsersUrl}/{int.MaxValue}/unlock", adminToken);
+            Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+
+            await using var scope = factory.Services.CreateAsyncScope();
+            var refusedRows = await scope.ServiceProvider.GetRequiredService<AppDbContext>().AuditLogs.AsNoTracking()
+                .CountAsync(
+                    row => (row.Action == AuditActions.AdminPasswordReset || row.Action == AuditActions.StaffUnlocked || row.Action == AuditActions.TwoFactorReset)
+                        && (row.EntityId == memberId.ToString(CultureInfo.InvariantCulture)
+                            || row.EntityId == protectedId.ToString(CultureInfo.InvariantCulture)
+                            || row.EntityId == adminId.ToString(CultureInfo.InvariantCulture)),
+                    TestContext.Current.CancellationToken);
+            Assert.Equal(0, refusedRows);
+        }
+        finally
+        {
+            await RemoveFromGrantsAllRoleAsync(factory, adminId);
+        }
+    }
+
+    /// <summary>
+    /// #254 tester: a member's own password change racing a Super Admin's reset used to win 6 runs in 6, keeping a
+    /// password chosen with the old one while the admin was told the reset had worked. Both now take the per-user lock,
+    /// so in either order the temporary password is the one that works and must be changed: change-then-reset leaves
+    /// the reset on top, and reset-then-change refuses the change (its current password is no longer current).
+    /// </summary>
+    [Fact]
+    public async Task A_reset_racing_the_members_own_password_change_always_ends_with_the_temporary_password()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var grantsAllRoleId = await GetOrCreateGrantsAllRoleIdAsync(factory);
+        var (actorEmail, actorPassword) = UniqueCredentials("race-actor");
+        var actorId = await CreateStaffUserWithRolesAsync(factory, actorEmail, actorPassword, [grantsAllRoleId]);
+
+        try
+        {
+            using var admin = CreateClient(factory);
+            await LoginAsync(admin, actorEmail, actorPassword);
+
+            for (var round = 0; round < 4; round++)
+            {
+                var memberEmail = UniqueEmail($"race-member-{round}");
+                var memberId = await CreateStaffUserWithRolesAsync(factory, memberEmail, "Member-Pass-1!", []);
+
+                using var member = CreateClient(factory);
+                await LoginAsync(member, memberEmail, "Member-Pass-1!");
+                var memberToken = await GetAntiforgeryTokenAsync(member);
+                var adminToken = await GetAntiforgeryTokenAsync(admin);
+
+                var change = PostJsonAsync(
+                    member,
+                    "/api/admin/auth/change-password",
+                    new { currentPassword = "Member-Pass-1!", newPassword = "Member-Own-2!" },
+                    memberToken);
+                var reset = PostJsonAsync(
+                    admin,
+                    $"{UsersUrl}/{memberId}/reset-password",
+                    new { temporaryPassword = "Temporary-Race-3!" },
+                    adminToken);
+                await Task.WhenAll(change, reset);
+                (await change).Dispose();
+
+                using (var resetResponse = await reset)
+                {
+                    Assert.Equal(HttpStatusCode.OK, resetResponse.StatusCode);
+                }
+
+                await using var scope = factory.Services.CreateAsyncScope();
+                var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+                var user = (await userManager.FindByIdAsync(memberId.ToString(CultureInfo.InvariantCulture)))!;
+                Assert.True(await userManager.CheckPasswordAsync(user, "Temporary-Race-3!"), $"Round {round}: the temporary password does not work.");
+                Assert.False(await userManager.CheckPasswordAsync(user, "Member-Own-2!"), $"Round {round}: the member's racing change survived the reset.");
+                Assert.True(user.MustChangePassword, $"Round {round}: the change flag is not set.");
+            }
+        }
+        finally
+        {
+            await RemoveFromGrantsAllRoleAsync(factory, actorId);
+        }
+    }
+
+    private static async Task LockOutDirectlyAsync(ApiFactory factory, int userId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AppDbContext>().Users
+            .Where(user => user.Id == userId)
+            .ExecuteUpdateAsync(
+                update => update
+                    .SetProperty(user => user.LockoutEnabled, true)
+                    .SetProperty(user => user.LockoutEnd, DateTimeOffset.UtcNow.AddMinutes(15))
+                    .SetProperty(user => user.AccessFailedCount, 5),
+                TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<string?> AuthenticatorKeyAsync(ApiFactory factory, int userId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        var user = await userManager.FindByIdAsync(userId.ToString(CultureInfo.InvariantCulture));
+        return await userManager.GetAuthenticatorKeyAsync(user!);
+    }
+
     private static async Task<List<JsonElement>> AuditRowsAsync(HttpClient client, int subjectUserId)
     {
         var body = await AuditPageAsync(client, $"/api/admin/audit-logs?entityType=User&entityId={subjectUserId}&pageSize=100");

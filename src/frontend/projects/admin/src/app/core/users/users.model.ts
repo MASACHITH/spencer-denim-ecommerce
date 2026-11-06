@@ -41,6 +41,17 @@ export interface StaffUserDetail {
   readonly isProtected: boolean;
   /** As on the list row: only the technical owner's account can activate, deactivate or rename it. */
   readonly lockedForViewer: boolean;
+  /** #254: when the lockout (five wrong passwords) ends, or null when the account is not locked now. */
+  readonly lockedOutUntilUtc?: string | null;
+  /** #254: whether an authenticator is set up. Never the key or the codes. */
+  readonly twoFactorEnabled?: boolean;
+}
+
+/** What a recovery did (#254): `changed` is false when there was nothing to do. */
+export interface StaffAccountRecoveryResponse {
+  readonly id: number;
+  readonly operation: 'ResetPassword' | 'Unlock' | 'ResetTwoFactor';
+  readonly changed: boolean;
 }
 
 /** One row of the role list. Role management is read-only in this slice (doc 08 §3.1 DB4 rule 1). */

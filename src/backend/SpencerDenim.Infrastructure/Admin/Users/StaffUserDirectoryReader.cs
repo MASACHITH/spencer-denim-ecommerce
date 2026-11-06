@@ -94,6 +94,9 @@ internal sealed class StaffUserDirectoryReader(AppDbContext dbContext, IProtecte
                 u.MustChangePassword,
                 u.LastLoginAtUtc,
                 u.CreatedAtUtc,
+                u.LockoutEnabled,
+                u.LockoutEnd,
+                u.TwoFactorEnabled,
             })
             .SingleOrDefaultAsync(cancellationToken);
 
@@ -122,7 +125,9 @@ internal sealed class StaffUserDirectoryReader(AppDbContext dbContext, IProtecte
             grantsAll,
             roles,
             permissions,
-            protectedAccounts.IsProtected(user.Email));
+            protectedAccounts.IsProtected(user.Email),
+            LockedOutUntilUtc: user.LockoutEnabled && user.LockoutEnd is { } end && end > DateTimeOffset.UtcNow ? end : null,
+            TwoFactorEnabled: user.TwoFactorEnabled);
     }
 
     /// <summary>
