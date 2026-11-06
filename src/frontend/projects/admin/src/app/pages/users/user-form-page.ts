@@ -7,7 +7,8 @@ import { catchError, map } from 'rxjs/operators';
 
 import { AdminAuthApi } from '../../core/auth/admin-auth-api';
 import { STAFF_PASSWORD_RULE } from '../../core/auth/password-rule';
-import { StaffUserActionFailure, UsersApi, toStaffUserActionFailure } from '../../core/users/users-api';
+import { colomboTime } from '../../core/orders/order-formatting';
+import { StaffUserActionFailure, UsersApi, toStaffRecoveryFailure, toStaffUserActionFailure } from '../../core/users/users-api';
 import { RoleSummary, StaffUserDetail } from '../../core/users/users.model';
 
 /** The profile fields that have their own error line in the form. */
@@ -215,6 +216,136 @@ interface RoleOption {
               }
             </div>
           </div>
+
+          <!-- #254: a Super Admin gets a staff member back in. Not on your own page (Security in your own menu is for
+               that), not for a protected account (its owner uses the break-glass tool), not for an account only the
+               technical owner may manage. The server refuses each of those too; this only stops offering them. -->
+          @if (canRecover()) {
+            <div class="user-form__section user-form__recovery" data-testid="account-recovery">
+              <h2 class="user-form__section-title">Account recovery</h2>
+              <p class="user-form__hint">
+                For a staff member who forgot their password, is locked out, or lost the phone with their authenticator
+                app. Each action is recorded in the audit log against your name.
+              </p>
+              <p class="user-form__said" role="status" tabindex="-1" data-testid="recovery-status">{{ recoveryMessage() }}</p>
+              @if (recoveryError(); as message) {
+                <p class="user-form__error" role="alert" data-testid="recovery-error">{{ message }}</p>
+              }
+
+              <h3 class="user-form__subtitle">Password</h3>
+              @if (resettingPassword()) {
+                <!-- A form of its own so Enter sets it, as on every other form here; not the profile form above. -->
+                <form class="user-form__recovery-form" (submit)="$event.preventDefault(); resetPassword()" novalidate>
+                <label class="user-form__field">
+                  <span class="user-form__label">Temporary password</span>
+                  <input
+                    class="user-form__input"
+                    id="temporary-password"
+                    [type]="showTemporaryPassword() ? 'text' : 'password'"
+                    name="temporaryPassword"
+                    autocomplete="new-password"
+                    data-testid="temporary-password"
+                    [attr.aria-describedby]="temporaryPasswordError() ? 'temporary-password-rule temporary-password-error' : 'temporary-password-rule'"
+                    [attr.aria-invalid]="temporaryPasswordError() ? 'true' : null"
+                    [value]="temporaryPassword()"
+                    (input)="temporaryPassword.set($any($event.target).value)"
+                  />
+                  <span class="user-form__hint" id="temporary-password-rule">
+                    {{ passwordRule }} Tell it to them in person or by phone, never by email or chat. They must choose
+                    a new password when they sign in, and every session they have open ends now.
+                  </span>
+                  @if (temporaryPasswordError(); as message) {
+                    <span class="user-form__error" id="temporary-password-error">{{ message }}</span>
+                  }
+                </label>
+                <!-- So the Super Admin can check what they are about to read out. -->
+                <label class="user-form__check">
+                  <input
+                    type="checkbox"
+                    data-testid="show-temporary-password"
+                    [checked]="showTemporaryPassword()"
+                    (change)="showTemporaryPassword.set($any($event.target).checked)"
+                  />
+                  Show the password
+                </label>
+                <div class="user-form__actions">
+                  <button
+                    class="user-form__danger"
+                    type="submit"
+                    data-testid="reset-password-confirm"
+                    [attr.aria-disabled]="recoveryBusy() ? 'true' : null"
+                    (click)="resetPassword()"
+                  >
+                    {{ recoveryBusy() === 'password' ? 'Setting…' : 'Set temporary password' }}
+                  </button>
+                  <button class="user-form__secondary" type="button" data-testid="reset-password-cancel" (click)="cancelPasswordReset()">
+                    Cancel
+                  </button>
+                </div>
+                </form>
+              } @else {
+                <div class="user-form__actions">
+                  <button class="user-form__secondary" type="button" data-testid="reset-password" (click)="openPasswordReset()">
+                    Reset password…
+                  </button>
+                </div>
+              }
+
+              <h3 class="user-form__subtitle">Lockout</h3>
+              @if (lockedOutUntil(); as until) {
+                <p data-testid="locked-out">Locked after too many wrong passwords, until {{ lockedOutUntilText() }}.</p>
+                <div class="user-form__actions">
+                  <button
+                    class="user-form__submit"
+                    type="button"
+                    data-testid="unlock"
+                    [attr.aria-disabled]="recoveryBusy() ? 'true' : null"
+                    (click)="unlock()"
+                  >
+                    {{ recoveryBusy() === 'unlock' ? 'Unlocking…' : 'Unlock' }}
+                  </button>
+                </div>
+              } @else {
+                <p data-testid="not-locked">Not locked.</p>
+              }
+
+              <h3 class="user-form__subtitle">Two-factor authentication</h3>
+              @if (twoFactorEnabled()) {
+                @if (confirmingTwoFactorReset()) {
+                  <p id="reset-two-factor-question" data-testid="reset-two-factor-question">
+                    Reset two-factor authentication for {{ email() }}? Their authenticator app and recovery codes stop
+                    working now and every session they have open ends.
+                    @if (targetGrantsAll()) {
+                      As a Super Admin they must set it up again before they can do anything else.
+                    }
+                  </p>
+                  <div class="user-form__actions">
+                    <button
+                      class="user-form__danger"
+                      type="button"
+                      data-testid="reset-two-factor-yes"
+                      aria-describedby="reset-two-factor-question"
+                      [attr.aria-disabled]="recoveryBusy() ? 'true' : null"
+                      (click)="resetTwoFactor()"
+                    >
+                      {{ recoveryBusy() === 'twoFactor' ? 'Resetting…' : 'Yes, reset two-factor' }}
+                    </button>
+                    <button class="user-form__secondary" type="button" data-testid="reset-two-factor-cancel" (click)="cancelTwoFactorReset()">
+                      Cancel
+                    </button>
+                  </div>
+                } @else {
+                  <div class="user-form__actions">
+                    <button class="user-form__secondary" type="button" data-testid="reset-two-factor" (click)="askTwoFactorReset()">
+                      Reset two-factor…
+                    </button>
+                  </div>
+                }
+              } @else {
+                <p data-testid="two-factor-off">Not set up.</p>
+              }
+            </div>
+          }
         }
       }
     </section>
@@ -263,6 +394,29 @@ interface RoleOption {
     .user-form__danger { color: var(--color-on-primary); background: var(--color-sale); }
     .user-form__submit[aria-disabled='true'],
     .user-form__danger[aria-disabled='true'] { opacity: 0.6; cursor: not-allowed; }
+    /* #254: the quieter buttons that open a recovery step, and its sub-headings. */
+    .user-form__secondary {
+      min-height: var(--tap);
+      padding-inline: var(--space-3);
+      font-size: var(--text-button);
+      font-weight: var(--weight-semibold);
+      letter-spacing: var(--tracking-label);
+      text-transform: uppercase;
+      color: var(--color-text);
+      background: var(--color-surface);
+      border: 1px solid var(--color-border-strong, var(--color-text));
+      cursor: pointer;
+    }
+    .user-form__subtitle { margin: var(--space-2) 0 0; font-size: var(--text-body); font-weight: var(--weight-semibold); }
+    /* #254 tester: a long email address in the status line or the question widened the page past 320-390 px. The grid
+       item takes its content's minimum width, so break-word alone cannot shrink it: anywhere can. */
+    .user-form__recovery { min-width: 0; }
+    .user-form__recovery p,
+    .user-form__recovery .user-form__hint { overflow-wrap: anywhere; min-width: 0; }
+    .user-form__recovery-form { display: grid; gap: var(--space-2); }
+    .user-form__check { display: flex; align-items: center; gap: var(--space-1); min-height: var(--tap); }
+    .user-form__said:empty { display: none; }
+    .user-form__said { margin: 0; font-weight: var(--weight-medium); }
     .user-form__link { color: var(--color-text); text-decoration: underline; }
 
     .user-form__state { padding: var(--space-3); background: var(--color-surface); border: 1px solid var(--color-border); }
@@ -309,6 +463,31 @@ export class UserFormPage {
 
   protected readonly togglingStatus = signal(false);
   protected readonly statusError = signal<string | null>(null);
+
+  // ---- #254 account recovery ----------------------------------------------------------------------------------
+  private readonly viewerUserId = signal<number | null>(null);
+  protected readonly targetGrantsAll = signal(false);
+  protected readonly lockedOutUntil = signal<string | null>(null);
+  protected readonly twoFactorEnabled = signal(false);
+  protected readonly resettingPassword = signal(false);
+  protected readonly temporaryPassword = signal('');
+  protected readonly temporaryPasswordError = signal<string | null>(null);
+  protected readonly showTemporaryPassword = signal(false);
+  protected readonly confirmingTwoFactorReset = signal(false);
+  protected readonly recoveryBusy = signal<'password' | 'unlock' | 'twoFactor' | null>(null);
+  protected readonly recoveryMessage = signal('');
+  protected readonly recoveryError = signal<string | null>(null);
+  protected readonly lockedOutUntilText = computed(() => colomboTime(this.lockedOutUntil()));
+
+  /** A Super Admin, on someone else's page, for an account that is neither protected nor locked for them. */
+  protected readonly canRecover = computed(
+    () =>
+      this.viewerGrantsAll()
+      && this.userId() !== null
+      && this.userId() !== this.viewerUserId()
+      && !this.isProtectedAccount()
+      && !this.lockedForViewer(),
+  );
 
   private readonly viewerGrantsAll = signal(false);
   private readonly roles = signal<readonly RoleSummary[]>([]);
@@ -372,6 +551,7 @@ export class UserFormPage {
         }
 
         this.viewerGrantsAll.set(result.session.grantsAllPermissions);
+        this.viewerUserId.set(result.session.userId);
         this.viewerPermissions.set(new Set(result.session.permissions));
         this.roles.set(result.roles);
 
@@ -523,6 +703,151 @@ export class UserFormPage {
     this.isProtectedAccount.set(user.isProtected);
     this.lockedForViewer.set(user.lockedForViewer);
     this.selectedRoleIds.set(new Set(user.roles.map((role) => role.id)));
+    this.targetGrantsAll.set(user.grantsAllPermissions);
+    this.lockedOutUntil.set(user.lockedOutUntilUtc ?? null);
+    this.twoFactorEnabled.set(user.twoFactorEnabled ?? false);
+  }
+
+  protected openPasswordReset(): void {
+    this.resettingPassword.set(true);
+    this.showTemporaryPassword.set(false);
+    this.temporaryPassword.set('');
+    this.temporaryPasswordError.set(null);
+    this.recoveryError.set(null);
+    this.focusAfterRender('#temporary-password');
+  }
+
+  protected cancelPasswordReset(): void {
+    this.resettingPassword.set(false);
+    this.temporaryPassword.set('');
+    this.temporaryPasswordError.set(null);
+    this.focusAfterRender('[data-testid="reset-password"]');
+  }
+
+  /**
+   * Sets the temporary password. The box is emptied whatever happens next, so the password does not sit in the page
+   * after it has been used.
+   */
+  protected resetPassword(): void {
+    const userId = this.userId();
+    const password = this.temporaryPassword();
+    if (userId === null || this.recoveryBusy()) {
+      return;
+    }
+
+    if (!password) {
+      this.temporaryPasswordError.set('Type a temporary password.');
+      this.focusAfterRender('#temporary-password');
+      return;
+    }
+
+    this.recoveryBusy.set('password');
+    this.recoveryError.set(null);
+    this.temporaryPasswordError.set(null);
+
+    this.api.resetPassword(userId, password).subscribe({
+      next: () => {
+        this.recoveryBusy.set(null);
+        this.resettingPassword.set(false);
+        this.temporaryPassword.set('');
+        this.lockedOutUntil.set(null);
+        this.announceRecovery(
+          `Temporary password set for ${this.email()}. They must choose a new one when they sign in; their open sessions have ended.`,
+          '[data-testid="reset-password"]',
+        );
+      },
+      error: (error: unknown) => {
+        this.recoveryBusy.set(null);
+        const failure = toStaffRecoveryFailure(error);
+        const fieldMessage = failure.fieldErrors?.['temporaryPassword']?.join(' ');
+        if (fieldMessage) {
+          this.temporaryPasswordError.set(fieldMessage);
+          this.focusAfterRender('#temporary-password');
+        } else {
+          this.recoveryError.set(failure.message);
+        }
+      },
+    });
+  }
+
+  protected unlock(): void {
+    const userId = this.userId();
+    if (userId === null || this.recoveryBusy()) {
+      return;
+    }
+
+    this.recoveryBusy.set('unlock');
+    this.recoveryError.set(null);
+
+    this.api.unlock(userId).subscribe({
+      next: (result) => {
+        this.recoveryBusy.set(null);
+        this.lockedOutUntil.set(null);
+        this.announceRecovery(
+          result.changed
+            ? `${this.email()} is unlocked and can sign in again.`
+            : `${this.email()} was not locked any more.`,
+          null,
+        );
+      },
+      error: (error: unknown) => {
+        this.recoveryBusy.set(null);
+        this.recoveryError.set(toStaffRecoveryFailure(error).message);
+      },
+    });
+  }
+
+  protected askTwoFactorReset(): void {
+    this.confirmingTwoFactorReset.set(true);
+    this.recoveryError.set(null);
+    this.focusAfterRender('[data-testid="reset-two-factor-yes"]');
+  }
+
+  protected cancelTwoFactorReset(): void {
+    this.confirmingTwoFactorReset.set(false);
+    this.focusAfterRender('[data-testid="reset-two-factor"]');
+  }
+
+  protected resetTwoFactor(): void {
+    const userId = this.userId();
+    if (userId === null || this.recoveryBusy()) {
+      return;
+    }
+
+    this.recoveryBusy.set('twoFactor');
+    this.recoveryError.set(null);
+
+    this.api.resetTwoFactor(userId).subscribe({
+      next: () => {
+        this.recoveryBusy.set(null);
+        this.confirmingTwoFactorReset.set(false);
+        this.twoFactorEnabled.set(false);
+        this.announceRecovery(
+          `Two-factor authentication is reset for ${this.email()}. Their open sessions have ended.`,
+          null,
+        );
+      },
+      error: (error: unknown) => {
+        this.recoveryBusy.set(null);
+        this.recoveryError.set(toStaffRecoveryFailure(error).message);
+      },
+    });
+  }
+
+  /**
+   * Says what happened in the section's status line and puts focus somewhere that still exists: the control named,
+   * or the status line itself when the control that was pressed has gone (Unlock, the Yes button).
+   */
+  private announceRecovery(message: string, focusSelector: string | null): void {
+    this.recoveryMessage.set(message);
+    this.focusAfterRender(focusSelector ?? '[data-testid="recovery-status"]');
+  }
+
+  private focusAfterRender(selector: string): void {
+    afterNextRender(
+      () => this.document.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true }),
+      { injector: this.injector },
+    );
   }
 
   private loadRolePermissions(roles: readonly RoleSummary[]): void {

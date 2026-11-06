@@ -6,6 +6,11 @@ namespace SpencerDenim.Application.Admin.Users.Contracts;
 /// hand, and so the frontend can disable actions the *viewer* (not necessarily this user) could not perform.
 /// <paramref name="LockedForViewer"/> is as on <see cref="StaffUserSummaryDto"/>.
 /// </summary>
+/// <param name="LockedOutUntilUtc">
+/// #254: when the account's lockout (five wrong passwords) ends, or <see langword="null"/> when it is not locked now.
+/// A time and nothing else: never the failed-attempt count (doc 08 DB24).
+/// </param>
+/// <param name="TwoFactorEnabled">#254: whether an authenticator is set up — never the key or the codes.</param>
 public sealed record StaffUserDetailDto(
     int Id,
     string Email,
@@ -19,4 +24,6 @@ public sealed record StaffUserDetailDto(
     IReadOnlyList<RoleRefDto> Roles,
     IReadOnlyList<string> EffectivePermissions,
     bool IsProtected,
-    bool LockedForViewer = false);
+    bool LockedForViewer = false,
+    DateTimeOffset? LockedOutUntilUtc = null,
+    bool TwoFactorEnabled = false);

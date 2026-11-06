@@ -79,6 +79,7 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'EmailChanged',
   'AdminPasswordReset',
   'TwoFactorReset',
+  'StaffUnlocked',
   'RoleAssigned',
   'RoleUnassigned',
   'BreakGlass',

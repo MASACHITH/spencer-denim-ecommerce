@@ -136,6 +136,7 @@ public static class DependencyInjection
         services.AddScoped<ICommandHandler<CreateStaffUserCommand, CreateStaffUserResult>, CreateStaffUserCommandHandler>();
         services.AddScoped<ICommandHandler<AssignUserRolesCommand, AssignUserRolesResult>, AssignUserRolesCommandHandler>();
         services.AddScoped<ICommandHandler<SetStaffUserActiveCommand, SetStaffUserActiveResult>, SetStaffUserActiveCommandHandler>();
+        services.AddScoped<ICommandHandler<RecoverStaffAccountCommand, RecoverStaffAccountResult>, RecoverStaffAccountCommandHandler>();
         services.AddScoped<
             ICommandHandler<UpdateStaffUserProfileCommand, UpdateStaffUserProfileResult>,
             UpdateStaffUserProfileCommandHandler>();

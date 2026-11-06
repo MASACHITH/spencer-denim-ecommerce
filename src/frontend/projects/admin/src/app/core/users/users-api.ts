@@ -8,6 +8,7 @@ import {
   PagedResult,
   RoleDetail,
   RoleSummary,
+  StaffAccountRecoveryResponse,
   StaffUserDetail,
   StaffUserListFilters,
   StaffUserSummary,
@@ -81,6 +82,36 @@ export class UsersApi {
     return this.setActive(id, 'reactivate');
   }
 
+  /**
+   * #254, Super Admin only: a temporary password the member must replace at their next sign-in. Typed by the Super
+   * Admin and handed over in person or by phone; the member's sessions end.
+   */
+  resetPassword(id: number, temporaryPassword: string): Observable<StaffAccountRecoveryResponse> {
+    return this.recover(id, 'reset-password', { temporaryPassword });
+  }
+
+  /** #254: clear a lockout. `changed` is false when the account was not locked. */
+  unlock(id: number): Observable<StaffAccountRecoveryResponse> {
+    return this.recover(id, 'unlock', null);
+  }
+
+  /** #254: remove a lost authenticator and its recovery codes; the member's sessions end. */
+  resetTwoFactor(id: number): Observable<StaffAccountRecoveryResponse> {
+    return this.recover(id, 'reset-two-factor', null);
+  }
+
+  private recover(
+    id: number,
+    action: 'reset-password' | 'unlock' | 'reset-two-factor',
+    body: object | null,
+  ): Observable<StaffAccountRecoveryResponse> {
+    return this.withAntiforgeryToken((token) =>
+      this.http.post<StaffAccountRecoveryResponse>(`${UsersApi.usersUrl}/${id}/${action}`, body, {
+        headers: { 'X-XSRF-TOKEN': token },
+      }),
+    );
+  }
+
   private setActive(id: number, action: 'deactivate' | 'reactivate'): Observable<unknown> {
     return this.withAntiforgeryToken((token) =>
       this.http.post(`${UsersApi.usersUrl}/${id}/${action}`, null, { headers: { 'X-XSRF-TOKEN': token } }),
@@ -149,6 +180,22 @@ const FORBIDDEN_MESSAGES: Record<string, string> = {
   NotSubsetOfActorPermissions: 'That action grants or affects permissions you do not hold yourself.',
   EmailChangeRequiresGrantsAll: "Only a Super Admin can change a staff user's email address.",
 };
+
+/**
+ * #254: the recovery routes' refusals carry their own sentence ("Only a Super Admin can…", "This account is
+ * protected…"), which is more exact than the role-edit wording `FORBIDDEN_MESSAGES` keeps for 403s — so the server's
+ * `detail` wins for a 403 or a 409 here, and everything else is mapped as for any staff action.
+ */
+export function toStaffRecoveryFailure(error: unknown): StaffUserActionFailure {
+  const failure = toStaffUserActionFailure(error);
+
+  if (error instanceof HttpErrorResponse && (error.status === 403 || error.status === 409)) {
+    const detail = (error.error as ProblemDetailsBody | null)?.detail;
+    return detail ? { ...failure, message: detail } : failure;
+  }
+
+  return failure;
+}
 
 export function toStaffUserActionFailure(error: unknown): StaffUserActionFailure {
   if (!(error instanceof HttpErrorResponse)) {

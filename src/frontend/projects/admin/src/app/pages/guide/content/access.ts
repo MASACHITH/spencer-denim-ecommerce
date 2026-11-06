@@ -3,7 +3,7 @@ import { GuideSection } from '../guide.model';
 /**
  * Access and security: signing in, two-factor authentication, staff users, roles and permissions. Read from
  * the identity code, the admin screens and the seeded role definitions. Where the project's design documents
- * promise something the code does not do (role editing, password resets, break-glass recovery), this
+ * promise something the code does not do (role editing, break-glass recovery), this
  * describes the code.
  */
 export const ACCESS_SECTIONS: readonly GuideSection[] = [
@@ -46,10 +46,10 @@ export const ACCESS_SECTIONS: readonly GuideSection[] = [
       {
         kind: 'list',
         items: [
-          '**5 wrong passwords or wrong codes in a row lock the account for 15 minutes.** You see "This account is temporarily locked after repeated failed sign-in attempts. Try again later." It applies to everyone, including the only Super Admin, and it always ends by itself. Nothing in the admin unlocks an account earlier.',
+          '**5 wrong passwords or wrong codes in a row lock the account for 15 minutes.** You see "This account is temporarily locked after repeated failed sign-in attempts. Try again later." It applies to everyone, including the only Super Admin, and it always ends by itself. A Super Admin can unlock someone else earlier (see [Staff users](#staff-users)).',
           'A wrong email, a deactivated account and a wrong password all show the same message, "Invalid email or password.", so it never reveals which emails belong to staff.',
-          '**There is no "forgot password" link for staff and no screen where another user can reset your password.** Ask your developer or technical owner for help.',
-          'A lost phone with two-factor authentication: sign in with one of your saved **recovery codes**. If you have none left, ask your developer. Nobody can reset two-factor authentication from the admin.',
+          '**There is no "forgot password" link for staff.** Ask a Super Admin to reset your password: they give you a temporary one in person or by phone, and you choose your own when you sign in. If you are the only Super Admin, ask your developer.',
+          'A lost phone with two-factor authentication: sign in with one of your saved **recovery codes**. If you have none left, ask a Super Admin to reset your two-factor authentication, then set it up again on your new phone. If you are the only Super Admin, ask your developer.',
         ],
       },
       { kind: 'heading', text: 'How long you stay signed in' },
@@ -161,7 +161,18 @@ export const ACCESS_SECTIONS: readonly GuideSection[] = [
           '**Roles:** tick one box per role and press **Save roles**. It replaces the person\'s whole set of roles, and signs them out at once so the change applies. A role you may not give is shown greyed out. A user\'s permissions are the combination of all their roles.',
           '**Account status:** **Deactivate** stops them signing in, within about a minute. **Reactivate** brings them back. It happens at once with no confirmation. Staff accounts are never deleted, only deactivated. A **protected** account (one your developer has named in the server\'s settings, such as the support Super Admin) shows "Protected" instead of a Deactivate button, can never be deactivated by anyone, and its email address cannot be changed either. An account **managed by the technical owner** (for example the shop owner\'s own Super Admin login, set up that way by your developer) shows "Managed by the technical owner" instead of Deactivate or Reactivate: only the technical owner\'s protected account can switch it off or on or change its email address, and nobody else can, other Super Admins and the person themselves included. Their name and roles are still changed in the usual way. Only your developer can protect or guard an account.',
           'After saving a profile or roles the page shows no "saved" message. If nothing red appeared, it worked.',
-          'There is no button to reset someone\'s password, unlock them, or reset their two-factor authentication.',
+        ],
+      },
+      { kind: 'heading', text: 'Get someone back into their account (Super Admin)' },
+      {
+        kind: 'steps',
+        title: 'Account recovery',
+        items: [
+          'Open the person in **Staff users**. A Super Admin sees **Account recovery** under Account status. It is not shown on your own page (use Security in your own menu), for a protected account (its owner recovers it with your developer\'s break-glass tool), or for an account managed by the technical owner unless you are the technical owner.',
+          '**Forgotten password:** press **Reset password…**, type a temporary password that meets the password rules, and press **Set temporary password**. Tell it to them in person or by phone, never by email or chat. Every session they have open ends at once; when they sign in with it they must choose a new password straight away.',
+          '**Locked out** (five wrong passwords or codes): the section shows "Locked after too many wrong passwords, until (time)". Press **Unlock** and they can sign in again at once. A reset password also clears a lockout.',
+          '**Lost phone** (two-factor authentication): press **Reset two-factor…**, check the address in the question, then **Yes, reset two-factor**. Their authenticator app and recovery codes stop working and their sessions end. A Super Admin must set it up again before they can do anything else; anyone else can sign in with their password alone until they set it up again.',
+          'Each of these is recorded in the audit log against your name (Admin password reset, Staff unlocked, Two-factor reset). The temporary password is never recorded anywhere.',
         ],
       },
       { kind: 'heading', text: 'The safety rules' },
@@ -178,6 +189,7 @@ export const ACCESS_SECTIONS: readonly GuideSection[] = [
           ['Only a Super Admin can change a staff email address.', '"Only a Super Admin can change a staff user\'s email address."'],
           ['There must always be at least one active Super Admin.', '"This would leave no active Super Admin. Assign the Super Admin role to another active user first."'],
           ['You need Users Manage to make changes.', '"You are not allowed to do that."'],
+          ['Only a Super Admin can reset a password, unlock an account or reset two-factor authentication, and never their own or a protected account.', '"Only a Super Admin can reset a staff password, unlock an account or reset two-factor authentication." or "This account is protected. Its owner recovers it with the break-glass tool, not from the admin."'],
         ],
       },
       {
