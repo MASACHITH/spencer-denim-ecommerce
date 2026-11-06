@@ -143,7 +143,7 @@ public sealed class PlaceOrderCommandHandler(
             return PlaceOrderResult.Invalid([DestinationRules.NotServed(destinationCountry)]);
         }
 
-        var choice = await ResolvePaymentProviderAsync(command.PaymentMethodCode!, cancellationToken);
+        var choice = await ResolvePaymentProviderAsync(command.PaymentMethodCode!, destinationCountry, cancellationToken);
         if (choice.NoneEnabled)
         {
             // Owner decision 2026-10-21: with bank transfer switched off, PayPal is the only method, and until
@@ -463,6 +463,7 @@ public sealed class PlaceOrderCommandHandler(
     /// </remarks>
     private async Task<PaymentChoice> ResolvePaymentProviderAsync(
         string code,
+        CheckoutCountry destination,
         CancellationToken cancellationToken)
     {
         var enabled = await reader.EnabledPaymentMethodsAsync(cancellationToken);
@@ -479,6 +480,20 @@ public sealed class PlaceOrderCommandHandler(
         // against a compile-time constant.
         var match = enabled.FirstOrDefault(
             method => string.Equals(method.Code, trimmed, StringComparison.Ordinal));
+
+        // #253: a method for Sri Lankan deliveries only, named for an overseas order. The page never offers it, so
+        // this is a stale form or a crafted request; refused by name rather than as "not available", and before the
+        // none-for-this-destination check so the shopper is told which method and why.
+        if (match is { DomesticDeliveriesOnly: true } && !destination.IsDomestic)
+        {
+            return new PaymentChoice(null, null, DestinationRules.PaymentMethodNotForDestination(match, destination));
+        }
+
+        if (DestinationRules.PaymentMethodsFor(enabled, destination).Count == 0)
+        {
+            // Enabled methods exist, but none for this destination: the shop's state, exactly as for none at all.
+            return new PaymentChoice(null, null, null, NoneEnabled: true);
+        }
 
         if (match is null)
         {

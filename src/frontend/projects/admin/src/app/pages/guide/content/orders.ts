@@ -193,7 +193,7 @@ export const ORDER_SECTIONS: readonly GuideSection[] = [
       {
         kind: 'callout',
         tone: 'warning',
-        text: 'A new shop starts with **both** payment methods switched **off**, and the owner has decided that PayPal is the only method offered for now. With none on, checkout refuses every order ("No payment method is available at the moment..."). A Super Admin switches them on in [Settings](#settings), **Payment methods**. Check this before you open the shop.',
+        text: 'A new shop starts with **both** payment methods switched **off**. With none on, checkout refuses every order ("No payment method is available at the moment..."). A Super Admin switches them on in [Settings](#settings), **Payment methods**. Check this before you open the shop. **Bank transfer is offered only for deliveries within Sri Lanka** (owner decision 24 October 2026): a customer sending an order abroad sees PayPal only, and with PayPal off they cannot order from abroad at all ("No payment method is available for delivery to (country)...").',
       },
       {
         kind: 'table',

@@ -208,6 +208,14 @@ describe('overseas address rules (mirror DestinationRules, owner decision 2026-1
     expect(checkoutBlockerMessage('CountryNotServed', 'Antarctica')).toContain('Antarctica');
   });
 
+  it('names an overseas destination with no payment method, and keeps the Sri Lankan wording (#253)', () => {
+    expect(checkoutBlockerMessage('NoPaymentMethod', 'United Kingdom', true)).toBe(
+      'No payment method is available for delivery to United Kingdom at the moment, so this order cannot be placed.',
+    );
+    expect(checkoutBlockerMessage('NoPaymentMethod', 'Sri Lanka', false)).toContain('Please try again later');
+    expect(checkoutBlockerMessage('NoPaymentMethod')).toContain('Please try again later');
+  });
+
   it('requires a postcode only where the country always uses one', () => {
     expect(overseasAddressErrors(UK, '', '', '+44 20 7946 0958').get('postalCode')).toBe(
       'Enter the postcode for United Kingdom.',

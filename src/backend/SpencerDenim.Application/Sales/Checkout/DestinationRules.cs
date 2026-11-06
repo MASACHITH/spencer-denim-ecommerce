@@ -99,6 +99,38 @@ public static class DestinationRules
     }
 
     /// <summary>
+    /// The payment methods a destination may use (#253, owner decision 2026-10-24): every enabled method for a
+    /// Sri Lankan delivery, and only those not limited to Sri Lankan deliveries for an overseas one. A missing
+    /// country is a Sri Lankan order, as everywhere else in this class. The checkout page and the placement
+    /// handler both filter through here, so a method the page hides is one placement refuses.
+    /// </summary>
+    public static IReadOnlyList<CheckoutPaymentMethod> PaymentMethodsFor(
+        IReadOnlyList<CheckoutPaymentMethod> enabled,
+        CheckoutCountry? country)
+    {
+        ArgumentNullException.ThrowIfNull(enabled);
+
+        return country is { IsDomestic: false }
+            ? enabled.Where(method => !method.DomesticDeliveriesOnly).ToList().AsReadOnly()
+            : enabled;
+    }
+
+    /// <summary>
+    /// The refusal for an overseas order that names a method offered for Sri Lankan deliveries only — by the
+    /// method's own display name, so the shopper reads which one and why, and checkout names no gateway (PAY-03).
+    /// </summary>
+    public static ValidationError PaymentMethodNotForDestination(CheckoutPaymentMethod method, CheckoutCountry country)
+    {
+        ArgumentNullException.ThrowIfNull(method);
+        ArgumentNullException.ThrowIfNull(country);
+
+        return new ValidationError(
+            "paymentMethodCode",
+            $"{method.DisplayName} is only available for deliveries within Sri Lanka. "
+            + $"Choose another way to pay for delivery to {country.Name}.");
+    }
+
+    /// <summary>
     /// The overseas-only address checks. Adds nothing for a Sri Lankan address: its rules are unchanged.
     /// </summary>
     /// <param name="errors">Where to add the problems.</param>

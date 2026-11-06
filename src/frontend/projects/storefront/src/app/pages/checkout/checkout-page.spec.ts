@@ -2006,6 +2006,64 @@ describe('CheckoutPage (CHK-01..03)', () => {
       expect(element.querySelector('#co-district')).toBeNull();
     });
 
+    /**
+     * #253, owner decision 2026-10-24: bank transfer is for Sri Lankan deliveries only. A shopper who picked it and
+     * then changed the country to an overseas one must not be left with a choice the server would refuse — it is
+     * cleared, and PayPal, now the only method, is chosen for them as any single method is.
+     */
+    it('clears a bank-transfer choice when the country changes to one it is not offered for', async () => {
+      await openWith(session({ paymentMethods: [BANK, PAYPAL] }));
+      await choosePayment('BankTransfer');
+
+      const select = element.querySelector<HTMLSelectElement>('#co-country')!;
+      select.value = 'GB';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle();
+      checkoutRequest().flush(overseas());
+      await settle();
+
+      expect(element.querySelector('input[name="paymentMethodCode"][value="BankTransfer"]')).toBeNull();
+      expect(
+        element.querySelector<HTMLInputElement>('input[name="paymentMethodCode"][value="PayPal"]')?.checked,
+      ).toBe(true);
+
+      await fillOverseasForm();
+      placeButton().click();
+      await settle();
+
+      const request = http.expectOne(
+        (candidate) => candidate.url === `${CheckoutApi.url}/orders` && candidate.method === 'POST',
+      );
+      expect((request.request.body as { paymentMethodCode: string }).paymentMethodCode).toBe('PayPal');
+      request.flush(confirmation());
+      await settle();
+      drainCartRead();
+    });
+
+    it('keeps a choice the new country still offers', async () => {
+      await openWith(session({ paymentMethods: [BANK, PAYPAL] }));
+      await choosePayment('PayPal');
+
+      const select = element.querySelector<HTMLSelectElement>('#co-country')!;
+      select.value = 'GB';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle();
+      checkoutRequest().flush(overseas({ paymentMethods: [PAYPAL] }));
+      await settle();
+
+      expect(
+        element.querySelector<HTMLInputElement>('input[name="paymentMethodCode"][value="PayPal"]')?.checked,
+      ).toBe(true);
+    });
+
+    it('names the destination when no payment method is offered for it', async () => {
+      await openOverseas('GB', overseas({ paymentMethods: [], blockers: ['NoPaymentMethod'] }));
+
+      expect(text()).toContain('No payment method is available for delivery to United Kingdom at the moment');
+      expect(text()).not.toContain('Please try again later');
+      expect(placeBlocked()).toBe(true);
+    });
+
     it('falls back to Sri Lanka once when the server does not know the country', async () => {
       await openOverseas('ZZ', overseas({ selectedCountryCode: null }));
 

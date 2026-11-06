@@ -123,4 +123,18 @@ public interface IPaymentProvider
     /// </para>
     /// </summary>
     ValueTask<bool> IsAvailableAsync(CancellationToken cancellationToken) => ValueTask.FromResult(true);
+
+    /// <summary>
+    /// Whether this way of paying is offered <b>only for deliveries within Sri Lanka</b> — the fourth question
+    /// checkout puts, added by #253 (owner decision 2026-10-24: bank transfer is for Sri Lankan deliveries,
+    /// overseas orders pay by PayPal).
+    /// <para>
+    /// A fact about the method rather than a setting, so it sits beside <see cref="Code"/>: a transfer into a
+    /// Sri Lankan bank account is a domestic method, and the shop's on/off switch now means "offered to
+    /// Sri Lankan customers". Checkout lists such a method only when the destination is Sri Lanka and refuses an
+    /// overseas order that names it, without naming the provider (PAY-03). <b>The default is false</b>: a gateway
+    /// that takes cards from anywhere overrides nothing.
+    /// </para>
+    /// </summary>
+    bool DomesticDeliveriesOnly => false;
 }

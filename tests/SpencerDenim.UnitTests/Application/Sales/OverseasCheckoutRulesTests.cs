@@ -120,6 +120,59 @@ public sealed class OverseasCheckoutRulesTests
         Assert.Same(promo, CheckoutQuote.ForDestination(promo, isDomestic: false));
     }
 
+    private static readonly CheckoutPaymentMethod SriLankaOnly =
+        new("BankTransfer", "Bank transfer", null, DomesticDeliveriesOnly: true);
+
+    private static readonly CheckoutPaymentMethod Worldwide = new("PayPal", "PayPal", null);
+
+    /// <summary>#253: every enabled method for Sri Lanka, including a domestic-only one, in the order given.</summary>
+    [Fact]
+    public void A_Sri_Lankan_destination_is_offered_every_enabled_method()
+    {
+        Assert.Equal([SriLankaOnly, Worldwide], DestinationRules.PaymentMethodsFor([SriLankaOnly, Worldwide], DestinationRules.SriLanka));
+    }
+
+    /// <summary>A request that names no country is a Sri Lankan one here as everywhere else.</summary>
+    [Fact]
+    public void No_country_is_a_Sri_Lankan_destination_for_payment_too()
+    {
+        Assert.Equal([SriLankaOnly, Worldwide], DestinationRules.PaymentMethodsFor([SriLankaOnly, Worldwide], null));
+    }
+
+    [Fact]
+    public void An_overseas_destination_loses_the_Sri_Lanka_only_methods()
+    {
+        Assert.Equal([Worldwide], DestinationRules.PaymentMethodsFor([SriLankaOnly, Worldwide], Gb));
+    }
+
+    /// <summary>
+    /// With only a domestic method switched on an overseas shopper has no way to pay, and the page says so with the
+    /// blocker it already has rather than offering a method placement would refuse.
+    /// </summary>
+    [Fact]
+    public void An_overseas_destination_with_only_a_Sri_Lanka_only_method_is_blocked_for_payment()
+    {
+        var offered = DestinationRules.PaymentMethodsFor([SriLankaOnly], Gb);
+        var option = new CheckoutDeliveryMethod(9, DeliveryMethod.InternationalCode, "International delivery", null, true, Gb.OverseasRateFor(null));
+
+        Assert.Empty(offered);
+        Assert.Contains(CheckoutBlocker.NoPaymentMethod, GetCheckoutQueryHandler.Blockers([], null, [option], offered, Gb));
+        Assert.DoesNotContain(
+            CheckoutBlocker.NoPaymentMethod,
+            GetCheckoutQueryHandler.Blockers([], null, [], DestinationRules.PaymentMethodsFor([SriLankaOnly], DestinationRules.SriLanka), DestinationRules.SriLanka));
+    }
+
+    [Fact]
+    public void The_refusal_names_the_method_and_the_country()
+    {
+        var error = DestinationRules.PaymentMethodNotForDestination(SriLankaOnly, Gb);
+
+        Assert.Equal("paymentMethodCode", error.Field);
+        Assert.Equal(
+            "Bank transfer is only available for deliveries within Sri Lanka. Choose another way to pay for delivery to United Kingdom.",
+            error.Message);
+    }
+
     [Fact]
     public void An_unserved_overseas_country_is_named_as_such_not_as_no_delivery_method()
     {

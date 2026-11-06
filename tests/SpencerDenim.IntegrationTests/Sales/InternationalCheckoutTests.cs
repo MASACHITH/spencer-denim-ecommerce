@@ -9,6 +9,7 @@ using SpencerDenim.Domain.Reference;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.IntegrationTests.Infrastructure;
+using SpencerDenim.IntegrationTests.Sales.PayPal;
 
 namespace SpencerDenim.IntegrationTests.Sales;
 
@@ -17,13 +18,18 @@ namespace SpencerDenim.IntegrationTests.Sales;
 /// The Sri Lankan path must be exactly what it was; an overseas country gets one option — International
 /// delivery at its region's fee or its own — no district, no store pickup, and its own address rules; and a
 /// country the shop does not deliver to is refused with nothing written.
+/// <para>
+/// <b>Overseas orders pay by PayPal (#253, owner decision 2026-10-24)</b>: bank transfer is for Sri Lankan deliveries
+/// only. So the class builds on <see cref="PayPalTestBase"/>, a test that expects an overseas order to be placed
+/// switches PayPal on first, and <see cref="OverseasBody"/> names PayPal.
+/// </para>
 /// </summary>
 /// <remarks>
 /// <b>Shared database.</b> Every change this class makes to a country, a region or the International method is
 /// recorded first and put back in <see cref="DisposeAsync"/>, because every suite in the assembly reads the same
 /// rows.
 /// </remarks>
-public sealed class InternationalCheckoutTests(SqlServerDatabaseFixture sqlServer) : CheckoutTestBase(sqlServer)
+public sealed class InternationalCheckoutTests(SqlServerDatabaseFixture sqlServer) : PayPalTestBase(sqlServer)
 {
     private readonly List<Func<AppDbContext, Task>> _restore = [];
 
@@ -108,10 +114,11 @@ public sealed class InternationalCheckoutTests(SqlServerDatabaseFixture sqlServe
         string? postalCode,
         string? region)
     {
+        await ConfigurePayPalAsync();
         var fee = await RegionFeeAsync(regionCode);
         var variantId = await CheckoutVariantIdAsync();
         await SetStockAsync(variantId, 10);
-        var (_, _, api) = await NewBagAsync(variantId);
+        var (_, _, api) = await NewPayPalBagAsync(variantId);
         var international = await DeliveryMethodIdAsync(DeliveryMethod.InternationalCode);
 
         var (_, session) = await api.GetAsync(null, international, Token, countryCode: countryCode);
@@ -152,11 +159,12 @@ public sealed class InternationalCheckoutTests(SqlServerDatabaseFixture sqlServe
     [Fact]
     public async Task A_country_fee_override_replaces_the_regions_fee_at_checkout_and_on_the_order()
     {
+        await ConfigurePayPalAsync();
         await OverrideCountryAsync("FR", fee: 4_321m, daysMin: 2, daysMax: 4);
 
         var variantId = await CheckoutVariantIdAsync();
         await SetStockAsync(variantId, 10);
-        var (_, _, api) = await NewBagAsync(variantId);
+        var (_, _, api) = await NewPayPalBagAsync(variantId);
         var international = await DeliveryMethodIdAsync(DeliveryMethod.InternationalCode);
 
         var (_, session) = await api.GetAsync(null, international, Token, countryCode: "FR");
@@ -356,9 +364,10 @@ public sealed class InternationalCheckoutTests(SqlServerDatabaseFixture sqlServe
     [Fact]
     public async Task A_district_sent_alongside_an_overseas_country_is_ignored_not_smuggled_in()
     {
+        await ConfigurePayPalAsync();
         var variantId = await CheckoutVariantIdAsync();
         await SetStockAsync(variantId, 10);
-        var (_, _, api) = await NewBagAsync(variantId);
+        var (_, _, api) = await NewPayPalBagAsync(variantId);
         var international = await DeliveryMethodIdAsync(DeliveryMethod.InternationalCode);
         var colombo = await DistrictIdAsync("Colombo");
 
@@ -380,7 +389,122 @@ public sealed class InternationalCheckoutTests(SqlServerDatabaseFixture sqlServe
         Assert.Null(order.Delivery.DistrictName);
     }
 
+    /// <summary>
+    /// #253, owner decision 2026-10-24: bank transfer is offered for Sri Lankan deliveries only, PayPal for every
+    /// country — and the list follows the country on the same bag, which is what the page does when the shopper
+    /// changes it.
+    /// </summary>
+    [Fact]
+    public async Task Bank_transfer_is_offered_for_Sri_Lanka_only_and_PayPal_for_every_country()
+    {
+        await ConfigurePayPalAsync();
+        var variantId = await CheckoutVariantIdAsync();
+        await SetStockAsync(variantId, 10);
+        var (_, _, api) = await NewPayPalBagAsync(variantId);
+        var international = await DeliveryMethodIdAsync(DeliveryMethod.InternationalCode);
+
+        var (_, sriLanka) = await api.GetAsync(
+            await DistrictIdAsync("Colombo"),
+            await DeliveryMethodIdAsync(DeliveryMethod.StandardCode),
+            Token);
+        var (_, britain) = await api.GetAsync(null, international, Token, countryCode: "GB");
+        var (_, backHome) = await api.GetAsync(null, null, Token, countryCode: "LK");
+
+        Assert.Contains(sriLanka!.PaymentMethods, method => method.Code == PaymentProviderCodes.BankTransfer);
+        Assert.Contains(sriLanka.PaymentMethods, method => method.Code == PaymentProviderCodes.PayPal);
+
+        Assert.DoesNotContain(britain!.PaymentMethods, method => method.Code == PaymentProviderCodes.BankTransfer);
+        Assert.Contains(britain.PaymentMethods, method => method.Code == PaymentProviderCodes.PayPal);
+        Assert.DoesNotContain(CheckoutBlocker.NoPaymentMethod, britain.Blockers);
+
+        Assert.Contains(backHome!.PaymentMethods, method => method.Code == PaymentProviderCodes.BankTransfer);
+    }
+
+    /// <summary>
+    /// The server half: a crafted (or stale) overseas placement naming bank transfer is refused by name, before
+    /// anything is reserved or written — hiding the radio is not the rule, this is.
+    /// </summary>
+    [Fact]
+    public async Task An_overseas_order_paying_by_bank_transfer_is_refused_by_name_with_nothing_written()
+    {
+        await ConfigurePayPalAsync();
+        var variantId = await CheckoutVariantIdAsync();
+        await SetStockAsync(variantId, 10);
+        var (_, cartId, api) = await NewPayPalBagAsync(variantId);
+        var international = await DeliveryMethodIdAsync(DeliveryMethod.InternationalCode);
+        var (_, session) = await api.GetAsync(null, international, Token, countryCode: "GB");
+
+        var body = OverseasBody(session!, international, "GB", "SW1A 2AA", null);
+        body["paymentMethodCode"] = PaymentProviderCodes.BankTransfer;
+
+        var before = await OrderCountAsync();
+        var reserved = await ReservedAsync(variantId);
+        var (response, _) = await api.PlaceAsync(body, Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("paymentMethodCode", await ErrorFieldsAsync(response));
+        Assert.Contains(
+            "is only available for deliveries within Sri Lanka",
+            await response.Content.ReadAsStringAsync(Token),
+            StringComparison.Ordinal);
+        Assert.Equal(before, await OrderCountAsync());
+        Assert.Equal(reserved, await ReservedAsync(variantId));
+        Assert.Equal(1, await CartItemCountAsync(cartId));
+    }
+
+    /// <summary>
+    /// With PayPal switched off, bank transfer is the shop's only method: a Sri Lankan checkout is unaffected and an
+    /// overseas one says there is no way to pay, rather than offering a method placement would refuse.
+    /// </summary>
+    [Fact]
+    public async Task With_only_bank_transfer_switched_on_an_overseas_checkout_has_no_way_to_pay()
+    {
+        await SwitchProviderAsync(false);
+        var variantId = await CheckoutVariantIdAsync();
+        await SetStockAsync(variantId, 10);
+        var (_, _, api) = await NewBagAsync(variantId);
+        var international = await DeliveryMethodIdAsync(DeliveryMethod.InternationalCode);
+
+        var (_, britain) = await api.GetAsync(null, international, Token, countryCode: "GB");
+        var (_, sriLanka) = await api.GetAsync(
+            await DistrictIdAsync("Colombo"),
+            await DeliveryMethodIdAsync(DeliveryMethod.StandardCode),
+            Token);
+
+        Assert.Empty(britain!.PaymentMethods);
+        Assert.Contains(CheckoutBlocker.NoPaymentMethod, britain.Blockers);
+
+        Assert.Contains(sriLanka!.PaymentMethods, method => method.Code == PaymentProviderCodes.BankTransfer);
+        Assert.DoesNotContain(CheckoutBlocker.NoPaymentMethod, sriLanka.Blockers);
+    }
+
     // ------------------------------------------------------------------------------------------- helpers
+
+    /// <summary>
+    /// <see cref="CheckoutTestBase.NewBagAsync"/> through the PayPal host, which is where
+    /// <see cref="PayPalTestBase.ConfigurePayPalAsync"/> makes PayPal available — overseas orders pay by PayPal (#253).
+    /// </summary>
+    private async Task<(Guid Token, int CartId, CheckoutApiClient Api)> NewPayPalBagAsync(int variantId)
+    {
+        var client = NewPayPalClient();
+        var (added, _) = await new CartApiClient(client).AddAsync(variantId, 1, Token);
+        Assert.Equal(HttpStatusCode.OK, added.StatusCode);
+
+        // The bag is this response's own cookie, as in NewBagAsync — not "the newest bag holding the variant", which
+        // another test class running in parallel could own (independent tester, #253).
+        var setCookie = added.Headers.GetValues("Set-Cookie")
+            .Single(value => value.StartsWith("sd_cart=", StringComparison.Ordinal));
+        var token = Guid.ParseExact(setCookie["sd_cart=".Length..].Split(';')[0], "D");
+
+        using var scope = CreateScope();
+        var cartId = await scope.ServiceProvider.GetRequiredService<AppDbContext>().Carts
+            .AsNoTracking()
+            .Where(candidate => candidate.Token == token)
+            .Select(candidate => candidate.Id)
+            .SingleAsync(Token);
+
+        return (token, cartId, new CheckoutApiClient(client));
+    }
 
     private async Task<(OrderConfirmationDto Order, CheckoutApiClient Api)> PlaceSriLankanAsync()
     {
@@ -413,7 +537,7 @@ public sealed class InternationalCheckoutTests(SqlServerDatabaseFixture sqlServe
             ["phone"] = "+44 20 7946 0958",
             ["countryCode"] = countryCode,
             ["deliveryMethodId"] = deliveryMethodId,
-            ["paymentMethodCode"] = PaymentProviderCodes.BankTransfer,
+            ["paymentMethodCode"] = PaymentProviderCodes.PayPal,
             ["expectedGrandTotal"] = expectedGrandTotal ?? session.Totals.GrandTotal ?? 1m,
             ["address"] = new Dictionary<string, object?>(StringComparer.Ordinal)
             {

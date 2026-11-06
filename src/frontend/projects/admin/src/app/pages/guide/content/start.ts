@@ -94,7 +94,7 @@ export const START_SECTIONS: readonly GuideSection[] = [
           '**Logo, Contact and social:** upload the logo; fill WhatsApp, telephone, email, address, opening hours, map and social links. See [Settings](#settings).',
           '**Invoice and fulfilment:** the registered company name and address and the registration numbers, or invoices print without them.',
           '**Email account:** enter the mail server details and press **Send test email**. Until this works, no order email is sent and nothing warns you.',
-          '**Bank transfer:** only if you will switch it on (the owner decided that PayPal alone is offered for now): bank name, account name and account number, typed by you and checked twice.',
+          '**Bank transfer:** only if you will switch it on. It is offered for deliveries within Sri Lanka only; orders going abroad pay by PayPal. Bank name, account name and account number, typed by you and checked twice.',
           '**PayPal:** start in Sandbox with test credentials, webhook ID and the exchange rate; check "Ready"; test; then move to Live with live credentials.',
           '**Payment methods:** switch on the methods you will accept.',
           '**Product page text:** the Delivery text and Returns text. **Reviews:** keep approval on.',

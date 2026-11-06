@@ -22,10 +22,17 @@ const COUNTRY_KEY = 'sd.delivery-country';
 
 const INTERNATIONAL = 9;
 
-async function useStubApi(page: Page): Promise<void> {
+/**
+ * Sends the browser's `/api` calls to the stub. `payPal` switches PayPal on for this page's calls only (the stub's
+ * `x-e2e-paypal` header): since #253 bank transfer is for Sri Lankan deliveries only, so an overseas order needs it.
+ */
+async function useStubApi(page: Page, { payPal = false }: { payPal?: boolean } = {}): Promise<void> {
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
-    const response = await route.fetch({ url: `${apiURL}${url.pathname}${url.search}` });
+    const response = await route.fetch({
+      url: `${apiURL}${url.pathname}${url.search}`,
+      headers: payPal ? { ...route.request().headers(), 'x-e2e-paypal': 'on' } : undefined,
+    });
     await route.fulfill({ response });
   });
 }
@@ -151,8 +158,9 @@ test.describe('the bag estimate', () => {
 });
 
 test.describe('checkout overseas (CHK-01)', () => {
+  // Overseas orders pay by PayPal (#253, owner decision 2026-10-24).
   test.beforeEach(async ({ page }) => {
-    await useStubApi(page);
+    await useStubApi(page, { payPal: true });
   });
 
   test('a UK order: no district, International delivery at the UK fee, postcode required', async ({ page }) => {
@@ -394,6 +402,69 @@ function refusals(body: Record<string, string | number | boolean | null>): Recor
 
 function json(route: Route, status: number, body: unknown): Promise<void> {
   return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+}
+
+/**
+ * #253, owner decision 2026-10-24: bank transfer is offered for Sri Lankan deliveries only, PayPal for every
+ * country, and the page follows the country as the shopper changes it. At a phone and a desktop width.
+ */
+for (const width of [390, 1280] as const) {
+  test.describe(`which payment methods each country gets (#253), at ${width} px`, () => {
+    test.use({ viewport: { width, height: 900 } });
+
+    const bankRadio = (page: Page) => page.locator('input[name="paymentMethodCode"][value="BankTransfer"]');
+    const payPalRadio = (page: Page) => page.locator('input[name="paymentMethodCode"][value="PayPal"]');
+
+    test('Sri Lanka offers both; an overseas country drops bank transfer and keeps PayPal chosen', async ({ page }) => {
+      await useStubApi(page, { payPal: true });
+      await addToBag(page, width === 390 ? 31 : 32);
+
+      const read = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/checkout');
+      await page.goto('/checkout');
+      await read;
+      await hydrated(page);
+
+      await expect(bankRadio(page)).toHaveCount(1);
+      await expect(payPalRadio(page)).toHaveCount(1);
+      await bankRadio(page).check();
+
+      const abroad = page.waitForResponse(
+        (response) => new URL(response.url()).searchParams.get('countryCode') === 'GB',
+      );
+      await page.locator('#co-country').selectOption('GB');
+      await abroad;
+
+      // The bank-transfer choice is gone with its radio, and PayPal — the one method left — is chosen.
+      await expect(bankRadio(page)).toHaveCount(0);
+      await expect(payPalRadio(page)).toBeChecked();
+
+      const home = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === '/api/checkout'
+          && !new URL(response.url()).searchParams.has('countryCode'),
+      );
+      await page.locator('#co-country').selectOption('LK');
+      await home;
+
+      await expect(bankRadio(page)).toHaveCount(1);
+      expect(await horizontalOverflow(page)).toBe(0);
+    });
+
+    test('with only bank transfer switched on, an overseas checkout names the country and cannot be placed', async ({
+      page,
+    }) => {
+      await useStubApi(page);
+      await addToBag(page, width === 390 ? 35 : 36);
+      await openOverseasCheckout(page, 'GB');
+
+      await expect(bankRadio(page)).toHaveCount(0);
+      await expect(
+        page.getByText('No payment method is available for delivery to United Kingdom at the moment').first(),
+      ).toBeVisible();
+      await expect(page.locator('.checkout__place')).toHaveAttribute('aria-disabled', 'true');
+      expect(await horizontalOverflow(page)).toBe(0);
+    });
+  });
 }
 
 test.describe('the account address book abroad (ACC-02)', () => {

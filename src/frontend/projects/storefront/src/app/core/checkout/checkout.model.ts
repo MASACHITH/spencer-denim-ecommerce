@@ -488,6 +488,7 @@ export const EMPTY_CHECKOUT: CheckoutSessionDto = {
 export function checkoutBlockerMessage(
   blocker: CheckoutBlocker,
   countryName: string | null = null,
+  overseas = false,
 ): string {
   switch (blocker) {
     case 'CountryNotServed':
@@ -501,7 +502,11 @@ export function checkoutBlockerMessage(
     case 'NoDeliveryMethod':
       return 'We cannot deliver to that district at the moment. Choose another district.';
     case 'NoPaymentMethod':
-      return 'No payment method is available at the moment, so orders cannot be placed. Please try again later.';
+      // #253: overseas, "none" can mean only that the methods switched on are for Sri Lankan deliveries — waiting
+      // will not change that, so the sentence names the destination instead of asking the shopper to try later.
+      return overseas && countryName
+        ? `No payment method is available for delivery to ${countryName} at the moment, so this order cannot be placed.`
+        : 'No payment method is available at the moment, so orders cannot be placed. Please try again later.';
     default:
       return 'Checkout is not available at the moment.';
   }
