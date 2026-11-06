@@ -413,6 +413,33 @@ test.describe('the bag (CART-01, CART-02)', () => {
       const activeId = await page.evaluate(() => document.activeElement?.id);
       expect(activeId, "NavigationScroll's same-page-link handling should not have run").not.toBe('main');
     });
+
+    /**
+     * #270, the issue's own repro, and the half of it a mouse shopper hits: scrolled down the bag page, open the mini
+     * bag and close it again. Both ends used to scroll the page to the top underneath the drawer — the open when the
+     * bag icon is scrolled into view (Playwright's click does that, as keyboard focus does), and the close for
+     * everyone, because the drawer hands focus back to the bag icon and focusing it scrolled. The cause is the
+     * header's controls sitting inside the document's own `scroll-padding-top`; see the `scroll-margin-top` rule in
+     * the storefront's `styles.css`. Playwright's own click here on purpose: its scroll-into-view is part of the repro.
+     */
+    test('opening and closing the mini bag on a scrolled bag page leaves the page where it was', async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight))
+        .toBeGreaterThan(400);
+      await page.evaluate(() => window.scrollTo(0, 400));
+      await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBe(400);
+
+      const toggle = page.locator('[data-testid="bag-toggle"]');
+      await toggle.click();
+      await expect(page.locator('sd-mini-bag [role="dialog"]')).toBeVisible();
+      expect(await page.evaluate(() => Math.round(window.scrollY)), 'opening the mini bag moved the page').toBe(400);
+
+      await page.keyboard.press('Escape');
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      await expect(toggle).toBeFocused();
+      expect(await page.evaluate(() => Math.round(window.scrollY)), 'closing the mini bag moved the page').toBe(400);
+    });
   });
 
   test.describe('lines the shop can no longer sell', () => {
