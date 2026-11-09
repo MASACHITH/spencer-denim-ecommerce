@@ -82,7 +82,10 @@ internal sealed class CartReader(
                 item.Variant.StockLevel == null ? 0 : item.Variant.StockLevel.Available,
                 // The photograph of the colourway in the bag, not of the product's default colour: a bag
                 // line that showed the wrong colour would contradict the words next to it. Falls back to
-                // the card image, then to nothing, which the storefront draws as a placeholder.
+                // the card image only when that image isn't a different colourway's own photo (#276: the
+                // card image is the first gallery picture in sort order across every colour, so it can
+                // belong to a colourway other than the one in this line — showing it would be worse than
+                // showing nothing), then to nothing, which the storefront draws as a placeholder.
                 item.Variant.Product.Media
                     .Where(media =>
                         media.ProductColourId == item.Variant.ProductColourId
@@ -100,6 +103,10 @@ internal sealed class CartReader(
                     ?? (item.Variant.Product.CardImageAsset != null
                         && item.Variant.Product.CardImageAsset.Status == MediaAssetStatus.Ready
                         && !item.Variant.Product.CardImageAsset.IsDeleted
+                        && item.Variant.Product.Media.Any(media =>
+                            media.MediaAssetId == item.Variant.Product.CardImageAssetId
+                            && media.MediaRole == ProductMediaRole.Gallery
+                            && (media.ProductColourId == null || media.ProductColourId == item.Variant.ProductColourId))
                             ? new MediaRef(
                                 item.Variant.Product.CardImageAsset.StorageKey,
                                 item.Variant.Product.CardImageAsset.PublicId,
@@ -119,6 +126,10 @@ internal sealed class CartReader(
                     ?? (item.Variant.Product.CardImageAsset != null
                         && item.Variant.Product.CardImageAsset.Status == MediaAssetStatus.Ready
                         && !item.Variant.Product.CardImageAsset.IsDeleted
+                        && item.Variant.Product.Media.Any(media =>
+                            media.MediaAssetId == item.Variant.Product.CardImageAssetId
+                            && media.MediaRole == ProductMediaRole.Gallery
+                            && (media.ProductColourId == null || media.ProductColourId == item.Variant.ProductColourId))
                             ? item.Variant.Product.CardImageAsset.AltText
                             : null)))
             .ToListAsync(cancellationToken);
