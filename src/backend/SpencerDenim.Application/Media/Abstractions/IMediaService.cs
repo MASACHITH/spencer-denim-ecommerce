@@ -1,3 +1,4 @@
+using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Media.Contracts;
 
 namespace SpencerDenim.Application.Media.Abstractions;
@@ -63,7 +64,12 @@ public interface IMediaService
     /// Soft-deletes an asset, but only when nothing uses it (doc 08 §3.3). The files stay until the
     /// purge job of <c>MediaRetention</c> removes them.
     /// </summary>
-    Task<MediaDeleteOutcome> DeleteAsync(Guid publicId, int? deletedByUserId, CancellationToken cancellationToken);
+    /// <param name="actor">Who is deleting and from where, for the audit row (#59); null outside a request.</param>
+    Task<MediaDeleteOutcome> DeleteAsync(
+        Guid publicId,
+        int? deletedByUserId,
+        CancellationToken cancellationToken,
+        AdminActor? actor = null);
 }
 
 /// <summary>What the serving endpoint needs to answer one request for a file under <c>/media</c>.</summary>

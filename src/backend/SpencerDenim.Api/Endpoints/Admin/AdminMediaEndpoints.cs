@@ -151,7 +151,8 @@ internal static class AdminMediaEndpoints
                 MediaVisibility.Public,
                 upload.Field("altText"),
                 upload.Field("title"),
-                CurrentUserId(httpContext.User)),
+                CurrentUserId(httpContext.User),
+                AdminWriteRequest.Actor(httpContext)),
             cancellationToken);
 
         return ToResult(outcome);
@@ -211,7 +212,8 @@ internal static class AdminMediaEndpoints
                 new MediaUploadFile(poster.Content, poster.FileName),
                 upload.Field("altText"),
                 upload.Field("title"),
-                CurrentUserId(httpContext.User)),
+                CurrentUserId(httpContext.User),
+                AdminWriteRequest.Actor(httpContext)),
             cancellationToken);
 
         return ToResult(outcome);
@@ -247,7 +249,11 @@ internal static class AdminMediaEndpoints
             return antiforgeryProblem;
         }
 
-        var outcome = await media.DeleteAsync(publicId, CurrentUserId(httpContext.User), cancellationToken);
+        var outcome = await media.DeleteAsync(
+            publicId,
+            CurrentUserId(httpContext.User),
+            cancellationToken,
+            AdminWriteRequest.Actor(httpContext));
 
         return outcome switch
         {
