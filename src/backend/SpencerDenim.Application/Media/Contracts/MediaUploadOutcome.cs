@@ -1,3 +1,4 @@
+using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Domain.Media;
 
 namespace SpencerDenim.Application.Media.Contracts;
@@ -22,12 +23,17 @@ public sealed record MediaUploadFile(Stream Content, string FileName);
 /// bank-slip path, which this milestone leaves unused (doc 08 N10, W3).
 /// </param>
 /// <param name="UploadedByUserId">The signed-in staff user, or null for a guest upload.</param>
+/// <param name="Actor">
+/// Who is uploading and from where, for the library's audit row (#59). Null outside a request (the client-asset
+/// import): the row then records the uploader's id alone.
+/// </param>
 public sealed record UploadImageRequest(
     MediaUploadFile File,
     MediaVisibility Visibility,
     string? AltText,
     string? Title,
-    int? UploadedByUserId);
+    int? UploadedByUserId,
+    AdminActor? Actor = null);
 
 /// <summary>
 /// A customer's bank-transfer slip (PAY-01, doc 11 P7 step 3, doc 08 §3.3 N10).
@@ -56,12 +62,14 @@ public sealed record UploadPaymentSlipRequest(MediaUploadFile File, int? Uploade
 /// (<c>MediaType = 2 ⇒ PosterAssetId NOT NULL</c>) means a video row cannot exist without one, and
 /// nothing here converts or extracts frames — the VPS has 2 vCPUs (doc 03 §3b).
 /// </summary>
+/// <param name="Actor">As on <see cref="UploadImageRequest"/>.</param>
 public sealed record UploadVideoRequest(
     MediaUploadFile File,
     MediaUploadFile Poster,
     string? AltText,
     string? Title,
-    int? UploadedByUserId);
+    int? UploadedByUserId,
+    AdminActor? Actor = null);
 
 /// <summary>Why an upload was refused. Each value maps to exactly one HTTP status at the endpoint.</summary>
 public enum MediaUploadRejection

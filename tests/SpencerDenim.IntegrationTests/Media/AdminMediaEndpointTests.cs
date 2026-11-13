@@ -530,6 +530,92 @@ public sealed class AdminMediaEndpointTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
     }
 
+    // ---------------------------------------------------------------- the audit trail (#59)
+
+    /// <summary>
+    /// #59: an upload to the library and its deletion each leave one audit row naming who, which asset and the file
+    /// name — the question a shop owner asks ("who removed that photograph?"). Before #59 neither wrote anything.
+    /// </summary>
+    [Fact]
+    public async Task An_upload_and_its_deletion_are_each_audited_against_the_staff_member()
+    {
+        await using var host = await StartAsync();
+        using var uploader = await host.SignInAsync(Permissions.Media.Create);
+        var asset = await UploadAsync(uploader, TestImages.UniqueJpeg(400, 300), "audited-shirt.jpg");
+        var publicId = asset.GetProperty("publicId").GetString()!;
+        var assetId = await AssetIdAsync(host, publicId);
+
+        var created = Assert.Single(await MediaAuditRowsAsync(host, assetId, "Create"));
+        Assert.NotNull(created.UserId);
+        Assert.False(string.IsNullOrEmpty(created.UserEmail));
+        Assert.Contains("audited-shirt.jpg", created.AfterJson, StringComparison.Ordinal);
+        Assert.Contains(publicId, created.AfterJson, StringComparison.OrdinalIgnoreCase);
+
+        using var deleter = await host.SignInAsync(Permissions.Media.Delete);
+        using (var deleted = await deleter.DeleteAsync(new Uri($"/api/admin/media/{publicId}", UriKind.Relative), TestContext.Current.CancellationToken))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
+        }
+
+        var softDeleted = Assert.Single(await MediaAuditRowsAsync(host, assetId, "SoftDelete"));
+        Assert.NotNull(softDeleted.UserId);
+        Assert.NotEqual(created.UserId, softDeleted.UserId);
+        Assert.Contains("\"isDeleted\":true", softDeleted.AfterJson, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Nothing changed, nothing audited: a re-upload of the same bytes publishes nothing new, and a refused delete (the
+    /// asset is in use) deletes nothing.
+    /// </summary>
+    [Fact]
+    public async Task A_duplicate_upload_and_a_refused_delete_write_no_audit_row()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Media.Create, Permissions.Media.Delete, Permissions.Media.View);
+        var bytes = TestImages.UniquePng(500, 500);
+        var first = await UploadAsync(client, bytes, "once.png");
+        var assetId = await AssetIdAsync(host, first.GetProperty("publicId").GetString()!);
+
+        using (var form = MediaTestHost.FilePart("file", bytes, "twice.png", "image/png"))
+        using (var again = await client.PostAsync(new Uri(ImagesUrl, UriKind.Relative), form, TestContext.Current.CancellationToken))
+        {
+            Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        }
+
+        Assert.Single(await MediaAuditRowsAsync(host, assetId, "Create"));
+
+        var inUse = await FirstSeededProductImageAsync(host);
+        var inUseId = await AssetIdAsync(host, inUse);
+        using (var refused = await client.DeleteAsync(new Uri($"/api/admin/media/{inUse}", UriKind.Relative), TestContext.Current.CancellationToken))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        }
+
+        Assert.Empty(await MediaAuditRowsAsync(host, inUseId, "SoftDelete"));
+    }
+
+    private static async Task<int> AssetIdAsync(MediaTestHost host, string publicId)
+    {
+        await using var scope = host.Factory.Services.CreateAsyncScope();
+        var id = Guid.Parse(publicId);
+        return await scope.ServiceProvider.GetRequiredService<AppDbContext>().MediaAssets
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(candidate => candidate.PublicId == id)
+            .Select(candidate => candidate.Id)
+            .SingleAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<List<SpencerDenim.Domain.Auditing.AuditLog>> MediaAuditRowsAsync(MediaTestHost host, int assetId, string action)
+    {
+        await using var scope = host.Factory.Services.CreateAsyncScope();
+        var entityId = assetId.ToString(CultureInfo.InvariantCulture);
+        return await scope.ServiceProvider.GetRequiredService<AppDbContext>().AuditLogs
+            .AsNoTracking()
+            .Where(row => row.EntityType == "MediaAsset" && row.EntityId == entityId && row.Action == action)
+            .ToListAsync(TestContext.Current.CancellationToken);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private async Task<MediaTestHost> StartAsync(IReadOnlyDictionary<string, string?>? configure = null)

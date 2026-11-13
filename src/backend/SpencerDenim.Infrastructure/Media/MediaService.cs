@@ -1,14 +1,17 @@
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SkiaSharp;
+using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Media;
 using SpencerDenim.Application.Media.Abstractions;
 using SpencerDenim.Application.Media.Contracts;
+using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Domain.Settings;
 using SpencerDenim.Infrastructure.Catalog;
@@ -53,8 +56,12 @@ public sealed class MediaService(
     SkiaImageProcessor imageProcessor,
     IOptions<MediaOptions> mediaOptions,
     IOptions<CatalogOptions> catalogOptions,
-    ILogger<MediaService> logger) : IMediaService
+    ILogger<MediaService> logger,
+    IAuditLogWriter auditLog) : IMediaService
 {
+    /// <summary><c>ops.AuditLogs.EntityType</c> for the media library (#59).</summary>
+    public const string AuditEntityType = "MediaAsset";
+
     /// <summary>SQL Server: a unique index refused the row.</summary>
     private const int DuplicateUniqueIndexError = 2601;
 
@@ -73,7 +80,7 @@ public sealed class MediaService(
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var result = await StoreImageAsync(request, cancellationToken);
+        var result = await StoreImageAsync(request, new PublishAudit(request.Actor), cancellationToken);
         return result.Outcome;
     }
 
@@ -126,6 +133,7 @@ public sealed class MediaService(
                     AltText: null,
                     Title: null,
                     request.UploadedByUserId),
+                audit: null,
                 cancellationToken);
 
             return result.Outcome;
@@ -162,9 +170,13 @@ public sealed class MediaService(
             MediaVisibility.Public,
             request.AltText is null ? null : $"Poster image: {request.AltText}",
             request.Title,
-            request.UploadedByUserId);
+            request.UploadedByUserId,
+            request.Actor);
 
-        var poster = await StoreImageAsync(posterRequest, cancellationToken);
+        // #59: the poster is not audited on its own publish. If the video is then refused or turns out to be a duplicate,
+        // RollBackPosterAsync hard-deletes the poster, and a Create row for it would point at an asset that never stayed
+        // in the library. Its row is enlisted with the video's publish instead, in the same save, so both or neither.
+        var poster = await StoreImageAsync(posterRequest, audit: null, cancellationToken);
 
         if (poster.Outcome is MediaUploadOutcome.Rejected rejectedPoster)
         {
@@ -181,7 +193,11 @@ public sealed class MediaService(
         VideoStoreResult video;
         try
         {
-            video = await StoreVideoAsync(request, posterAssetId, cancellationToken);
+            video = await StoreVideoAsync(
+                request,
+                posterAssetId,
+                new PublishAudit(request.Actor, poster.WasExisting ? null : posterAssetId),
+                cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -216,7 +232,8 @@ public sealed class MediaService(
     public async Task<MediaDeleteOutcome> DeleteAsync(
         Guid publicId,
         int? deletedByUserId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AdminActor? actor = null)
     {
         var asset = await dbContext.MediaAssets
             .FirstOrDefaultAsync(candidate => candidate.PublicId == publicId, cancellationToken);
@@ -446,6 +463,22 @@ public sealed class MediaService(
                     .Where(usage => usage.OwnerType == MediaUsageOwnerTypes.MediaAsset && usage.OwnerId == ownerId)
                     .ExecuteDeleteAsync(token);
 
+                // #59: the delete is audited in the same transaction. Replacing, not adding: a retried attempt runs this
+                // again with the previous attempt's row still pending (changes are accepted only after the commit).
+                if (asset.Visibility == MediaVisibility.Public)
+                {
+                    // The delete's own stamp, so the row and the soft delete agree to the millisecond.
+                    await EnlistMediaAuditAsync(
+                        asset,
+                        AuditActions.SoftDelete,
+                        deletedByUserId,
+                        actor,
+                        deletedAtUtc,
+                        before: new { publicId = asset.PublicId, fileName = asset.OriginalFileName, isDeleted = false },
+                        after: new { isDeleted = true, purgeAfterDays = MediaRetention.PurgeAfterDays },
+                        token);
+                }
+
                 // Doc 08 §3.3: soft delete now, files purged after 30 days (MediaRetention).
                 asset.SoftDelete(deletedAtUtc, deletedByUserId);
                 await dbContext.SaveChangesAsync(acceptAllChangesOnSuccess: false, token);
@@ -472,6 +505,77 @@ public sealed class MediaService(
     /// <summary>The asset row as the delete reads it under its lock.</summary>
     private sealed record LockedForDelete(bool IsDeleted, DateTime? DeletedAtUtc, int? DeletedByUserId);
 
+    /// <summary>How an upload's publish is audited (#59).</summary>
+    /// <param name="Actor">Who uploaded and from where; null outside a request.</param>
+    /// <param name="NewPosterAssetId">A video's poster created for this upload, audited in the same save as the video.</param>
+    private sealed record PublishAudit(AdminActor? Actor, int? NewPosterAssetId = null);
+
+    /// <summary>
+    /// Enlists the audit row for a media library change (#59), replacing one an earlier attempt of the same change left
+    /// pending. The actor's email, address, user agent and correlation id come from the request, as on every other admin
+    /// audit row (<see cref="AdminActor"/>). Outside a request (the client-asset import) the email is read from the
+    /// uploader's account row, and a system import with no user is recorded with neither.
+    /// </summary>
+    private async Task EnlistMediaAuditAsync(
+        MediaAsset asset,
+        string action,
+        int? userId,
+        AdminActor? actor,
+        DateTime occurredAtUtc,
+        object? before,
+        object after,
+        CancellationToken cancellationToken)
+    {
+        DetachPendingMediaAudit(asset, action);
+
+        var email = actor?.Email;
+        if (email is null && userId is { } id)
+        {
+            email = await dbContext.Users.AsNoTracking().Where(user => user.Id == id).Select(user => user.Email).FirstOrDefaultAsync(cancellationToken);
+        }
+
+        auditLog.Enlist(new AuditLog
+        {
+            OccurredAtUtc = occurredAtUtc,
+            UserId = userId,
+            UserEmail = email,
+            Action = action,
+            EntityType = AuditEntityType,
+            EntityId = asset.Id.ToString(CultureInfo.InvariantCulture),
+            BeforeJson = before is null ? null : JsonSerializer.Serialize(before),
+            AfterJson = JsonSerializer.Serialize(after),
+            IpAddress = actor?.IpAddress,
+            UserAgent = actor?.UserAgent,
+            CorrelationId = actor?.CorrelationId,
+        });
+    }
+
+    /// <summary>Drops every media audit row still pending in this context: the publish they described did not happen.</summary>
+    private void DetachPendingMediaAudits()
+    {
+        foreach (var entry in dbContext.ChangeTracker.Entries<AuditLog>()
+            .Where(entry => entry.State == EntityState.Added && entry.Entity.EntityType == AuditEntityType)
+            .ToList())
+        {
+            entry.State = EntityState.Detached;
+        }
+    }
+
+    private void DetachPendingMediaAudit(MediaAsset asset, string action)
+    {
+        var entityId = asset.Id.ToString(CultureInfo.InvariantCulture);
+
+        foreach (var entry in dbContext.ChangeTracker.Entries<AuditLog>()
+            .Where(entry => entry.State == EntityState.Added
+                && entry.Entity.EntityType == AuditEntityType
+                && entry.Entity.EntityId == entityId
+                && entry.Entity.Action == action)
+            .ToList())
+        {
+            entry.State = EntityState.Detached;
+        }
+    }
+
     // ------------------------------------------------------------------ images
 
     private sealed record StoreResult(MediaUploadOutcome Outcome, int? AssetId, bool WasExisting);
@@ -482,8 +586,10 @@ public sealed class MediaService(
     /// </summary>
     private sealed record VideoStoreResult(MediaUploadOutcome Outcome, bool RollBackPoster);
 
+    /// <param name="audit">How the publish is audited (#59); null when it is not audited here.</param>
     private async Task<StoreResult> StoreImageAsync(
         UploadImageRequest request,
+        PublishAudit? audit,
         CancellationToken cancellationToken)
     {
         if (!storage.IsConfigured)
@@ -604,7 +710,7 @@ public sealed class MediaService(
                 asset.RenditionSetVersion = MediaRenditions.CurrentSetVersion;
             }
 
-            if (await PublishAsync(asset, written, cancellationToken) is { } winner)
+            if (await PublishAsync(asset, written, audit, cancellationToken) is { } winner)
             {
                 return new StoreResult(new MediaUploadOutcome.Duplicate(ToDto(winner)), winner.Id, WasExisting: true);
             }
@@ -691,7 +797,7 @@ public sealed class MediaService(
             await storage.WriteAsync(asset.StorageKey, content, cancellationToken);
             written.Add(asset.StorageKey);
 
-            return await PublishAsync(asset, written, cancellationToken) is { } winner
+            return await PublishAsync(asset, written, audit: null, cancellationToken) is { } winner
                 ? new MediaUploadOutcome.Duplicate(ToDto(winner))
                 : new MediaUploadOutcome.Created(ToDto(asset));
         }
@@ -705,6 +811,7 @@ public sealed class MediaService(
     private async Task<VideoStoreResult> StoreVideoAsync(
         UploadVideoRequest request,
         int posterAssetId,
+        PublishAudit audit,
         CancellationToken cancellationToken)
     {
         var maxBytes = _media.MaxBytesFor(MediaVisibility.Public, MediaAssetType.Video);
@@ -807,7 +914,7 @@ public sealed class MediaService(
                 UsageRole = MediaUsageRoles.Poster,
             });
 
-            if (await PublishAsync(asset, written, cancellationToken) is { } winner)
+            if (await PublishAsync(asset, written, audit, cancellationToken) is { } winner)
             {
                 // The poster was created for this upload a moment ago and the winner has its own, so it
                 // is rolled back exactly as it is when the checksum lookup answers before any of this.
@@ -1132,9 +1239,49 @@ public sealed class MediaService(
     private async Task<MediaAsset?> PublishAsync(
         MediaAsset asset,
         List<string> written,
+        PublishAudit? audit,
         CancellationToken cancellationToken)
     {
         asset.Status = MediaAssetStatus.Ready;
+
+        // #59: an upload to the media library is audited when it is published, in the same save, so the trail says
+        // what is in the library and not what was attempted. A private asset (a customer's bank slip) is not a library
+        // upload and is not audited here; its review is (BankTransferReviewStore).
+        if (audit is not null && asset.Visibility == MediaVisibility.Public)
+        {
+            var publishedAtUtc = DateTime.UtcNow;
+
+            await EnlistMediaAuditAsync(
+                asset,
+                AuditActions.Create,
+                asset.UploadedByUserId,
+                audit.Actor,
+                publishedAtUtc,
+                before: null,
+                after: new { publicId = asset.PublicId, fileName = asset.OriginalFileName, mediaType = asset.MediaType.ToString() },
+                cancellationToken);
+
+            // A video's poster, created for this upload, is audited with it (see UploadVideoAsync).
+            if (audit.NewPosterAssetId is { } posterId
+                && await dbContext.MediaAssets.AsNoTracking().FirstOrDefaultAsync(candidate => candidate.Id == posterId, cancellationToken) is { } poster)
+            {
+                await EnlistMediaAuditAsync(
+                    poster,
+                    AuditActions.Create,
+                    poster.UploadedByUserId,
+                    audit.Actor,
+                    publishedAtUtc,
+                    before: null,
+                    after: new
+                    {
+                        publicId = poster.PublicId,
+                        fileName = poster.OriginalFileName,
+                        mediaType = poster.MediaType.ToString(),
+                        posterOf = asset.PublicId,
+                    },
+                    cancellationToken);
+            }
+        }
 
         try
         {
@@ -1143,6 +1290,8 @@ public sealed class MediaService(
         }
         catch (DbUpdateException exception) when (IsDuplicateChecksum(exception))
         {
+            // Lost the race: nothing was published, so the rows that would say so go too, before the stand-down save.
+            DetachPendingMediaAudits();
             await StandDownAsync(asset, written, cancellationToken);
 
             var winner = await FindDuplicateAsync(
@@ -1241,6 +1390,10 @@ public sealed class MediaService(
         CancellationToken cancellationToken)
     {
         MediaLog.UploadFailed(logger, cause, asset.PublicId, written.Count);
+
+        // #59: a publish that failed published nothing. Its pending audit rows would otherwise ride along with the save
+        // below that marks the row Failed.
+        DetachPendingMediaAudits();
 
         foreach (var key in written)
         {

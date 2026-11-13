@@ -4,7 +4,11 @@ using SpencerDenim.Infrastructure.Persistence;
 
 namespace SpencerDenim.Infrastructure.Identity;
 
-/// <summary>Inserts one <c>ops.AuditLogs</c> row (doc 08 §3.8). Rows are append-only — no update path exists.</summary>
+/// <summary>
+/// Inserts one <c>ops.AuditLogs</c> row (doc 08 §3.8). Rows are append-only — no update path exists. Every row passes
+/// through <see cref="AuditRedaction"/> first (doc 08 DB24, #50), so no use case can write a credential into the trail
+/// however it spells the field.
+/// </summary>
 public sealed class AuditLogWriter(AppDbContext dbContext) : IAuditLogWriter
 {
     public async Task WriteAsync(AuditLog entry, CancellationToken cancellationToken)
@@ -22,6 +26,6 @@ public sealed class AuditLogWriter(AppDbContext dbContext) : IAuditLogWriter
     {
         ArgumentNullException.ThrowIfNull(entry);
 
-        dbContext.AuditLogs.Add(entry);
+        dbContext.AuditLogs.Add(AuditRedaction.Apply(entry));
     }
 }
